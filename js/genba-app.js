@@ -2,25 +2,42 @@
 // - たのむ：種類のタブ（2段で全部見せる）→ 品物のタイル → 下から出る画面で寸法・数 → カートに入れる
 // - カート：この端末にしまう。なおす・けす。どの工事・いつ・どこ・材料屋に連絡したか・メモ も、いっしょにしまう
 // - 送る：/zairyo/requests に入れる（ルールで、自分の名前・自分の端末・新しく作るだけ、をたしかめる）
-// - 送ったものは 11章 4-4、★いつもの は送ったものができてから
-import { ref, onValue, push, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+// - 送ったもの：自分の名前の依頼だけ読む（ルールで、chumonsha が自分の名前の問い合わせだけ通す）。
+//   事務所がまだ注文していない（ordered がない）あいだは「取り消す」ができる。消さずに status を "cancelled" にする
+// - ★いつもの：自分が送った品物を、多い順に（取り消したものは数えない）
+// - 進み具合（注文した・届いた）と金額は、11章 5 で事務所の注文ができてから出す
+import { ref, onValue, push, update, query, orderByChild, equalTo, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, auth } from "./firebase.js";
-import { $, esc, zenkana, toast, runChecks, checkRow } from "./common.js";
+import { $, esc, zenkana, toast, runChecks, checkRow, openSheet, closeSheet } from "./common.js";
 import { errorText } from "./touroku.js";
 import { watchJobs } from "./nippo.js";
 import { jobPicker } from "./kouji.js";
-import { normCatalog, openItem, loadCart, saveCart, newForm, fmtQty, ymd, kibouText } from "./tanomu.js";
+import { normCatalog, openItem, buildSpec, lineText, loadCart, saveCart, newForm, fmtQty, ymd, kibouText } from "./tanomu.js";
 
 const CAT_KEY = "yotsuba-zairyo-cat";   // さいごに見た種類（この端末だけ）
 const byOrder = ([, a], [, b]) => (a.order ?? 999) - (b.order ?? 999);
+const pad = n => String(n).padStart(2, "0");
+const md = ts => { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()}`; };
+const hm = ts => { const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const linesOf = r => Object.values(r.lines || {});
+const isCancelled = r => r.status === "cancelled";
+
+/** 依頼の進み具合（いまは「送った」だけ。注文した・届いた は 11章 5 で足す） */
+function progress(r) {
+  if (isCancelled(r)) return { step: 0, label: "取り消した" };
+  if (r.ordered) return { step: 2, label: "事務所が注文した" };
+  return { step: 1, label: "事務所で確認中" };
+}
 
 export function startGenbaApp(main, me) {
   const st = {
     tab: "tanomu", cat: "", catalog: null, jobs: null, kaisha: {}, places: null, sups: null,
     cart: loadCart(), sending: false, last: null,
+    reqs: null,   // 自分が送った依頼 [{id, …}]（新しい順）
   };
   let picker = null, nippoRow = null, askDel = "";
-  try { st.cat = localStorage.getItem(CAT_KEY) || ""; } catch (err) { }
+  let catChosen = false;   // 種類のタブを自分でえらんだか（えらんでいなければ、★いつもの があればそれを出す）
+  try { st.cat = localStorage.getItem(CAT_KEY) || ""; catChosen = !!st.cat; } catch (err) { }
 
   main.innerHTML = `
     <div class="ph-tabs" role="tablist" aria-label="画面">
@@ -45,16 +62,50 @@ export function startGenbaApp(main, me) {
   }
 
   /* ---------- たのむ ---------- */
+  /** ★いつもの：自分が送った品物（品物・品名・メモが同じものをまとめる）を、多い順に12こまで */
+  function favList() {
+    if (!st.catalog || !st.reqs) return [];
+    const m = new Map();
+    // 古い順に見て、数・単位は「いちばん新しいとき」のものにする
+    for (const r of st.reqs.slice().reverse()) {
+      if (isCancelled(r)) continue;
+      for (const l of linesOf(r)) {
+        const it = st.catalog.item.get(l.key);
+        if (!it) continue;   // 品物一覧から消えた品物は出さない
+        const spec = buildSpec(it, l.vals || {});
+        const k = `${l.key}|${spec}|${l.note || ""}`;
+        const cur = m.get(k);
+        if (cur) Object.assign(cur, { n: cur.n + 1, qty: l.qty, unit: l.unit, at: r.sentAt });
+        else m.set(k, { key: l.key, vals: { ...(l.vals || {}) }, note: l.note || "", qty: l.qty, unit: l.unit, n: 1, spec, catName: it.catName, at: r.sentAt });
+      }
+    }
+    return [...m.values()].sort((a, b) => b.n - a.n || b.at - a.at).slice(0, 12);
+  }
+
   function tanomuHTML() {
     if (!st.catalog) return '<p class="muted">品物の一覧を読んでいます…</p>';
     const cats = st.catalog.cats;
     if (!cats.length) return '<p class="warn">品物の一覧が、まだありません。事務所に知らせてください。</p>';
-    if (!cats.some(c => c.id === st.cat)) st.cat = cats[0].id;
-    const cat = cats.find(c => c.id === st.cat);
-    return `
+    const favs = favList();
+    if (!catChosen && favs.length) st.cat = "fav";
+    if (!(st.cat === "fav" && favs.length) && !cats.some(c => c.id === st.cat)) st.cat = favs.length ? "fav" : cats[0].id;
+    const tabs = `
       <div class="cats" role="tablist" aria-label="物の種類">
+        ${favs.length ? `<button type="button" role="tab" data-cat="fav" aria-selected="${st.cat === "fav"}">★<wbr>いつもの</button>` : ""}
         ${cats.map(c => `<button type="button" role="tab" data-cat="${esc(c.id)}" aria-selected="${c.id === st.cat}">${esc(c.name).replace(/・/g, "・<wbr>")}</button>`).join("")}
-      </div>
+      </div>`;
+    if (st.cat === "fav") {
+      return tabs + `
+        <p class="hint">${esc(me.name)}さんが前に送った物です。押すと同じ内容が出てくるので、数を直してカートに入れられます。</p>
+        <div class="favs">${favs.map((f, i) => `
+          <button type="button" class="fav" data-fav="${i}">
+            <span class="f-spec">${esc(f.spec + (f.note ? " " + f.note : ""))}</span>
+            <span class="f-meta">${esc(f.catName)}・前回 ${esc(fmtQty(f.qty))}${esc(f.unit)}・${f.n}回</span>
+            <span class="f-add" aria-hidden="true">＋</span>
+          </button>`).join("")}</div>`;
+    }
+    const cat = cats.find(c => c.id === st.cat);
+    return tabs + `
       <div class="tiles">${cat.items.map(it => {
         const key = `${cat.id}:${it.id}`, n = st.cart.lines.filter(l => l.key === key).length;
         return `
@@ -151,6 +202,7 @@ export function startGenbaApp(main, me) {
     picker = jobPicker(el, {
       me: me.name,
       kaishaName: ch => (st.kaisha[String(ch).slice(0, 2)] || {}).name || "",
+      recent: recentMap,
       value: st.cart.job || undefined,
       onChange: v => {
         st.cart.job = v;
@@ -164,6 +216,17 @@ export function startGenbaApp(main, me) {
       },
     });
     if (st.jobs) picker.setJobs(st.jobs);
+  }
+
+  /** 自分が最近たのんだ工事 {注番: {mine: 日時}}（「どの工事？」の並びに使う。取り消したものは入れない） */
+  function recentMap() {
+    const m = {};
+    for (const r of st.reqs || []) {
+      if (isCancelled(r) || !r.sentAt) continue;
+      const at = new Date(r.sentAt).toISOString();
+      if (!m[r.chuban] || at > m[r.chuban].mine) m[r.chuban] = { mine: at };
+    }
+    return m;
   }
 
   /** いつ・どこ・連絡のボタンだけ、えらんだ印をつけなおす（「どの工事？」をかきなおさないように） */
@@ -252,11 +315,84 @@ export function startGenbaApp(main, me) {
       </section>`;
   }
 
-  /* ---------- 送ったもの（4-4 で作る） ---------- */
+  /* ---------- 送ったもの ---------- */
   function sentHTML() {
+    const list = st.reqs === null ? '<p class="muted">読んでいます…</p>'
+      : !st.reqs.length ? `<p class="empty">${esc(me.name)}さんが送った注文は、まだありません。</p>`
+      : st.reqs.map(r => {
+        const pg = progress(r), ls = linesOf(r);
+        return `
+          <button type="button" class="sent${isCancelled(r) ? " cx" : ""}" data-sent="${esc(r.id)}">
+            <span class="sent-top"><span>${md(r.sentAt)} ${hm(r.sentAt)} に送った</span><span>${ls.length}点</span></span>
+            <span class="kouji"><span class="chuban">${esc(r.chuban)}</span><span class="kenmei">${esc(zenkana(r.kenmei))}</span></span>
+            <span class="items">${esc(ls.map(lineText).join("\n"))}</span>
+            <span class="sent-st s${pg.step}">${esc(pg.label)}</span>
+          </button>`;
+      }).join("");
     return `
-      <section class="card"><h2>送ったもの</h2><p class="muted">送った注文は、ここに出ます（次に作ります）。</p></section>
-      <section class="card"><h2>つながりのたしかめ</h2><ul class="checks" id="checks"></ul></section>`;
+      <div class="sents">${list}</div>
+      <details class="block hidbox"><summary>つながりのたしかめ</summary><ul class="checks" id="checks"></ul></details>`;
+  }
+
+  /** 送ったものの中身（下から出る）。事務所がまだ注文していなければ「取り消す」 */
+  function openSent(id) {
+    const r = (st.reqs || []).find(x => x.id === id);
+    if (!r) return;
+    const pg = progress(r), ls = linesOf(r);
+    const canCancel = !isCancelled(r) && !r.ordered;
+    const steps = [["送った", r.sentAt, pg.step >= 1], ["注文した", null, pg.step >= 2], ["届いた", null, pg.step >= 3]];
+    const html = `
+      <div class="pw" id="sentWrap">
+        <div class="panel-head"><div><span class="eyebrow">送ったもの　${md(r.sentAt)} ${hm(r.sentAt)}</span>
+          <h2 id="panelTitle"><span class="chuban big">${esc(r.chuban)}</span></h2><span class="kenmei">${esc(zenkana(r.kenmei))}</span></div>
+          <button type="button" class="x" data-close aria-label="閉じる">×</button></div>
+        ${isCancelled(r)
+          ? `<div class="block"><p class="warn">${r.cancelledAt ? `${md(r.cancelledAt)} ${hm(r.cancelledAt)} に` : ""}取り消しました</p></div>`
+          : `<div class="block">
+              <ol class="steps" style="--c:var(--amber)">${steps.map(([l, d, done]) => `<li class="${done ? "done" : ""}">${l}<span class="d">${done && d ? md(d) : ""}</span></li>`).join("")}</ol>
+              <p class="center"><b>${esc(pg.label)}</b></p>
+            </div>`}
+        <div class="block"><h3>品物</h3>
+          <ul class="slines">${ls.map(l => `<li><span>${esc(lineText(l))}</span>${isCancelled(r) ? "" : `<span class="st s1">${esc(pg.label)}</span>`}</li>`).join("")}</ul>
+        </div>
+        <div class="block"><dl class="dl">
+          <dt>いつほしい</dt><dd>${esc(kibouText(r.kibou))}</dd>
+          <dt>届け先</dt><dd>${esc(r.basho || "—")}</dd>
+          ${r.contactedName ? `<dt>連絡ずみ</dt><dd>${esc(r.contactedName)}</dd>` : ""}
+          ${r.memo ? `<dt>メモ</dt><dd>${esc(r.memo)}</dd>` : ""}
+        </dl></div>
+        ${canCancel ? `
+          <div class="row" id="cxRow">
+            <button type="button" class="btn danger" id="cxBtn">この注文を取り消す</button>
+            <span class="hint">事務所が注文する前なら、取り消せます</span>
+          </div>` : ""}
+        <p class="err" id="cxErr" role="alert"></p>
+      </div>`;
+    openSheet(html, p => {
+      const w = p.querySelector("#sentWrap");
+      w.addEventListener("click", async e => {
+        const row = w.querySelector("#cxRow");
+        if (e.target.id === "cxBtn") {
+          row.innerHTML = '<span><b>本当に取り消しますか？</b></span><button type="button" class="btn danger" id="cxYes">取り消す</button><button type="button" class="btn" id="cxNo">やめる</button>';
+          row.querySelector("#cxNo").focus();
+        } else if (e.target.id === "cxNo") {
+          openSent(id);
+        } else if (e.target.id === "cxYes") {
+          e.target.disabled = true;
+          e.target.textContent = "取り消しています…";
+          try {
+            await update(ref(db, `zairyo/requests/${id}`), { status: "cancelled", cancelledAt: serverTimestamp() });
+            closeSheet();
+            toast("注文を取り消しました");
+          } catch (ex) {
+            // 事務所がちょうど注文したときなどは、ルールで止まる
+            w.querySelector("#cxErr").textContent = "取り消せませんでした。事務所がもう注文したかもしれません。事務所に知らせてください（" + errorText(ex) + "）";
+            e.target.disabled = false;
+            e.target.textContent = "取り消す";
+          }
+        }
+      });
+    });
   }
   function mountChecks() {
     const list = $("#checks", body);
@@ -273,7 +409,7 @@ export function startGenbaApp(main, me) {
 
   /* ---------- 押したとき ---------- */
   main.addEventListener("click", e => {
-    const t = e.target.closest("[data-gtab],[data-cat],[data-item],[data-cedit],[data-cdel],[data-kibou],[data-basho],[data-contact],[data-csup],#sendBtn");
+    const t = e.target.closest("[data-gtab],[data-cat],[data-item],[data-fav],[data-sent],[data-cedit],[data-cdel],[data-kibou],[data-basho],[data-contact],[data-csup],#sendBtn");
     if (!t || t.disabled) return;
     const d = t.dataset, f = st.cart.form;
     if (d.gtab) {
@@ -283,6 +419,7 @@ export function startGenbaApp(main, me) {
       window.scrollTo(0, 0);
     } else if (d.cat) {
       st.cat = d.cat;
+      catChosen = true;
       try { localStorage.setItem(CAT_KEY, st.cat); } catch (err) { }
       draw();
     } else if (d.item) {
@@ -292,6 +429,16 @@ export function startGenbaApp(main, me) {
         draw();
         toast(`カートに入れました（${st.cart.lines.length}点）`);
       });
+    } else if (d.fav) {
+      const f = favList()[Number(d.fav)];
+      if (f) openItem(st.catalog, f.key, { vals: f.vals, qty: f.qty, unit: f.unit, note: f.note }, line => {
+        st.cart.lines.push(line);
+        saveCart(st.cart);
+        draw();
+        toast(`カートに入れました（${st.cart.lines.length}点）`);
+      });
+    } else if (d.sent) {
+      openSent(d.sent);
     } else if (d.cedit) {
       const l = st.cart.lines.find(x => x.uid === d.cedit);
       if (l) openItem(st.catalog, l.key, l, nl => { Object.assign(l, nl); saveCart(st.cart); draw(); toast("なおしました"); });
@@ -354,6 +501,11 @@ export function startGenbaApp(main, me) {
   // 注番の頭の2文字の会社名（台帳ぜんたいの表 /common/kaisha）
   onValue(ref(db, "common/kaisha"), s => { st.kaisha = s.val() || {}; if (picker && st.jobs) picker.setJobs(st.jobs); });
   watchJobs(d => { st.jobs = d; if (picker) picker.setJobs(d); showNippo(); }, ex => showNippo(ex));
+  // 自分が送った依頼（ルールで、この問い合わせだけ通す）
+  onValue(query(ref(db, "zairyo/requests"), orderByChild("chumonsha"), equalTo(me.name)), s => {
+    st.reqs = Object.entries(s.val() || {}).map(([id, r]) => ({ id, ...r })).sort((a, b) => (b.sentAt || 0) - (a.sentAt || 0));
+    if (st.tab === "sent" || st.tab === "tanomu") draw();
+  }, ex => { st.reqs = []; toast("送ったものを読めませんでした（" + errorText(ex) + "）"); });
 
   draw();
 }

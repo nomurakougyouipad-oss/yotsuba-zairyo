@@ -24,7 +24,8 @@ const agoText = d => {
  *  opts = {
  *    me,                         … 注文する人（担当のタブに「自分」と出す）
  *    kaishaName(chuban) → 会社名 … 注番の頭の2文字の会社名（なければ ""）
- *    recent: {注番: {mine, any}}  … 最近たのんだ日（自分・だれか）。11章 4-3 から入れる
+ *    recent: {注番: {mine, any}}  … 最近たのんだ日（自分・だれか。ISO の日時の文字）。関数でもよい（そのたびに読む）
+ *                                   現場は自分の依頼しか読めないので、いまは mine だけ
  *    value: {chuban, kenmei, typed}, onChange(value)
  *  }
  *  返り値：{ setJobs(日報のデータ), value(), check() → まちがいの言葉（なければ ""） } */
@@ -36,7 +37,7 @@ export function jobPicker(el, opts) {
   const kaisha = ch => (opts.kaishaName && opts.kaishaName(ch)) ||
     ((data && data.fixed.find(f => f.chuban.slice(0, 2) === String(ch).slice(0, 2) && f.chuban.endsWith("000"))) || {}).kenmei || "";
   const show = s => esc(zenkana(s));   // 画面に出す件名
-  const recent = () => opts.recent || {};
+  const recent = () => (typeof opts.recent === "function" ? opts.recent() : opts.recent) || {};
 
   el.innerHTML = `
     <section class="ph-sec">
