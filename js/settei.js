@@ -6,6 +6,7 @@ import { ref, onValue, set, update, remove, push, serverTimestamp } from "https:
 import { db } from "./firebase.js";
 import { $, esc, toast } from "./common.js";
 import { errorText } from "./touroku.js";
+import { watchJobs } from "./nippo.js";
 
 const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"]];
 const TAB_KEY = "yotsuba-zairyo-settab";
@@ -21,6 +22,7 @@ const PATH = {
 const S = {};                 // データベースの中身（読みこむまでは undefined）
 let tab = "sup", body = null, waiting = false;
 let kQ = "", ask = "";        // 注番の会社のさがす言葉／「本当に消しますか？」を出している行
+const pickOwners = new Set();  // 日報の担当者から足す人（えらんでいるところ）
 
 const LOADING = '<p class="muted">読んでいます…</p>';
 const BAD_KEY = /[.#$\[\]\/]/;
@@ -60,6 +62,8 @@ export function renderSettings(el) {
   for (const [key, path] of Object.entries(PATH)) {
     onValue(ref(db, path), snap => { S[key] = key === "year" ? (snap.val() || "") : (snap.val() || {}); draw(); }, showErr);
   }
+  // 日報の注番（読むだけ）：注番の年の切りかえどき・日報の担当者から足す に使う
+  watchJobs(d => { S.nippo = d; draw(); }, showErr);
   draw(true);
 }
 
@@ -144,6 +148,7 @@ function kListHTML() {
         <input id="yNew" class="inp num" maxlength="2" inputmode="numeric" autocomplete="off" placeholder="例 ${S.year ? String((Number(S.year) + 1) % 100).padStart(2, "0") : "26"}" aria-label="注番の年（2けた）">
         <button class="btn">${S.year ? "切りかえる" : "決める"}</button>
       </form>
+      ${yearNotice()}
       <p class="hint">注番の年は、12/20〜25 ごろに切りかわります（1月1日ではありません）。日報で新しい年の注番を出しはじめたら、ここを切りかえてください。固定の注番の年も、いっしょに変わります。</p>
     </div>
     <div class="block"><h3>固定の注番（${ko.filter(x => !x.hidden).length}）</h3>
@@ -169,6 +174,14 @@ function kListHTML() {
       <p class="hint">かくすと、えらぶ一覧には出なくなります。今までの注番の名前は、そのまま出ます。</p></details>` : ""}
     ${q && !fk.length && !kk.length ? `<p class="empty">「${esc(kQ)}」にあてはまるものはありません。</p>` : ""}
     <p class="hint">この表は台帳ぜんたいで使います（あとで、ほかのアプリも同じ表を読みます）。頭文字を変えたいときは、消して足しなおします。</p>`;
+}
+
+/** 日報に、次の年の注番が出ていたら知らせる */
+function yearNotice() {
+  if (!S.nippo || !S.year) return "";
+  const next = String((Number(S.year) + 1) % 100).padStart(2, "0");
+  const n = [...S.nippo.all.keys()].filter(c => c.slice(2, 4) === next).length;
+  return n ? `<p class="warn">日報に「${next}」の注番が ${n}件 出ています。新しい年の注番を出しはじめたら、ここを ${next} に切りかえてください。</p>` : "";
 }
 
 function kRow(x) {
@@ -198,19 +211,37 @@ function kPath(k) {
 /* ==================== 注文する人 ==================== */
 function staffHTML() {
   if (!S.staff) return LOADING;
-  const names = Object.keys(S.staff).sort(ja);
-  return `
-    <p class="hint">現場のスマホで登録するときに、この中から自分の名前をえらびます。</p>
-    <ul class="staff">${names.length ? names.map(n => `
-      <li><span class="nm">${esc(n)}</span>${ask === "staff:" + n
+  const all = Object.entries(S.staff).sort(([a], [b]) => ja(a, b));
+  const row = ([n, x]) => `
+      <li${x.hidden ? ' class="hid"' : ""}><span class="nm">${esc(n)}</span>${ask === "staff:" + n
         ? `<span class="row"><button type="button" class="btn danger" data-staffdelyes="${esc(n)}">消す</button><button type="button" class="btn" data-askno>やめる</button></span>`
-        : `<button type="button" class="btn danger" data-staffdel="${esc(n)}">消す</button>`}</li>`).join("")
-      : '<li class="muted">まだだれもいません。下で名前を足してください。</li>'}</ul>
+        : `<span class="row"><button type="button" class="linkbtn" data-staffhide="${esc(n)}">${x.hidden ? "出す" : "かくす"}</button><button type="button" class="btn danger" data-staffdel="${esc(n)}">消す</button></span>`}</li>`;
+  const shown = all.filter(([, x]) => !x.hidden), hid = all.filter(([, x]) => x.hidden);
+  return `
+    <p class="hint">現場のスマホで登録するときに、この中から自分の名前をえらびます。かくした人は、えらぶ一覧に出ません。</p>
+    <ul class="staff">${shown.length ? shown.map(row).join("") : '<li class="muted">まだだれもいません。下で名前を足してください。</li>'}</ul>
     <form class="add" data-form="staff">
       <input id="newStaff" class="inp" maxlength="20" autocomplete="off" placeholder="足す名前" aria-label="足す名前">
       <button class="btn primary">足す</button>
     </form>
-    <p class="hint">消しても、その名前でもう登録したスマホは、そのまま使えます。</p>`;
+    ${ownersBlock()}
+    ${hid.length ? `<details class="block hidbox" id="hidStaff"><summary>かくしている人（${hid.length}）</summary><ul class="staff">${hid.map(row).join("")}</ul></details>` : ""}
+    <p class="hint">かくしても消しても、その名前でもう登録したスマホは、そのまま使えます。</p>`;
+}
+
+/** 日報の担当者で、まだ「注文する人」にいない人。押してえらんで、まとめて足す（全部いっぺんには入れない） */
+function ownersBlock() {
+  if (!S.nippo) return '<div class="block"><h3>日報の担当者から足す</h3><p class="muted">日報を読んでいます…</p></div>';
+  const owners = [...new Set([...S.nippo.open, ...S.nippo.fixed].map(j => j.tantou).filter(Boolean))];
+  const cand = owners.filter(n => !S.staff[n] && !BAD_KEY.test(n) && [...n].length <= 20).sort(ja);
+  for (const n of [...pickOwners]) if (!cand.includes(n)) pickOwners.delete(n);
+  return `
+    <div class="block"><h3>日報の担当者から足す</h3>${cand.length ? `
+      <p class="hint">日報の工事の担当者で、まだここにいない人です（${cand.length}人）。足す人を押してえらんでください。材料をたのまない人や、人の名前でないものは、えらばなくてだいじょうぶです。</p>
+      <div class="owners">${cand.map(n => `<button type="button" data-pickowner="${esc(n)}" aria-pressed="${pickOwners.has(n)}">${esc(n)}</button>`).join("")}</div>
+      <button type="button" class="btn primary" data-addowners${pickOwners.size ? "" : " disabled"}>${pickOwners.size ? `えらんだ ${pickOwners.size}人を足す` : "足す人を押してください"}</button>`
+      : '<p class="muted">日報の担当者は、みんな入っています。</p>'}
+    </div>`;
 }
 
 /* ==================== 届け先 ==================== */
@@ -290,6 +321,20 @@ async function onClick(e) {
     ask = "";
     await remove(ref(db, k.path));
     toast(`${k.key}（${k.x.name}）を消しました`);
+  } else if (d.staffhide) {
+    const n = d.staffhide, x = S.staff[n];
+    await update(ref(db, `${PATH.staff}/${n}`), { hidden: !x.hidden });
+    toast(`${n} を${x.hidden ? "出しました" : "かくしました"}`);
+  } else if (d.pickowner) {
+    if (pickOwners.has(d.pickowner)) pickOwners.delete(d.pickowner);
+    else pickOwners.add(d.pickowner);
+    draw(true);
+  } else if ("addowners" in d) {
+    const names = [...pickOwners];
+    if (!names.length) return;
+    pickOwners.clear();
+    await update(ref(db, PATH.staff), Object.fromEntries(names.map(n => [n, { addedAt: serverTimestamp() }])));
+    toast(`${names.join("・")} を足しました`);
   } else if (d.staffdelyes) {
     ask = "";
     await remove(ref(db, `${PATH.staff}/${d.staffdelyes}`));

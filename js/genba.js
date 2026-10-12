@@ -1,7 +1,11 @@
 // 現場のスマホ（index.html）
 // 登録していない → 会社の合言葉 → 名前をえらぶ → 登録ずみの画面（材料をたのむ画面は 11章 4 で作る）
-import { $, esc, initTheme, registerSW, runChecks } from "./common.js";
+import { ref, onValue } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+import { db } from "./firebase.js";
+import { $, esc, initTheme, registerSW, runChecks, checkRow } from "./common.js";
 import { whoAmI, register, errorText, isIPhoneBrowser } from "./touroku.js";
+import { watchJobs } from "./nippo.js";
+import { jobPicker } from "./kouji.js";
 
 initTheme();
 registerSW();
@@ -113,20 +117,46 @@ function showNames(code, staff) {
   });
 }
 
-/** 登録ずみ */
+/** 登録ずみ（いまは 11章 4-1「工事をえらぶ」のためし。カートの「送る」に組みこむのは 4-3） */
 function showHome(me) {
   $("#who").textContent = `現場のスマホ・${me.name}さん`;
   main.innerHTML = `
     <section class="card">
       <h2>登録ずみです</h2>
       <p><b>${esc(me.name)}</b>さんで登録されています。</p>
-      <p class="muted">材料をたのむ画面は、このあと作ります。</p>
+      <p class="muted">材料をたのむ画面は、このあと作ります。下は「どの工事？」のためしです（えらんでも、まだどこにも送りません）。</p>
+    </section>
+    <section class="card">
+      <div id="kouji"></div>
+      <p class="sel-now" id="selNow">まだえらんでいません</p>
     </section>
     <section class="card">
       <h2>つながりのたしかめ</h2>
       <ul class="checks" id="checks"></ul>
     </section>`;
+
+  let jobs = null, kaisha = {};
+  const picker = jobPicker($("#kouji"), {
+    me: me.name,
+    kaishaName: ch => (kaisha[String(ch).slice(0, 2)] || {}).name || "",
+    onChange: v => {
+      const err = picker.check();
+      $("#selNow").textContent = err || `えらんでいる工事：${v.chuban}　${v.kenmei}`;
+      $("#selNow").classList.toggle("warn", !!err);
+    },
+  });
+
+  // 注番の頭の2文字の会社名（台帳ぜんたいの表 /common/kaisha）
+  onValue(ref(db, "common/kaisha"), s => { kaisha = s.val() || {}; if (jobs) picker.setJobs(jobs); });
+
   runChecks($("#checks"), { sw: true });
+  const row = checkRow($("#checks"), "日報の注番を読める");
+  row("wait", "読んでいます…");
+  watchJobs(d => {
+    jobs = d;
+    picker.setJobs(d);
+    row("ok", `えらべる工事 ${d.open.length}件・工場で使う物 ${d.fixed.length}件`);
+  }, ex => row("bad", "読めません（" + errorText(ex) + "）"));
 }
 
 /** 事務所で登録した端末が、現場の画面を開いたとき */

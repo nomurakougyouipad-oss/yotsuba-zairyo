@@ -164,6 +164,35 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
   .ilist li{flex-wrap:wrap}
 }
 
+/* どの工事？（現場） */
+.ph-sec{display:flex;flex-direction:column;gap:8px;min-width:0}
+.ph-sec h3{margin:0;font-size:16px;font-weight:800}
+.req{color:var(--amber);font-size:12px;margin-left:6px}
+.owners{display:flex;flex-wrap:wrap;gap:6px}
+.owners button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 14px;min-height:44px;font-weight:700;font-size:15px;color:var(--muted);display:inline-flex;align-items:center;gap:4px}
+.owners button small{font-size:11px;font-weight:700}
+.owners button .n{font-family:var(--f-num);font-size:13px;font-weight:500;opacity:.8;margin-left:2px}
+.owners button[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.jobs{display:flex;flex-direction:column;gap:6px}
+.jobs button{position:relative;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:9px 40px 9px 12px;min-height:52px;text-align:left;display:flex;flex-direction:column;gap:0}
+.chuban{font-family:var(--f-num);font-weight:600;font-size:17px;letter-spacing:.03em;color:var(--amber)}
+.kenmei{font-size:13px;color:var(--muted);min-width:0}
+.jobs button .kenmei{color:var(--fg);font-size:14px}
+.jobs button .jmeta{font-size:12px;color:var(--muted);margin-top:2px}
+.jobs button[aria-checked="true"]{border-color:var(--amber);background:var(--surface2)}
+.jobs button[aria-checked="true"]::after{content:"✓";position:absolute;right:12px;top:50%;transform:translateY(-50%);width:24px;height:24px;border-radius:50%;background:var(--amber-btn);color:var(--on-amber);display:grid;place-items:center;font-weight:800;font-size:14px}
+.jobs.fixed{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+.jobs.fixed button{padding:8px;align-items:center;text-align:center}
+.jobs.fixed button .chuban{font-size:14px;order:2}
+.jobs.fixed button .kenmei{font-size:14px;font-weight:700;order:1}
+.jobs.fixed button[aria-checked="true"]::after{top:6px;right:6px;transform:none;width:18px;height:18px;font-size:11px}
+.jobs-label{font-size:12px;color:var(--muted);font-weight:700;margin-top:4px}
+.newjob{display:grid;grid-template-columns:8.5em minmax(0,1fr);gap:8px}
+.hint.warn{color:var(--amber);font-weight:700}
+.sel-now{margin:0;padding:10px 12px;border-radius:10px;background:var(--bg);font-weight:700}
+.sel-now.warn{color:var(--amber)}
+@media (max-width:360px){.jobs.fixed{grid-template-columns:repeat(2,minmax(0,1fr))}.newjob{grid-template-columns:1fr}}
+
 /* つながりのたしかめ */
 .checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .checks li{display:flex;align-items:center;gap:12px;min-height:52px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}

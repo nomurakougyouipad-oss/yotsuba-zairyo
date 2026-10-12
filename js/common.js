@@ -66,7 +66,7 @@ export async function registerSW() {
 
 /* ---------- つながりのたしかめ（登録ずみの端末で出す。作っているあいだの目印） ----------
    ○＝よい、×＝こまる、…＝たしかめ中 */
-function checkRow(listEl, what) {
+export function checkRow(listEl, what) {
   const li = document.createElement("li");
   li.innerHTML = '<span class="mk" aria-hidden="true"></span><div><div class="what"></div><div class="say"></div></div>';
   li.querySelector(".what").textContent = what;
