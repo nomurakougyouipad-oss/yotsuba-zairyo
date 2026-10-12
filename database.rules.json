@@ -121,6 +121,24 @@
           "$other": { ".validate": false }
         }
       },
+      "prices": {
+        ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
+        ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
+        "$id": {
+          ".validate": "newData.hasChildren(['spec', 'price', 'sup', 'date', 'at'])",
+          "spec": { ".validate": "newData.isString() && newData.val().length <= 300" },
+          "price": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "unit": { ".validate": "newData.isString() && newData.val().length <= 10" },
+          "sup": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "supName": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "key": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "date": { ".validate": "newData.isString() && newData.val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)" },
+          "orderId": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "chuban": { ".validate": "newData.isString() && newData.val().length <= 10" },
+          "at": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
+          "$other": { ".validate": false }
+        }
+      },
       "orders": {
         ".read": "auth != null && ((auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office') || (auth.token.zr_role == 'genba' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'genba' && query.orderByChild == 'chumonsha' && query.equalTo == auth.token.zr_name))",
         ".indexOn": ["chumonsha", "reqId", "chuban", "orderedAt"],
@@ -149,6 +167,32 @@
           "cancelledBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "arrivedAt": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
           "arrivedBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "slips": {
+            "$slip": {
+              ".validate": "$slip.length <= 40 && newData.hasChildren(['date', 'at', 'by'])",
+              "no": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "date": { ".validate": "newData.isString() && newData.val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)" },
+              "amount": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000000" },
+              "rows": {
+                "$row": {
+                  ".validate": "$row.length <= 40 && newData.hasChildren(['spec', 'amount'])",
+                  "spec": { ".validate": "newData.isString() && newData.val().length <= 300" },
+                  "qty": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+                  "unit": { ".validate": "newData.isString() && newData.val().length <= 10" },
+                  "price": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+                  "amount": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000000" },
+                  "$other": { ".validate": false }
+                }
+              },
+              "by": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "at": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
+              "$other": { ".validate": false }
+            }
+          },
+          "nouhin": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000000" },
+          "seikyu": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000000" },
+          "billedAt": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
+          "billedBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "lines": {
             "$line": {
               ".validate": "$line.length <= 40 && newData.hasChildren(['spec', 'qty', 'unit'])",

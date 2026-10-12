@@ -13,6 +13,7 @@ import { errorText } from "./touroku.js";
 import { watchJobs } from "./nippo.js";
 import { jobPicker } from "./kouji.js";
 import { normCatalog, openItem, buildSpec, lineText, loadCart, saveCart, newForm, fmtQty, ymd, kibouText } from "./tanomu.js";
+import { yen, linePrice, priceText, reqMoney } from "./chumon.js";
 
 const CAT_KEY = "yotsuba-zairyo-cat";   // さいごに見た種類（この端末だけ）
 const byOrder = ([, a], [, b]) => (a.order ?? 999) - (b.order ?? 999);
@@ -345,11 +346,25 @@ export function startGenbaApp(main, me) {
             <span class="kouji"><span class="chuban">${esc(r.chuban)}</span><span class="kenmei">${esc(zenkana(r.kenmei))}</span></span>
             <span class="items">${esc(ls.map(lineText).join("\n"))}</span>
             <span class="sent-st s${pg.step}">${esc(pg.label)}</span>
+            ${(() => { const mo = reqMoney(r, ordersFor(r.id)); return !isCancelled(r) && mo.anyKnown
+              ? `<span class="sent-money">金額 <b class="num">${yen(mo.total)}</b>円（税抜）${mo.allKnown ? "" : '<span class="hint">　ほかはまだ</span>'}</span>` : ""; })()}
           </button>`;
       }).join("");
     return `
       <div class="sents">${list}</div>
       <details class="block hidbox"><summary>つながりのたしかめ</summary><ul class="checks" id="checks"></ul></details>`;
+  }
+
+  /** 金額（税抜）：材料屋ごとの材料費と合計。事務所が納品書・請求書から入れたもの */
+  function moneyHTML(r, os) {
+    if (isCancelled(r)) return "";
+    const mo = reqMoney(r, os);
+    if (!mo.per.length) return "";
+    return `
+      <div class="block"><h3>金額（税抜）</h3><dl class="dl yenlist">
+        ${mo.per.map(x => `<dt>${esc(x.sup)}</dt><dd>${x.amount != null ? `<b class="num">${yen(x.amount)}</b>円` : `<span class="hint">まだ（${x.status === "wait" ? "届いていない" : "納品書の金額待ち"}）</span>`}</dd>`).join("")}
+        ${mo.per.length > 1 && mo.anyKnown ? `<dt>合計</dt><dd><b class="num big">${yen(mo.total)}</b>円${mo.allKnown ? "" : '<span class="hint">　ほかはまだ</span>'}</dd>` : ""}
+      </dl><p class="hint">金額は、事務所が納品書や請求書から入れたものです。</p></div>`;
   }
 
   /** 送ったものの中身（下から出る）。事務所がまだ注文していなければ「取り消す」 */
@@ -371,8 +386,12 @@ export function startGenbaApp(main, me) {
               <p class="center"><b>${esc(pg.label)}</b></p>
             </div>`}
         <div class="block"><h3>品物</h3>
-          <ul class="slines">${ls.map(l => { const s = lineStatus(l, os, r); return `<li><span>${esc(lineText(l))}</span>${isCancelled(r) ? "" : `<span class="st ${s.cls}">${esc(s.text)}</span>`}</li>`; }).join("")}</ul>
+          <ul class="slines">${Object.entries(r.lines || {}).map(([lid, l]) => {
+            const s = lineStatus(l, os, r), lp = linePrice(l, lid, os);
+            return `<li><span>${esc(lineText(l))}</span>${isCancelled(r) ? "" : `<span class="st ${s.cls}">${esc(s.text)}</span>`}${lp ? `<span class="lp">${esc(priceText(lp))}</span>` : ""}</li>`;
+          }).join("")}</ul>
         </div>
+        ${moneyHTML(r, os)}
         <div class="block"><dl class="dl">
           <dt>いつほしい</dt><dd>${esc(kibouText(r.kibou))}</dd>
           <dt>届け先</dt><dd>${esc(r.basho || "—")}</dd>

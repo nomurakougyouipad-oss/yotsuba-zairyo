@@ -347,6 +347,38 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .kstats b{color:var(--fg);font-family:var(--f-num);font-weight:600;font-size:15px}
 .kcost{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line);padding-top:8px;font-size:13px}
 .kcost .lab{color:var(--muted);font-weight:700}
+.kcost .num{font-family:var(--f-num);font-weight:600;font-size:24px}
+.kcost .yen{margin-left:2px}
+.khint{font-size:12px;color:var(--muted)}
+/* 事務所：納品書の金額・請求書の金額 */
+.money{font-family:var(--f-num);font-weight:600;font-size:20px;margin-left:auto}
+.slips{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.slips li{border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--surface);display:flex;flex-direction:column;gap:4px}
+.sl-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.sl-lab{font-weight:700}
+.sl-rows summary{cursor:pointer;font-size:13px;color:var(--muted);font-weight:700;min-height:32px;display:flex;align-items:center}
+.sl-rows ul{margin:4px 0 0;padding-left:1.2em;font-size:13px}
+.prows{display:flex;flex-direction:column;gap:8px}
+.prow{display:grid;grid-template-columns:minmax(0,1fr) auto 6em;gap:6px 10px;align-items:center;padding:6px 0;border-top:1px solid var(--line)}
+.prows .prow:first-child{border-top:0}
+.p-spec{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.p-sum{text-align:right;font-family:var(--f-num);font-weight:600}
+.yen-in{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.yen-in .inp{width:8em;text-align:right;font-family:var(--f-num)}
+.ptotal{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0;font-weight:700}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+/* 現場：金額 */
+.sent-money{font-size:13px;color:var(--muted)}
+.sent-money b{font-size:18px;color:var(--fg);margin:0 2px;font-family:var(--f-num);font-weight:600}
+.slines .lp{font-family:var(--f-num);font-size:14px;color:var(--fg)}
+.dl.yenlist{align-items:baseline}
+.dl.yenlist dd b{font-family:var(--f-num);font-size:18px;font-weight:600}
+.dl.yenlist dd b.big{font-size:22px}
+@media (max-width:520px){
+  .prow{grid-template-columns:minmax(0,1fr) auto}
+  .p-spec{grid-column:1 / -1}
+  .two{grid-template-columns:1fr}
+}
 @media (max-width:700px){
   .lrow.has-sup{grid-template-columns:minmax(0,1fr) auto}
   .lrow.has-sup .lsup{grid-column:1 / -1}

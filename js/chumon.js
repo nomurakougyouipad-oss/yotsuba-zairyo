@@ -86,6 +86,92 @@ export async function backToWait(o) {
   await update(ref(db, `zairyo/orders/${o.id}`), { status: "wait", arrivedAt: null, arrivedBy: null });
 }
 
+/* ---------- お金（円・税抜） ---------- */
+/** 1,234 の形 */
+export const yen = n => (n == null || n === "") ? "" : Math.round(Number(n)).toLocaleString("ja-JP");
+/** 入れた字を数にする（全角・カンマ・円・¥・空白はとる）。数でなければ null。単価は小数もよい */
+export function toPrice(v) {
+  const s = String(v ?? "").normalize("NFKC").replace(/[,，、円¥￥\s]/g, "");
+  if (!/^\d+(\.\d+)?$/.test(s)) return null;
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : null;
+}
+/** 材料費＝請求書の金額。まだなら納品書の金額（どちらもなければ null） */
+export const cost = o => (o.seikyu != null ? o.seikyu : o.nouhin != null ? o.nouhin : null);
+/** 納品書（入れた順） [[id, slip]] */
+export const slipsOf = o => Object.entries(o.slips || {}).sort(([, a], [, b]) => (a.at || 0) - (b.at || 0));
+
+/** 納品書の金額を入れる。slip = {no, date, amount, rows:{品物id:{spec, qty, unit, price?, amount}}}
+ *  まだ届いていない注文なら「届いた」にする。単価があれば単価の記録（/zairyo/prices）にも残す */
+export async function addSlip(o, slip, me) {
+  const sid = push(ref(db, `zairyo/orders/${o.id}/slips`)).key;
+  const total = slipsOf(o).reduce((s, [, x]) => s + (Number(x.amount) || 0), 0) + (Number(slip.amount) || 0);
+  const base = `zairyo/orders/${o.id}`;
+  const upd = {
+    [`${base}/slips/${sid}`]: { ...slip, by: me.name, at: serverTimestamp() },
+    [`${base}/nouhin`]: total,
+  };
+  if (o.status === "wait") {
+    upd[`${base}/status`] = "arrived";
+    upd[`${base}/arrivedAt`] = serverTimestamp();
+    upd[`${base}/arrivedBy`] = me.name;
+  }
+  for (const [lid, r] of Object.entries(slip.rows || {})) {
+    if (r.price == null) continue;
+    const pk = push(ref(db, "zairyo/prices")).key;
+    const line = (o.lines || {})[lid] || {};
+    upd[`zairyo/prices/${pk}`] = {
+      spec: r.spec, price: r.price, unit: r.unit || "", sup: o.supplier, supName: o.supplierName, key: line.key || "",
+      date: slip.date, orderId: o.id, chuban: o.chuban, at: serverTimestamp(),
+    };
+  }
+  await update(ref(db), upd);
+}
+
+/** 納品書を消す（入れまちがえたとき） */
+export async function removeSlip(o, sid) {
+  const rest = slipsOf(o).filter(([id]) => id !== sid);
+  await update(ref(db, `zairyo/orders/${o.id}`), {
+    [`slips/${sid}`]: null,
+    nouhin: rest.length ? rest.reduce((s, [, x]) => s + (Number(x.amount) || 0), 0) : null,
+  });
+}
+
+/** 請求が来た（請求書の金額）。「請求ずみ」にする */
+export async function markBilled(o, amount, me) {
+  await update(ref(db, `zairyo/orders/${o.id}`), { status: "billed", seikyu: amount, billedAt: serverTimestamp(), billedBy: me.name });
+}
+
+/** 「請求まだ」にもどす */
+export async function backToArrived(o) {
+  await update(ref(db, `zairyo/orders/${o.id}`), { status: "arrived", seikyu: null, billedAt: null, billedBy: null });
+}
+
+/** 依頼の品物の金額（現場に見せる）：納品書の明細に、その品物の行があれば「@単価 × 数 = 金額」 */
+export function linePrice(l, lineId, os) {
+  const o = l.orderId && os.find(x => x.id === l.orderId && x.status !== "cancelled");
+  if (!o) return null;
+  for (const [, s] of slipsOf(o)) {
+    const r = (s.rows || {})[lineId];
+    if (r && r.amount != null) return { price: r.price ?? null, qty: r.qty ?? null, unit: r.unit || l.unit, amount: r.amount };
+  }
+  return null;
+}
+export const priceText = p => (p.price != null ? `@${yen(p.price)}円 ×${p.qty ?? ""}${p.unit || ""} = ` : "") + `${yen(p.amount)}円`;
+
+/** 依頼の金額（現場に見せる）：材料屋ごとの材料費と合計。allKnown＝全部注文して、全部の金額が入った */
+export function reqMoney(r, os) {
+  const act = os.filter(o => o.status !== "cancelled");
+  const per = act.map(o => ({ sup: o.supplierName, amount: cost(o), status: o.status }));
+  const known = per.filter(x => x.amount != null);
+  return {
+    per,
+    total: known.reduce((s, x) => s + x.amount, 0),
+    anyKnown: known.length > 0,
+    allKnown: known.length > 0 && known.length === per.length && r.status === "ordered",
+  };
+}
+
 /** 注文を取り消して、品物を依頼にもどす（注文は消さずに「取り消した」の印） */
 export async function cancelOrder(o, r, me) {
   const upd = {
