@@ -121,6 +121,23 @@
           "$other": { ".validate": false }
         }
       },
+      "invoices": {
+        ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
+        ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
+        "$id": {
+          ".validate": "newData.hasChildren(['sup', 'supName', 'total', 'orders', 'at', 'by'])",
+          "sup": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "supName": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "no": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "date": { ".validate": "newData.isString() && newData.val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)" },
+          "total": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 10000000000" },
+          "sum": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 10000000000" },
+          "orders": { "$oid": { ".validate": "$oid.length <= 40 && newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000000" } },
+          "by": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "at": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
+          "$other": { ".validate": false }
+        }
+      },
       "prices": {
         ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
         ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
@@ -193,6 +210,7 @@
           "seikyu": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000000" },
           "billedAt": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
           "billedBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "invoiceId": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "lines": {
             "$line": {
               ".validate": "$line.length <= 40 && newData.hasChildren(['spec', 'qty', 'unit'])",

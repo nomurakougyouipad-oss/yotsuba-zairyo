@@ -438,3 +438,15 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .checks .what{font-weight:700;line-height:1.35}
 .checks .say{font-size:13px;color:var(--muted);line-height:1.45}
 .checks li[data-state="bad"] .say{color:var(--danger);font-weight:700}
+/* 事務所：まとめて請求 */
+.brows{display:flex;flex-direction:column}
+.brow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.brows .brow:first-child{border-top:0}
+.b-main{display:flex;gap:10px;align-items:flex-start;min-width:0;cursor:pointer}
+.b-main input{width:22px;height:22px;margin-top:2px;flex:none;accent-color:var(--amber-btn)}
+.b-main > span{display:flex;flex-direction:column;min-width:0}
+.b-top{font-weight:700;overflow-wrap:anywhere}
+.b-top .chuban{font-size:15px}
+.b-items{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.okmsg{margin:0;padding:10px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--blue);color:var(--blue);font-weight:700}
+@media (max-width:520px){ .brow{grid-template-columns:1fr} }

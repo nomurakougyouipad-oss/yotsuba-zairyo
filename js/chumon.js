@@ -144,7 +144,30 @@ export async function markBilled(o, amount, me) {
 
 /** 「請求まだ」にもどす */
 export async function backToArrived(o) {
-  await update(ref(db, `zairyo/orders/${o.id}`), { status: "arrived", seikyu: null, billedAt: null, billedBy: null });
+  await update(ref(db, `zairyo/orders/${o.id}`), { status: "arrived", seikyu: null, billedAt: null, billedBy: null, invoiceId: null });
+}
+
+/** 材料屋ごとにまとめて「請求が来た」（月の請求書）。rows = [{o, amount}]、inv = {no, date, total}
+ *  えらんだ注文をまとめて請求ずみにして、どの請求書でまとめたかを /zairyo/invoices に残す */
+export async function billMany(sup, rows, inv, me) {
+  const iid = push(ref(db, "zairyo/invoices")).key;
+  const orders = Object.fromEntries(rows.map(({ o, amount }) => [o.id, amount]));
+  const upd = {
+    [`zairyo/invoices/${iid}`]: {
+      sup: sup.id, supName: sup.name, no: inv.no || "", date: inv.date, total: inv.total,
+      sum: rows.reduce((s, x) => s + x.amount, 0), orders, at: serverTimestamp(), by: me.name,
+    },
+  };
+  for (const { o, amount } of rows) {
+    const b = `zairyo/orders/${o.id}`;
+    upd[`${b}/status`] = "billed";
+    upd[`${b}/seikyu`] = amount;
+    upd[`${b}/billedAt`] = serverTimestamp();
+    upd[`${b}/billedBy`] = me.name;
+    upd[`${b}/invoiceId`] = iid;
+  }
+  await update(ref(db), upd);
+  return iid;
 }
 
 /** 依頼の品物の金額（現場に見せる）：納品書の明細に、その品物の行があれば「@単価 × 数 = 金額」 */

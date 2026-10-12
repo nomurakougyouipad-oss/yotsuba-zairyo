@@ -9,7 +9,7 @@ import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet } from "./common.js";
 import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
-import { orderText, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, markBilled, backToArrived } from "./chumon.js";
+import { orderText, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, markBilled, backToArrived, billMany } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 
 const pad = n => String(n).padStart(2, "0");
@@ -40,6 +40,7 @@ export function startOfficeApp(main, me) {
           <button type="button" role="tab" data-view="kouji">工事（注番）<wbr>ごと</button>
         </div>
         <input id="q" class="inp search" type="search" placeholder="注番・件名・品名・人でさがす" aria-label="さがす" autocomplete="off">
+        <button type="button" class="btn" id="billBtn">まとめて請求</button>
         <button type="button" class="btn" id="setBtn">⚙ 設定</button>
       </div>
       <div id="filterNote" class="filter-note" hidden></div>
@@ -625,6 +626,139 @@ export function startOfficeApp(main, me) {
     }
   }
 
+  /* ---------- まとめて請求（材料屋ごとの月の請求書。11章 5-4 の B） ---------- */
+  const bulk = { sup: "", pick: {}, amt: {}, totalManual: false, armed: false, done: "" };
+
+  function bulkHTML() {
+    const arrived = (st.orders || []).filter(o => o.status === "arrived");
+    const supIds = [...new Set(arrived.map(o => o.supplier))];
+    const name = id => ((st.sups || {})[id] || {}).name || (arrived.find(o => o.supplier === id) || {}).supplierName || id;
+    const list = bulk.sup ? sortOrders(arrived.filter(o => o.supplier === bulk.sup)).reverse() : [];
+    return `
+      <div class="pw" id="bulkWrap">
+        <div class="panel-head"><div><span class="eyebrow">月の請求書</span><h2 id="panelTitle">まとめて請求</h2></div>
+          <button type="button" class="x" data-close aria-label="閉じる">×</button></div>
+        <p class="hint">材料屋から来た請求書で、「届いた・請求まだ」の注文をまとめて「請求ずみ」にします。1件ずつのときは、注文の中身の「請求が来た」でもできます。</p>
+        ${bulk.done ? `<p class="okmsg">${esc(bulk.done)}</p>` : ""}
+        <div class="field"><label for="bSup">材料屋</label>
+          <select id="bSup" class="inp">
+            <option value="">${supIds.length ? "えらんでください" : "「届いた・請求まだ」の注文はありません"}</option>
+            ${supIds.map(id => `<option value="${esc(id)}"${id === bulk.sup ? " selected" : ""}>${esc(name(id))}（${arrived.filter(o => o.supplier === id).length}件）</option>`).join("")}
+          </select></div>
+        ${bulk.sup && list.length ? `
+          <div class="block"><h3>届いた・請求まだの注文（${list.length}件）</h3>
+            <div class="brows">${list.map(o => `
+              <div class="brow">
+                <label class="b-main"><input type="checkbox" data-bpick="${esc(o.id)}"${bulk.pick[o.id] ? " checked" : ""}>
+                  <span><span class="b-top">届いた ${o.arrivedAt ? md(o.arrivedAt) : "—"}・<span class="chuban">${esc(o.chuban)}</span> ${esc(zenkana(o.kenmei))}</span>
+                    <span class="b-items">${esc(Object.values(o.lines || {}).map(lineText).join("／"))}</span></span></label>
+                <div class="yen-in"><input class="inp" data-bamt="${esc(o.id)}" inputmode="numeric" placeholder="金額" value="${esc(bulk.amt[o.id] ?? "")}" aria-label="${esc(o.chuban)} の金額"><span>円</span></div>
+              </div>`).join("")}</div>
+            <p class="ptotal"><span id="bCount"></span><span class="money" id="bSum"></span><span>円</span></p>
+            <p class="hint">金額のはじめは、納品書の金額です。請求書とちがう注文は、直してください。</p>
+          </div>
+          <div class="block">
+            <div class="ptotal"><label for="bTotal">請求書の合計（税抜）</label><div class="yen-in"><input id="bTotal" class="inp" inputmode="numeric" placeholder="0"><span>円</span></div></div>
+            <div class="two">
+              <div class="field"><label for="bNo">請求書の番号（あれば）</label><input id="bNo" class="inp" maxlength="40" autocomplete="off"></div>
+              <div class="field"><label for="bDate">請求書の日付</label><input id="bDate" class="inp" type="date" value="${ymd(0)}"></div>
+            </div>
+            <p class="warn" id="bDiff" hidden></p>
+            <p class="err" id="bErr"></p>
+            <button type="button" class="btn primary big full" id="bGo">請求ずみにする</button>
+          </div>` : ""}
+      </div>`;
+  }
+
+  /** えらんだ件数・合計・請求書とのちがいを出す */
+  function bulkCalc(w) {
+    const picked = Object.keys(bulk.pick).filter(id => bulk.pick[id]);
+    const sum = picked.reduce((s, id) => s + (toPrice(bulk.amt[id]) || 0), 0);
+    if (!w.querySelector("#bSum")) return;
+    w.querySelector("#bCount").textContent = `えらんだ ${picked.length}件の合計`;
+    w.querySelector("#bSum").textContent = yen(sum);
+    const t = w.querySelector("#bTotal");
+    if (!bulk.totalManual) t.value = picked.length ? yen(sum) : "";
+    const total = toPrice(t.value), diff = w.querySelector("#bDiff");
+    const off = total != null && Math.round(total) !== Math.round(sum);
+    diff.hidden = !off;
+    diff.textContent = off ? `えらんだ注文の合計（${yen(sum)}円）と、請求書の合計（${yen(total)}円）が ${yen(Math.abs(total - sum))}円 ちがいます。たしかめてください。` : "";
+    const go = w.querySelector("#bGo");
+    go.textContent = bulk.armed ? "ちがいのまま請求ずみにする（もう一度押す）" : `えらんだ ${picked.length}件を請求ずみにする`;
+    go.disabled = !picked.length;
+  }
+
+  function openBulk(keepScroll = false) {
+    const panel = document.getElementById("panel");
+    const y = keepScroll && panel ? panel.scrollTop : 0;
+    st.openId = "";
+    st.openOrderId = "";
+    openSheet(bulkHTML(), p => {
+      p.scrollTop = y;
+      const w = p.querySelector("#bulkWrap");
+      bulkCalc(w);
+      w.addEventListener("change", e => {
+        if (e.target.id === "bSup") {
+          // 材料屋をえらんだら、その材料屋の「届いた・請求まだ」を全部えらんで、金額は納品書の金額から
+          bulk.sup = e.target.value;
+          bulk.pick = {};
+          bulk.amt = {};
+          bulk.totalManual = false;
+          bulk.armed = false;
+          bulk.done = "";
+          for (const o of (st.orders || []).filter(x => x.status === "arrived" && x.supplier === bulk.sup)) {
+            bulk.pick[o.id] = true;
+            bulk.amt[o.id] = o.nouhin != null ? yen(o.nouhin) : "";
+          }
+          openBulk(true);
+        } else if (e.target.dataset.bpick) {
+          bulk.pick[e.target.dataset.bpick] = e.target.checked;
+          bulk.armed = false;
+          bulkCalc(w);
+        }
+      });
+      w.addEventListener("input", e => {
+        if (e.target.dataset.bamt) bulk.amt[e.target.dataset.bamt] = e.target.value;
+        if (e.target.id === "bTotal") bulk.totalManual = !!e.target.value.trim();
+        if (e.target.dataset.bamt || e.target.id === "bTotal") { bulk.armed = false; w.querySelector("#bErr").textContent = ""; bulkCalc(w); }
+      });
+      w.addEventListener("click", e => {
+        if (e.target.id === "bGo") bulkGo(w, e.target).catch(ex => { w.querySelector("#bErr").textContent = errorText(ex); e.target.disabled = false; bulkCalc(w); });
+      });
+    }, { side: true });
+  }
+
+  async function bulkGo(w, btn) {
+    const err = w.querySelector("#bErr");
+    const sup = { id: bulk.sup, name: ((st.sups || {})[bulk.sup] || {}).name || "" };
+    const rows = [];
+    for (const [id, on] of Object.entries(bulk.pick)) {
+      if (!on) continue;
+      const o = (st.orders || []).find(x => x.id === id && x.status === "arrived");
+      if (!o) continue;
+      const a = toPrice(bulk.amt[id]);
+      if (a == null) { err.textContent = `${o.chuban} の金額を入れてください（入れないなら、チェックを外してください）`; return; }
+      rows.push({ o, amount: Math.round(a) });
+      if (!sup.name) sup.name = o.supplierName;
+    }
+    if (!rows.length) { err.textContent = "請求ずみにする注文をえらんでください"; return; }
+    const total = toPrice(w.querySelector("#bTotal").value);
+    if (total == null) { err.textContent = "請求書の合計を入れてください"; return; }
+    const sum = rows.reduce((s, x) => s + x.amount, 0);
+    if (Math.round(total) !== sum && !bulk.armed) { bulk.armed = true; bulkCalc(w); return; }   // ちがうときは、もう一度押してもらう
+    btn.disabled = true;
+    btn.textContent = "しまっています…";
+    await billMany(sup, rows, { no: w.querySelector("#bNo").value.trim(), date: w.querySelector("#bDate").value || ymd(0), total: Math.round(total) }, me);
+    bulk.done = `${sup.name} の ${rows.length}件を請求ずみにしました（合計 ${yen(sum)}円）`;
+    bulk.sup = "";
+    bulk.pick = {};
+    bulk.amt = {};
+    bulk.totalManual = false;
+    bulk.armed = false;
+    toast(bulk.done);
+    openBulk();
+  }
+
   /** しまい終わったら、欄にカーソルが残っていても（Safari など）、中身をかきなおす */
   function afterSave(w) {
     const a = document.activeElement;
@@ -650,7 +784,7 @@ export function startOfficeApp(main, me) {
 
   /* ---------- 押したとき（一覧） ---------- */
   main.addEventListener("click", e => {
-    const t = e.target.closest("[data-newbox],[data-filter],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],#setBtn,#setBack,#clearQ");
+    const t = e.target.closest("[data-newbox],[data-filter],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],#billBtn,#setBtn,#setBack,#clearQ");
     if (!t || t.disabled) return;
     const d = t.dataset;
     if ("newbox" in d) { st.view = "irai"; st.filter = "all"; draw(); }
@@ -672,6 +806,7 @@ export function startOfficeApp(main, me) {
     else if (d.reqopen) openReq(d.reqopen);
     else if (d.req) openReq(d.req);
     else if (d.open) openOrder(d.open);
+    else if (t.id === "billBtn") { bulk.done = ""; openBulk(); }
     else if (t.id === "setBtn") showSettings(true);
     else if (t.id === "setBack") showSettings(false);
     else if (t.id === "clearQ") { st.q = ""; st.filter = "all"; $("#q", main).value = ""; draw(); }
