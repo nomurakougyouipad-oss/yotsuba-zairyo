@@ -3,6 +3,8 @@
 // - Firebase の部品の版は、ほかのよつばのアプリと同じ 12.19.0
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
 import { getDatabase, ref, onValue, get } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+import { getAuth } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-functions.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBcbbpWgnsUO00_CkvSEV7QLCl0sXjKlEw",
@@ -16,19 +18,24 @@ const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig);
 export const db = getDatabase(app);
+export const auth = getAuth(app);
+const functions = getFunctions(app, "asia-southeast1");   // サーバーのプログラムの場所（データベースと同じシンガポール）
+
+/** サーバーのプログラムを呼ぶ。call("zairyoRegisterDevice")({ … }) */
+export const call = name => httpsCallable(functions, name);
 
 /** データベースにつながっているかを見張ります。cb(true / false) */
 export function watchConnected(cb) {
   return onValue(ref(db, ".info/connected"), snap => cb(snap.val() === true));
 }
 
-/** 鍵（ルール）がかかっているかをたしかめます。登録していない人が読めなければ true */
-export async function isLocked() {
+/** 登録した端末だけが読める所（注文する人の一覧）を読めるかをたしかめます */
+export async function canReadMaster() {
   try {
-    await get(ref(db, "zairyo"));
-    return false;
+    await get(ref(db, "zairyo/master/staff"));
+    return true;
   } catch (err) {
-    if (/permission/i.test(String(err && err.message))) return true;
+    if (/permission/i.test(String(err && err.message))) return false;
     throw err;
   }
 }

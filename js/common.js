@@ -1,7 +1,10 @@
 // よつば材料注文 共通の部品（明るい／暗い・ホーム画面アプリ・つながりのたしかめ）
-import { watchConnected, isLocked } from "./firebase.js";
+import { watchConnected, canReadMaster } from "./firebase.js";
 
 export const $ = (sel, el = document) => el.querySelector(sel);
+
+/** 文字を HTML に入れるときに使う（名前などに < > があっても、こわれないように） */
+export const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 /* ---------- 明るい／暗い ----------
    最初はスマホ・パソコンの設定どおり。☀／☾ を押したら覚えます（覚える名前は試作と同じ yotsuba-theme）
@@ -44,7 +47,7 @@ export async function registerSW() {
   }
 }
 
-/* ---------- つながりのたしかめ（1回目の「土台」用） ----------
+/* ---------- つながりのたしかめ（登録ずみの端末で出す。作っているあいだの目印） ----------
    ○＝よい、×＝こまる、…＝たしかめ中 */
 function checkRow(listEl, what) {
   const li = document.createElement("li");
@@ -75,13 +78,13 @@ export function runChecks(listEl, { sw = false } = {}) {
     }
   });
 
-  const lock = checkRow(listEl, "鍵がかかっている");
-  lock("wait", "たしかめています…");
-  isLocked().then(
-    locked => locked
-      ? lock("ok", "登録していない人は読めません（これで正しい）")
-      : lock("bad", "鍵がかかっていません。すぐ知らせてください"),
-    err => lock("bad", "たしかめられませんでした（" + ((err && err.message) || err) + "）")
+  const read = checkRow(listEl, "登録が使える");
+  read("wait", "たしかめています…");
+  canReadMaster().then(
+    ok => ok
+      ? read("ok", "登録した端末だけが読める所を、読めました")
+      : read("bad", "読めません。登録しなおしてください"),
+    err => read("bad", "たしかめられませんでした（" + ((err && err.message) || err) + "）")
   );
 
   if (sw) {

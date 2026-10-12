@@ -1,0 +1,27 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "zairyo": {
+      "devices": {
+        ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
+        "$uid": {
+          ".read": "auth != null && auth.uid == $uid"
+        }
+      },
+      "master": {
+        ".read": "auth != null && (auth.token.zr_role == 'genba' || auth.token.zr_role == 'office') && root.child('zairyo/devices/' + auth.uid + '/role').val() == auth.token.zr_role",
+        ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
+        "staff": {
+          "$name": {
+            ".validate": "$name.length >= 1 && $name.length <= 20 && newData.hasChildren(['addedAt'])",
+            "addedAt": { ".validate": "newData.isNumber()" },
+            "hidden": { ".validate": "newData.isBoolean()" },
+            "$other": { ".validate": false }
+          }
+        },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}
