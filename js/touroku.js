@@ -75,24 +75,3 @@ function isIOS() {
 function isStandalone() {
   return navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
 }
-
-/** しらべ用の1行（登録の画面の下に小さく出す。登録が消える問題が分かったら外す）
- *  例：しらべ用：番号 aBjfGP／前の番号 なし／保存 LS○ IDB○／ホーム画面のアプリ */
-export async function diagText() {
-  let ls = false;
-  try {
-    localStorage.setItem("yotsuba-zairyo-test", "1");
-    ls = localStorage.getItem("yotsuba-zairyo-test") === "1";
-    localStorage.removeItem("yotsuba-zairyo-test");
-  } catch (err) { }
-  const idb = await new Promise(resolve => {
-    try {
-      const req = indexedDB.open("yotsuba-zairyo-test");
-      req.onsuccess = () => { req.result.close(); indexedDB.deleteDatabase("yotsuba-zairyo-test"); resolve(true); };
-      req.onerror = () => resolve(false);
-    } catch (err) { resolve(false); }
-  });
-  const cur = auth.currentUser ? auth.currentUser.uid.slice(0, 6) : "なし";
-  const last = lastUid() ? lastUid().slice(0, 6) : "なし";
-  return `しらべ用：番号 ${cur}／前の番号 ${last}／保存 LS${ls ? "○" : "×"} IDB${idb ? "○" : "×"}／${isStandalone() ? "ホーム画面のアプリ" : "ブラウザ"}`;
-}

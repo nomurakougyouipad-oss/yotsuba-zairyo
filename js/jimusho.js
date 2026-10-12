@@ -1,9 +1,8 @@
 // 事務所のパソコン（jimusho.html）
-// 登録していない → 事務所の合言葉＋このパソコンの名前 → 登録ずみの画面（いまは「注文する人」の一覧だけ）
-import { ref, onValue, set, remove, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
-import { db } from "./firebase.js";
+// 登録していない → 事務所の合言葉＋このパソコンの名前 → 登録ずみの画面（いまは「⚙ 設定」だけ。依頼・注文の画面は 11章 5）
 import { $, esc, initTheme, runChecks } from "./common.js";
-import { whoAmI, register, errorText, diagText } from "./touroku.js";
+import { whoAmI, register, errorText } from "./touroku.js";
+import { renderSettings } from "./settei.js";
 
 initTheme();
 const main = $("#main");
@@ -46,9 +45,7 @@ function showCode(me) {
         <p class="err" id="err" role="alert"></p>
         <button class="btn primary big full" type="submit" id="go">登録する</button>
       </form>
-      <p class="hint" id="diag"></p>
     </section>`;
-  diagText().then(t => { if ($("#diag")) $("#diag").textContent = t; });
   const go = $("#go"), err = $("#err");
   $("#codeForm").addEventListener("submit", async e => {
     e.preventDefault();
@@ -73,71 +70,11 @@ function showCode(me) {
 function showHome(me) {
   $("#who").textContent = `事務所のパソコン・${me.name}`;
   main.innerHTML = `
-    <div class="cols">
-      <section class="card">
-        <h2>注文する人</h2>
-        <p class="muted">現場のスマホで登録するときに、この中から自分の名前をえらびます。</p>
-        <ul class="staff" id="staff"><li class="muted">読んでいます…</li></ul>
-        <form id="addForm" class="add" novalidate>
-          <input id="newName" class="inp" type="text" maxlength="20" autocomplete="off" placeholder="足す名前" aria-label="足す名前">
-          <button class="btn primary" type="submit">足す</button>
-        </form>
-        <p class="err" id="err" role="alert"></p>
-      </section>
-      <section class="card">
-        <h2>つながりのたしかめ</h2>
-        <ul class="checks" id="checks"></ul>
-      </section>
-    </div>`;
+    <section class="card" id="settei"></section>
+    <section class="card">
+      <h2>つながりのたしかめ</h2>
+      <ul class="checks" id="checks"></ul>
+    </section>`;
+  renderSettings($("#settei"));
   runChecks($("#checks"));
-  staffEditor();
-}
-
-/** 注文する人の一覧（足す・消す）。なおす・かくすは 11章 3 で足す */
-function staffEditor() {
-  const list = $("#staff"), err = $("#err"), input = $("#newName");
-  let names = [];
-
-  onValue(ref(db, "zairyo/master/staff"), snap => {
-    names = Object.keys(snap.val() || {}).sort((a, b) => a.localeCompare(b, "ja"));
-    list.innerHTML = names.length
-      ? names.map(n => `<li><span class="nm">${esc(n)}</span><button type="button" class="btn danger" data-del="${esc(n)}">消す</button></li>`).join("")
-      : '<li class="muted">まだだれもいません。下で名前を足してください。</li>';
-  }, ex => {
-    list.innerHTML = `<li class="err">${esc(errorText(ex))}</li>`;
-  });
-
-  // 消すときは2回押す（まちがえて消さないように）
-  list.addEventListener("click", async e => {
-    const b = e.target.closest("[data-del]");
-    if (!b) return;
-    if (b.dataset.armed !== "1") {
-      b.dataset.armed = "1";
-      b.textContent = "もう一度押すと消えます";
-      setTimeout(() => { if (b.isConnected) { b.dataset.armed = ""; b.textContent = "消す"; } }, 4000);
-      return;
-    }
-    err.textContent = "";
-    try {
-      await remove(ref(db, `zairyo/master/staff/${b.dataset.del}`));
-    } catch (ex) {
-      err.textContent = errorText(ex);
-    }
-  });
-
-  $("#addForm").addEventListener("submit", async e => {
-    e.preventDefault();
-    const name = input.value.trim();
-    err.textContent = "";
-    if (!name) { err.textContent = "名前を入れてください"; return; }
-    if ([...name].length > 20) { err.textContent = "名前は20文字までにしてください"; return; }
-    if (/[.#$\[\]\/]/.test(name)) { err.textContent = "名前に . # $ [ ] / は使えません"; return; }
-    if (names.includes(name)) { err.textContent = "もう入っています"; return; }
-    try {
-      await set(ref(db, `zairyo/master/staff/${name}`), { addedAt: serverTimestamp() });
-      input.value = "";
-    } catch (ex) {
-      err.textContent = errorText(ex);
-    }
-  });
 }

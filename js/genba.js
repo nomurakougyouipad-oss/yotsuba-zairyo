@@ -1,7 +1,7 @@
 // 現場のスマホ（index.html）
 // 登録していない → 会社の合言葉 → 名前をえらぶ → 登録ずみの画面（材料をたのむ画面は 11章 4 で作る）
 import { $, esc, initTheme, registerSW, runChecks } from "./common.js";
-import { whoAmI, register, errorText, isIPhoneBrowser, diagText } from "./touroku.js";
+import { whoAmI, register, errorText, isIPhoneBrowser } from "./touroku.js";
 
 initTheme();
 registerSW();
@@ -52,9 +52,7 @@ function showCode(me) {
         <p class="err" id="err" role="alert"></p>
         <button class="btn primary big full" type="submit" id="go">次へ</button>
       </form>
-      <p class="hint" id="diag"></p>
     </section>`;
-  diagText().then(t => { if ($("#diag")) $("#diag").textContent = t; });
   const go = $("#go"), err = $("#err");
   $("#codeForm").addEventListener("submit", async e => {
     e.preventDefault();

@@ -6,6 +6,23 @@ export const $ = (sel, el = document) => el.querySelector(sel);
 /** 文字を HTML に入れるときに使う（名前などに < > があっても、こわれないように） */
 export const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
+/** 下に少しだけ出るお知らせ（「○○をしまいました」など） */
+let toastTimer = 0;
+export function toast(msg) {
+  let t = document.getElementById("toast");
+  if (!t) {
+    t = document.createElement("div");
+    t.id = "toast";
+    t.className = "toast";
+    t.setAttribute("role", "status");
+    document.body.append(t);
+  }
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 2800);
+}
+
 /* ---------- 明るい／暗い ----------
    最初はスマホ・パソコンの設定どおり。☀／☾ を押したら覚えます（覚える名前は試作と同じ yotsuba-theme）
    覚えた方を画面が出る前に当てるのは、各ページの <head> の小さなスクリプトです */

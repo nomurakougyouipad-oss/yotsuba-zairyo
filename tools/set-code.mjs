@@ -66,10 +66,8 @@ const file = join(dir, "code.json");
 try {
   writeFileSync(file, JSON.stringify({ ...hashCode(first), setAt: Date.now() }));
   console.log("\nFirebase にしまっています…");
-  const r = spawnSync("firebase", ["database:set", `/config/codes/${pick.kind}`, `"${file}"`, "--project", PROJECT, "--force"], {
-    stdio: "inherit",
-    shell: process.platform === "win32",
-  });
+  // Windows では firebase.cmd なので、1つの文にしてシェルで動かす
+  const r = spawnSync(`firebase database:set /config/codes/${pick.kind} "${file}" --project ${PROJECT} --force`, { stdio: "inherit", shell: true });
   if (r.status === 0) {
     console.log(`\n${pick.label}をしまいました。`);
   } else {
