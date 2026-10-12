@@ -95,13 +95,58 @@
           "sentAt": { ".validate": "newData.isNumber() && (data.exists() || newData.val() == now)" },
           "status": {
             ".write": "auth != null && auth.token.zr_role == 'genba' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'genba' && data.parent().child('chumonsha').val() == auth.token.zr_name && data.val() == 'sent' && newData.val() == 'cancelled' && data.parent().child('ordered').val() != true",
-            ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 20"
+            ".validate": "newData.isString() && newData.val().matches(/^(sent|ordered|cancelled)$/) && (!data.exists() || data.val() != 'cancelled' || newData.val() == 'cancelled')"
           },
           "cancelledAt": {
             ".write": "auth != null && auth.token.zr_role == 'genba' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'genba' && data.parent().child('chumonsha').val() == auth.token.zr_name && !data.exists() && newData.parent().child('status').val() == 'cancelled' && data.parent().child('ordered').val() != true",
             ".validate": "newData.isNumber() && newData.val() == now"
           },
-          "ordered": { ".validate": "newData.isBoolean()" },
+          "ordered": { ".validate": "newData.isBoolean() && (newData.val() == false || data.parent().child('status').val() != 'cancelled')" },
+          "lines": {
+            "$line": {
+              ".validate": "$line.length <= 40 && newData.hasChildren(['spec', 'qty', 'unit'])",
+              "key": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "cat": { ".validate": "newData.isString() && newData.val().length <= 20" },
+              "name": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "vals": { "$k": { ".validate": "$k.length <= 20 && newData.isString() && newData.val().length <= 200" } },
+              "spec": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 300" },
+              "note": { ".validate": "newData.isString() && newData.val().length <= 200" },
+              "qty": { ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() < 100000" },
+              "unit": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 10" },
+              "supplier": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "orderId": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "$other": { ".validate": false }
+            }
+          },
+          "$other": { ".validate": false }
+        }
+      },
+      "orders": {
+        ".read": "auth != null && ((auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office') || (auth.token.zr_role == 'genba' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'genba' && query.orderByChild == 'chumonsha' && query.equalTo == auth.token.zr_name))",
+        ".indexOn": ["chumonsha", "reqId", "chuban", "orderedAt"],
+        "$id": {
+          ".read": "auth != null && ((auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office') || (auth.token.zr_role == 'genba' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'genba' && data.child('chumonsha').val() == auth.token.zr_name))",
+          ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
+          ".validate": "newData.hasChildren(['supplier', 'supplierName', 'chuban', 'kenmei', 'status', 'orderedAt', 'orderedBy', 'lines'])",
+          "reqId": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "supplier": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" },
+          "supplierName": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" },
+          "to": { ".validate": "newData.isString() && newData.val().length <= 20" },
+          "chuban": { ".validate": "newData.isString() && newData.val().matches(/^[A-Z]{2}[0-9]{5}$/)" },
+          "kenmei": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 100" },
+          "tantou": { ".validate": "newData.isString() && newData.val().length <= 20" },
+          "chumonsha": { ".validate": "newData.isString() && newData.val().length <= 20" },
+          "kibou": { ".validate": "newData.isString() && (newData.val() == '最短' || newData.val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/))" },
+          "basho": { ".validate": "newData.isString() && newData.val().length <= 20" },
+          "bashoText": { ".validate": "newData.isString() && newData.val().length <= 200" },
+          "contacted": { ".validate": "newData.isBoolean()" },
+          "memo": { ".validate": "newData.isString() && newData.val().length <= 500" },
+          "status": { ".validate": "newData.isString() && newData.val().matches(/^(wait|arrived|billed|cancelled)$/)" },
+          "orderedAt": { ".validate": "newData.isNumber() && (data.exists() || newData.val() == now)" },
+          "orderedBy": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" },
+          "orderedByUid": { ".validate": "newData.isString() && (data.exists() || newData.val() == auth.uid)" },
+          "cancelledAt": { ".validate": "newData.isNumber() && newData.val() == now" },
+          "cancelledBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "lines": {
             "$line": {
               ".validate": "$line.length <= 40 && newData.hasChildren(['spec', 'qty', 'unit'])",

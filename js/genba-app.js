@@ -22,11 +22,19 @@ const hm = ts => { const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.
 const linesOf = r => Object.values(r.lines || {});
 const isCancelled = r => r.status === "cancelled";
 
-/** 依頼の進み具合（いまは「送った」だけ。注文した・届いた は 11章 5 で足す） */
-function progress(r) {
+/** 依頼の進み具合。os = この依頼から事務所が作った注文（取り消した注文は数えない）。届いた は 11章 5-3 で足す */
+function progress(r, os = []) {
   if (isCancelled(r)) return { step: 0, label: "取り消した" };
-  if (r.ordered) return { step: 2, label: "事務所が注文した" };
-  return { step: 1, label: "事務所で確認中" };
+  const act = os.filter(o => o.status !== "cancelled");
+  if (!act.length) return { step: 1, label: "事務所で確認中" };
+  const names = [...new Set(act.map(o => o.supplierName))].join("・");
+  const orderedAt = Math.min(...act.map(o => o.orderedAt || Infinity));
+  return { step: 2, label: `${r.status === "ordered" ? "事務所が注文した" : "一部を注文した"}（${names}）`, orderedAt };
+}
+/** 品物ごとのようす */
+function lineStatus(l, os) {
+  const o = l.orderId && os.find(x => x.id === l.orderId && x.status !== "cancelled");
+  return o ? { cls: "s2", text: `注文ずみ（${o.supplierName}）・まだ届いていない` } : { cls: "s1", text: "事務所で確認中" };
 }
 
 export function startGenbaApp(main, me) {
@@ -34,7 +42,9 @@ export function startGenbaApp(main, me) {
     tab: "tanomu", cat: "", catalog: null, jobs: null, kaisha: {}, places: null, sups: null,
     cart: loadCart(), sending: false, last: null,
     reqs: null,   // 自分が送った依頼 [{id, …}]（新しい順）
+    orders: [],   // 自分の依頼から事務所が作った注文
   };
+  const ordersFor = reqId => st.orders.filter(o => o.reqId === reqId);
   let picker = null, nippoRow = null, askDel = "";
   let catChosen = false;   // 種類のタブを自分でえらんだか（えらんでいなければ、★いつもの があればそれを出す）
   try { st.cat = localStorage.getItem(CAT_KEY) || ""; catChosen = !!st.cat; } catch (err) { }
@@ -320,7 +330,7 @@ export function startGenbaApp(main, me) {
     const list = st.reqs === null ? '<p class="muted">読んでいます…</p>'
       : !st.reqs.length ? `<p class="empty">${esc(me.name)}さんが送った注文は、まだありません。</p>`
       : st.reqs.map(r => {
-        const pg = progress(r), ls = linesOf(r);
+        const pg = progress(r, ordersFor(r.id)), ls = linesOf(r);
         return `
           <button type="button" class="sent${isCancelled(r) ? " cx" : ""}" data-sent="${esc(r.id)}">
             <span class="sent-top"><span>${md(r.sentAt)} ${hm(r.sentAt)} に送った</span><span>${ls.length}点</span></span>
@@ -338,9 +348,9 @@ export function startGenbaApp(main, me) {
   function openSent(id) {
     const r = (st.reqs || []).find(x => x.id === id);
     if (!r) return;
-    const pg = progress(r), ls = linesOf(r);
+    const os = ordersFor(r.id), pg = progress(r, os), ls = linesOf(r);
     const canCancel = !isCancelled(r) && !r.ordered;
-    const steps = [["送った", r.sentAt, pg.step >= 1], ["注文した", null, pg.step >= 2], ["届いた", null, pg.step >= 3]];
+    const steps = [["送った", r.sentAt, pg.step >= 1], ["注文した", pg.orderedAt, pg.step >= 2], ["届いた", null, pg.step >= 3]];
     const html = `
       <div class="pw" id="sentWrap">
         <div class="panel-head"><div><span class="eyebrow">送ったもの　${md(r.sentAt)} ${hm(r.sentAt)}</span>
@@ -353,7 +363,7 @@ export function startGenbaApp(main, me) {
               <p class="center"><b>${esc(pg.label)}</b></p>
             </div>`}
         <div class="block"><h3>品物</h3>
-          <ul class="slines">${ls.map(l => `<li><span>${esc(lineText(l))}</span>${isCancelled(r) ? "" : `<span class="st s1">${esc(pg.label)}</span>`}</li>`).join("")}</ul>
+          <ul class="slines">${ls.map(l => { const s = lineStatus(l, os); return `<li><span>${esc(lineText(l))}</span>${isCancelled(r) ? "" : `<span class="st ${s.cls}">${esc(s.text)}</span>`}</li>`; }).join("")}</ul>
         </div>
         <div class="block"><dl class="dl">
           <dt>いつほしい</dt><dd>${esc(kibouText(r.kibou))}</dd>
@@ -510,6 +520,11 @@ export function startGenbaApp(main, me) {
     st.reqs = Object.entries(s.val() || {}).map(([id, r]) => ({ id, ...r })).sort((a, b) => (b.sentAt || 0) - (a.sentAt || 0));
     if (st.tab === "sent" || st.tab === "tanomu") draw();
   }, ex => { st.reqs = []; toast("送ったものを読めませんでした（" + errorText(ex) + "）"); });
+  // 自分の依頼から事務所が作った注文（ルールで、この問い合わせだけ通す）。読めないときは「事務所で確認中」のまま
+  onValue(query(ref(db, "zairyo/orders"), orderByChild("chumonsha"), equalTo(me.name)), s => {
+    st.orders = Object.entries(s.val() || {}).map(([id, o]) => ({ id, ...o }));
+    if (st.tab === "sent") draw();
+  }, () => { st.orders = []; });
 
   draw();
 }

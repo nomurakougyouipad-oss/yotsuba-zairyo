@@ -317,7 +317,25 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .tag{display:inline-block;font-size:11px;font-weight:700;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 6px;margin-right:6px;vertical-align:1px}
 .lqty{white-space:nowrap;font-size:13px}
 .lqty .num{font-family:var(--f-num);font-size:18px;font-weight:600;margin-right:2px}
+/* 事務所：依頼の中身で材料屋を決めて注文する */
+.lrow.has-sup{grid-template-columns:minmax(0,1fr) auto minmax(0,220px)}
+.lrow.ordered .lspec{color:var(--muted)}
+.lsup select{min-height:44px}
+.done-sup{font-size:13px;font-weight:700;color:var(--blue)}
+.groups{display:flex;flex-direction:column;gap:10px}
+.group{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--surface);display:flex;flex-direction:column;gap:8px}
+.g-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.g-tag{font-size:12px;font-weight:700;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 6px;white-space:nowrap}
+.g-n{margin-left:auto}
+.g-lines{margin:0;padding-left:1.2em;font-size:14px;display:flex;flex-direction:column;gap:2px;overflow-wrap:anywhere}
+.copybox{font-family:var(--f-ja);font-size:14px;line-height:1.6}
+.olist{display:flex;flex-direction:column;gap:10px}
+.oitem{border:1px solid var(--line);border-left:4px solid var(--amber-btn);border-radius:10px;padding:10px 12px;background:var(--surface);display:flex;flex-direction:column;gap:6px}
+.oitem.cx{border-left-color:var(--grey);opacity:.7}
+.oi-head{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}
 @media (max-width:700px){
+  .lrow.has-sup{grid-template-columns:minmax(0,1fr) auto}
+  .lrow.has-sup .lsup{grid-column:1 / -1}
   .boxes{grid-template-columns:repeat(2,minmax(0,1fr))}
   .box{padding:10px 10px 8px}
   .box .num{font-size:32px}
