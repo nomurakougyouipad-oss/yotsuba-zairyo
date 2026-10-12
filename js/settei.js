@@ -150,7 +150,7 @@ function kListHTML() {
       <ul class="klist">${fk.filter(x => !x.hidden).map(kRow).join("")}</ul>
       <form class="kadd" data-form="kotei">
         <input id="fNewNo" class="inp num" maxlength="8" autocomplete="off" placeholder="例 MM${y}000" aria-label="固定の注番">
-        <input id="fNewName" class="inp" maxlength="40" autocomplete="off" placeholder="名前（例 松前工場）" aria-label="名前">
+        <input id="fNewName" class="inp" maxlength="40" autocomplete="off" placeholder="名前（例 ○○工場）" aria-label="名前">
         <button class="btn">足す</button>
       </form>
       <p class="hint">注番の年（いまは ${y}）は、上の「注番の年」からつきます。年が変わっても、固定の注番を直さなくてだいじょうぶです。</p>
