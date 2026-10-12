@@ -1,7 +1,8 @@
 # 置き場（GitHub）に入れないもの
-# 引き渡しの資料・試作・Claude Code への決まりごと（人の名前・材料屋・注番などが入っているため）
+# 引き渡しの資料・試作・Claude Code など AI への決まりごと（人の名前・材料屋・注番などが入っているため）
 HANDOFF.md
 CLAUDE.md
+AGENTS.md
 docs/
 prototype/
 # このパソコンだけで使うもの（試し見のサーバーなど）

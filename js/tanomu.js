@@ -2,7 +2,7 @@
 // - 品物一覧はデータベース（/zairyo/master/catalog）。書き方のひな形（tpl）に、えらんだ値を入れて品名にする（buildSpec）
 // - カートは、この端末にしまう（iPhone はほかのアプリから戻ると、開きなおすことがあるため）
 // - 「自由に書く」と「金物」には、お店で探すボタン・写真（4枚まで）・お店のページのリンク（11章 6。js/shashin.js）
-import { esc, toast, openSheet, closeSheet } from "./common.js";
+import { esc, toast, openSheet, closeSheet, saveDraft, clearDraft } from "./common.js";
 import { SHOPS, MAX_PHOTOS, safeLink, linkLabel, photoPicker, deletePhoto } from "./shashin.js";
 
 /* ---------- 品物一覧 ---------- */
@@ -70,17 +70,21 @@ export function saveCart(cart) {
 const newUid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
 /* ---------- 品物の画面（下から出る） ---------- */
-/** 品物をえらんだときの画面。src = なおすカートの行（uid あり）か、前と同じ内容（uid なし）。onSave(行) で返す */
-export function openItem(catalog, key, src, onSave) {
+/** 品物をえらんだときの画面。src = なおすカートの行（uid あり）か、前と同じ内容（uid なし）。onSave(行) で返す
+ *  draft … 書きかけからもどすときの中身（loadDraft() の kind: "item"）。あると「すてる」を出す
+ *  書いている間は、中身をいつも端末にしまう（お店からもどってアプリが開きなおしても、この画面にもどすため） */
+export function openItem(catalog, key, src, onSave, draft = null) {
   const it = catalog.item.get(key);
-  if (!it) { toast("この品物は、もう一覧にありません"); return; }
-  const vals = src ? { ...src.vals } : {};
-  const qty0 = src ? src.qty : 1, unit0 = src ? src.unit : it.unit, note0 = src ? src.note || "" : "";
+  if (!it) { toast("この品物は、もう一覧にありません"); clearDraft(); return; }
+  const from = draft || src;
+  const vals = from ? { ...from.vals } : {};
+  const qty0 = from ? from.qty : 1, unit0 = (from && from.unit) || it.unit, note0 = from ? from.note || "" : "";
   const units = catalog.units.includes(unit0) ? catalog.units : [...catalog.units, unit0];
   const web = !!(it.free || it.id === "kanamono");   // ネットで探す・写真・リンクをつけられる品物
-  const photos0 = src && src.photos ? [...src.photos] : [];   // はじめについていた写真
-  const photos = [...photos0];
-  const link0 = (src && src.link) || "";
+  const photos0 = draft ? [...(draft.photos0 || [])] : src && src.photos ? [...src.photos] : [];   // はじめについていた写真
+  const photos = draft ? [...(draft.photos || [])] : [...photos0];
+  const link0 = (from && from.link) || "";
+  const editUid = (src && src.uid) || "";
   let saved = false;
 
   const optHTML = it.opts.map(([k, choices]) => {
@@ -105,7 +109,7 @@ export function openItem(catalog, key, src, onSave) {
       <div class="field"><label for="iNote">${it.free ? "メモ（あれば）" : "寸法・メモ（あれば）"}</label>
         <input id="iNote" class="inp" value="${esc(note0)}" placeholder="${esc(it.notePh || (it.free ? "" : "例　切り寸 L=1700／ミルシート"))}"></div>
       <div class="qtyrow"><span class="lab">数</span>
-        <div class="stepper"><button type="button" id="qMinus" aria-label="へらす">−</button><input id="iQty" inputmode="decimal" value="${esc(fmtQty(qty0))}" aria-label="数"><button type="button" id="qPlus" aria-label="ふやす">＋</button></div>
+        <div class="stepper"><button type="button" id="qMinus" aria-label="へらす">−</button><input id="iQty" inputmode="decimal" value="${esc(qty0 === "" ? "" : fmtQty(qty0))}" aria-label="数"><button type="button" id="qPlus" aria-label="ふやす">＋</button></div>
         <select id="iUnit" class="unit-sel" aria-label="単位">${units.map(u => `<option${u === unit0 ? " selected" : ""}>${esc(u)}</option>`).join("")}</select>
       </div>
       ${web ? `
@@ -121,6 +125,7 @@ export function openItem(catalog, key, src, onSave) {
       <div class="sheet-foot">
         <div class="preview"><span class="lab">こう書いて送ります</span><p id="iPrev"></p></div>
         <p class="err" id="iErr" role="alert"></p>
+        ${draft ? '<div class="row draft-row"><span class="muted">書きかけの品物です</span><button type="button" class="btn" id="iDrop">すてる</button></div>' : ""}
         <button type="button" class="btn primary big full" id="addCart">${src && src.uid ? "なおす" : "カートに入れる"}</button>
       </div>
     </div>`;
@@ -135,9 +140,15 @@ export function openItem(catalog, key, src, onSave) {
       g("#iPrev").textContent = spec || n
         ? `${(spec + (n ? " " + n : "")).trim()}　${q ? fmtQty(q) : "?"}${g("#iUnit").value}${extra ? `（${extra}つき）` : ""}`
         : "（まだ何もえらんでいません）";
+      keep();
     };
+    // 書きかけを端末にしまう（preview は中身がかわるたびに呼ばれるので、そこから呼ぶ）
+    const keep = () => saveDraft({
+      kind: "item", key, editUid, vals, note: g("#iNote").value, qty: g("#iQty").value, unit: g("#iUnit").value,
+      photos, photos0, link: web ? g("#iLink").value : "",
+    });
     // ネットでさがす：品名の言葉で、お店の検索を新しいタブで開くだけ
-    const words = () => (it.free ? g("#iFree").value : `${buildSpec(it, vals)} ${g("#iNote").value}`).trim().replace(/s+/g, " ");
+    const words = () => (it.free ? g("#iFree").value : `${buildSpec(it, vals)} ${g("#iNote").value}`).trim().replace(/\s+/g, " ");
     const upShops = () => {
       if (!web) return;
       const q = words();
@@ -192,6 +203,7 @@ export function openItem(catalog, key, src, onSave) {
         preview();
         return;
       }
+      if (e.target.closest("#iDrop")) { closeSheet(); toast("書きかけをすてました"); return; }
       if (e.target.closest("#qMinus")) { g("#iQty").value = fmtQty(Math.max(1, (readQty() || 1) - 1)); preview(); return; }
       if (e.target.closest("#qPlus")) { g("#iQty").value = fmtQty((readQty() || 0) + 1); preview(); return; }
       if (e.target.closest("#addCart")) {
@@ -227,6 +239,9 @@ export function openItem(catalog, key, src, onSave) {
     preview();
   }, {
     // 入れずに閉じたら、この画面でつけた写真（はじめにはなかった写真）は、置き場から消す
-    onClose: () => { if (!saved) photos.filter(p => !photos0.includes(p)).forEach(deletePhoto); },
+    onClose: () => {
+      clearDraft();
+      if (!saved) photos.filter(p => !photos0.includes(p)).forEach(deletePhoto);
+    },
   });
 }

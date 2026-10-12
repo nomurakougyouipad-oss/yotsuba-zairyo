@@ -3,7 +3,7 @@
 // - 合言葉はサーバー（zairyoRegisterDevice）がたしかめて、役割（zr_role）と名前（zr_name）をつける
 // - 登録のあとは getIdToken(true) でトークンを新しくする（しないと、ルールが新しい役割を最大1時間見てくれない）
 import { onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
-import { ref, get } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+import { ref, get, update, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { auth, db, call } from "./firebase.js";
 
 /** ページを開いたときのログインの状態が分かるまで待つ（答えは使わず、そのあとは auth.currentUser を見る。
@@ -37,18 +37,43 @@ export async function whoAmI() {
   if (!claims.zr_role) ({ claims } = await user.getIdTokenResult(true));
   if (!claims.zr_role) return null;
   saveUid(user.uid);
+  touch(user.uid, snap.val());
   return { role: claims.zr_role, name: claims.zr_name || "" };
 }
 
 /** 合言葉で登録する。現場で name がないときは { needName, staff } が返る（まだ登録していない） */
 export async function register(kind, code, name = "") {
   if (!auth.currentUser) await signInAnonymously(auth);
-  const res = await call("zairyoRegisterDevice")({ kind, code, name });
+  const res = await call("zairyoRegisterDevice")({ kind, code, name, kiki: kikiName() });
   if (res.data && res.data.role) {
     await auth.currentUser.getIdToken(true);
     saveUid(auth.currentUser.uid);
   }
   return res.data;
+}
+
+/* ---------- 機種と最後に開いた日（事務所の「登録した端末」で、どの端末か見分けるため） ---------- */
+const SEEN_EVERY = 60 * 60 * 1000;   // 最後に開いた日は、1時間に1回まで書く
+
+/** この端末の機種（例 iPhone・ホーム画面、Windows・Edge） */
+export function kikiName() {
+  const ua = navigator.userAgent || "";
+  const ipad = /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const os = /iPhone|iPod/.test(ua) ? "iPhone" : ipad ? "iPad" : /Android/.test(ua) ? "Android"
+    : /Windows/.test(ua) ? "Windows" : /Mac OS X/.test(ua) ? "Mac" : /CrOS/.test(ua) ? "Chromebook" : "";
+  const br = isStandalone() ? (os === "Windows" || os === "Mac" ? "アプリ" : "ホーム画面")
+    : / Line\//.test(ua) ? "LINE" : /Edg(A|iOS)?\//.test(ua) ? "Edge" : /SamsungBrowser/.test(ua) ? "Samsung"
+    : /CriOS|Chrome\//.test(ua) ? "Chrome" : /FxiOS|Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "";
+  return [os, br].filter(Boolean).join("・") || "わからない";
+}
+
+/** 開いたときに、自分の登録の欄に「最後に開いた日」と機種を書く（まちがっても止めない） */
+function touch(uid, d) {
+  const upd = {};
+  if (!d.seenAt || Date.now() - d.seenAt > SEEN_EVERY) upd.seenAt = serverTimestamp();
+  const k = kikiName();
+  if (d.kiki !== k) upd.kiki = k;
+  if (Object.keys(upd).length) update(ref(db, `zairyo/devices/${uid}`), upd).catch(() => { });
 }
 
 /** まちがいを、やさしい言葉にする */

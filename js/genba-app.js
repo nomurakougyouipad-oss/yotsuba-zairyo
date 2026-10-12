@@ -8,7 +8,7 @@
 // - 進み具合（注文した・届いた）と金額は、11章 5 で事務所の注文ができてから出す
 import { ref, onValue, push, update, query, orderByChild, equalTo, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, auth } from "./firebase.js";
-import { $, esc, zenkana, toast, runChecks, checkRow, openSheet, closeSheet } from "./common.js";
+import { $, esc, zenkana, toast, runChecks, checkRow, openSheet, closeSheet, loadDraft, clearDraft } from "./common.js";
 import { errorText } from "./touroku.js";
 import { watchJobs } from "./nippo.js";
 import { jobPicker } from "./kouji.js";
@@ -462,6 +462,31 @@ export function startGenbaApp(main, me) {
     draw();
     toast(`カートに入れました（${st.cart.lines.length}点）`);
   }
+  /** カートの行をなおしたとき */
+  const editLine = l => nl => { Object.assign(l, nl); saveCart(st.cart); draw(); toast("なおしました"); };
+
+  /** ネットでさがす。見つけた物は「自由に書く」に品名を入れて開く（スクショをつけて、カートへ） */
+  function openWeb(q0) {
+    openWebSearch(q => {
+      const free = st.catalog && ([...st.catalog.item.values()].find(x => x.key === "tool:free") || [...st.catalog.item.values()].find(x => x.free));
+      if (!free) { toast("「自由に書く」が品物一覧にありません。事務所に知らせてください"); return; }
+      openItem(st.catalog, free.key, { vals: { __free: q }, qty: 1, unit: free.unit || "個", note: "" }, addLine);
+    }, q0);
+  }
+
+  /** 開きなおしたとき、書きかけ（品物の画面・ネットでさがす）があれば、その画面にそのままもどす */
+  function restoreDraft() {
+    const dr = loadDraft();
+    if (!dr) return;
+    if (dr.kind === "web") return openWeb(dr.q || "");
+    if (dr.kind !== "item") return clearDraft();
+    if (dr.editUid) {
+      const l = st.cart.lines.find(x => x.uid === dr.editUid);
+      if (!l) return clearDraft();   // なおしていたカートの行が、もうない
+      return openItem(st.catalog, l.key, l, editLine(l), dr);
+    }
+    openItem(st.catalog, dr.key, null, addLine, dr);
+  }
 
   /* ---------- 押したとき ---------- */
   main.addEventListener("click", e => {
@@ -481,12 +506,7 @@ export function startGenbaApp(main, me) {
     } else if (d.item) {
       openItem(st.catalog, d.item, null, addLine);
     } else if (t.id === "webBtn") {
-      // 見つけた物は「自由に書く」に品名を入れて開く（スクショをつけて、カートへ）
-      openWebSearch(q => {
-        const free = st.catalog && ([...st.catalog.item.values()].find(x => x.key === "tool:free") || [...st.catalog.item.values()].find(x => x.free));
-        if (!free) { toast("「自由に書く」が品物一覧にありません。事務所に知らせてください"); return; }
-        openItem(st.catalog, free.key, { vals: { __free: q }, qty: 1, unit: free.unit || "個", note: "" }, addLine);
-      });
+      openWeb();
     } else if (d.fav) {
       const f = favList()[Number(d.fav)];
       if (f) openItem(st.catalog, f.key, { vals: f.vals, qty: f.qty, unit: f.unit, note: f.note }, addLine);
@@ -494,7 +514,7 @@ export function startGenbaApp(main, me) {
       openSent(d.sent);
     } else if (d.cedit) {
       const l = st.cart.lines.find(x => x.uid === d.cedit);
-      if (l) openItem(st.catalog, l.key, l, nl => { Object.assign(l, nl); saveCart(st.cart); draw(); toast("なおしました"); });
+      if (l) openItem(st.catalog, l.key, l, editLine(l));
     } else if (d.cdel) {
       if (askDel !== d.cdel) { askDel = d.cdel; draw(); return; }   // けすときは2回押す
       askDel = "";
@@ -548,8 +568,10 @@ export function startGenbaApp(main, me) {
 
   /* ---------- データ ---------- */
   onValue(ref(db, "zairyo/master/catalog"), s => {
+    const first = !st.catalog;
     st.catalog = normCatalog(s.val());
     if (st.tab === "tanomu") draw();
+    if (first) restoreDraft();   // 品物一覧を読んでから、書きかけの画面にもどす
   }, ex => toast(errorText(ex)));
   onValue(ref(db, "zairyo/master/places"), s => { st.places = s.val() || {}; if (st.tab === "cart" && !st.sending) draw(); });
   onValue(ref(db, "zairyo/master/suppliers"), s => { st.sups = s.val() || {}; if (st.tab === "cart" && !st.sending) draw(); });

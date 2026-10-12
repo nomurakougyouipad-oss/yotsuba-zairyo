@@ -1,14 +1,14 @@
-// 事務所の「⚙ 設定」：材料屋／注番の会社／注文する人／届け先／品物一覧
+// 事務所の「⚙ 設定」：材料屋／注番の会社／注文する人／届け先／品物一覧／登録した端末
 // - 中身はぜんぶデータベース（/zairyo/master・/common）。ここで変えると、すぐにほかの端末にも出る
 // - 名前などの欄は、入れ終わったとき（ほかを押す・Enter）にしまう
 // - ほかの端末で変わったときは、入れている途中の欄をこわさないように、欄から出てから画面をかきなおす
 import { ref, onValue, set, update, remove, push, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
-import { db } from "./firebase.js";
+import { db, auth, call } from "./firebase.js";
 import { $, esc, toast } from "./common.js";
 import { errorText } from "./touroku.js";
 import { watchJobs } from "./nippo.js";
 
-const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"]];
+const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"]];
 const TAB_KEY = "yotsuba-zairyo-settab";
 const PATH = {
   sup: "zairyo/master/suppliers",
@@ -17,11 +17,13 @@ const PATH = {
   staff: "zairyo/master/staff",
   place: "zairyo/master/places",
   catalog: "zairyo/master/catalog",
+  dev: "zairyo/devices",          // 登録した端末（事務所だけ読める。消す・合言葉を変えるのはサーバーのプログラム）
   year: "common/chubanYear",      // 注番の年（2けた）。12/20〜25 ごろに事務所が切りかえる（日付からは決めない）
 };
 const S = {};                 // データベースの中身（読みこむまでは undefined）
 let tab = "sup", body = null, waiting = false;
 let kQ = "", ask = "";        // 注番の会社のさがす言葉／「本当に消しますか？」を出している行
+let codeKind = "genba";       // 合言葉を変える：現場 / 事務所
 const pickOwners = new Set();  // 日報の担当者から足す人（えらんでいるところ）
 
 const LOADING = '<p class="muted">読んでいます…</p>';
@@ -83,7 +85,7 @@ function draw(force = false) {
   if (focusId) { const f = document.getElementById(focusId); if (f) f.focus(); }
 }
 
-const VIEW = { sup: supHTML, kaisha: kaishaHTML, staff: staffHTML, place: placeHTML, catalog: catalogHTML };
+const VIEW = { sup: supHTML, kaisha: kaishaHTML, staff: staffHTML, place: placeHTML, catalog: catalogHTML, dev: devHTML };
 
 /* ==================== 材料屋 ==================== */
 function supHTML() {
@@ -286,6 +288,75 @@ function catalogHTML() {
       </details>`).join("")}`;
 }
 
+/* ==================== 登録した端末・合言葉（11章 8） ==================== */
+const when = ms => { const d = new Date(ms); return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`; };
+
+function devHTML() {
+  if (!S.dev) return LOADING;
+  const meUid = auth.currentUser ? auth.currentUser.uid : "";
+  const list = Object.entries(S.dev).sort(([, a], [, b]) => ja(a.name || "", b.name || "") || (a.registeredAt || 0) - (b.registeredAt || 0));
+  const group = (role, title) => {
+    const xs = list.filter(([, d]) => d.role === role);
+    const names = xs.map(([, d]) => d.name);
+    const twice = names.some((n, i) => names.indexOf(n) !== i);
+    return `
+      <div class="block"><h3>${title}（${xs.length}台）</h3>
+        ${xs.length ? `<ul class="devs">${xs.map(([uid, d]) => devRow(uid, d, uid === meUid)).join("")}</ul>` : '<p class="muted">まだありません。</p>'}
+        ${twice ? `<p class="hint">同じ名前が2つ以上あるときは、登録した日時で見分けてください。使わなくなった${role === "genba" ? "スマホ" : "端末"}は消します。${role === "genba" ? "iPhone では、Safari とホーム画面の「材料注文」が、別々の端末として登録されます。" : ""}</p>` : ""}
+      </div>`;
+  };
+  return `
+    <p class="hint">合言葉で登録した端末です。なくしたスマホや、やめた人のスマホは、ここで消してください。消すと、その端末では材料注文がすぐに使えなくなります（写真だけは、最大1時間見られることがあります）。</p>
+    <p class="hint">機種（例 iPhone・ホーム画面）と最後に開いた日は、その端末でアプリを開いたときに入ります（前から登録してある端末は、次に開いたときから）。</p>
+    ${group("genba", "現場のスマホ")}
+    ${group("office", "事務所のパソコン")}
+    ${codeHTML()}`;
+}
+
+/** 最後に開いた日：今日 9:05／きのう 18:30／3日前（10/9） */
+function lastOpen(ms) {
+  const d = new Date(ms), t = new Date();
+  const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const n = Math.round((day(t) - day(d)) / 86400000);
+  const hm = `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return n <= 0 ? `今日 ${hm}` : n === 1 ? `きのう ${hm}` : `${n}日前（${d.getMonth() + 1}/${d.getDate()}）`;
+}
+const OLD_DAYS = 30;   // これより長く開いていない端末は、目立たせる
+
+function devRow(uid, d, me) {
+  const k = "dev:" + uid;
+  const old = d.seenAt && Date.now() - d.seenAt > OLD_DAYS * 86400000;
+  return `
+    <li>
+      <span class="dev-name"><span><b>${esc(d.name || "（名前なし）")}</b>${d.kiki ? ` <span class="kiki">${esc(d.kiki)}</span>` : ""}</span>
+        ${me ? '<span><span class="tag">いま使っているこのパソコン</span></span>' : ""}
+        <span class="muted">登録 ${d.registeredAt ? when(d.registeredAt) : "—"}</span>
+        <span class="${old ? "hint warn" : "muted"}">最後に開いた ${d.seenAt ? lastOpen(d.seenAt) : "（まだ記録なし）"}${old ? `・${OLD_DAYS}日以上使っていません` : ""}</span></span>
+      ${me ? '<span class="muted">ここからは消せません</span>'
+        : ask === k ? `<span class="kask">本当に消しますか？ この端末では、材料注文が使えなくなります。もう一度使うときは、合言葉で登録しなおします。
+          <span class="row"><button type="button" class="btn danger" data-devdelyes="${esc(uid)}">消す</button><button type="button" class="btn" data-askno>やめる</button></span></span>`
+        : `<button type="button" class="btn danger" data-devdel="${esc(uid)}">消す</button>`}
+    </li>`;
+}
+
+function codeHTML() {
+  const which = codeKind === "genba" ? "現場" : "事務所";
+  return `
+    <div class="block"><h3>合言葉を変える</h3>
+      <div class="seg" role="radiogroup" aria-label="どちらの合言葉を変えるか">
+        ${[["genba", "現場の合言葉"], ["office", "事務所の合言葉"]].map(([k, l]) => `<button type="button" role="radio" data-codekind="${k}" aria-checked="${k === codeKind}">${l}</button>`).join("")}
+      </div>
+      <form class="codeform" data-form="code" autocomplete="off">
+        <label class="mini">新しい${which}の合言葉（6文字以上）
+          <input id="cNew1" class="inp" type="password" autocomplete="off" maxlength="64"></label>
+        <label class="mini">もう一度、同じ合言葉
+          <input id="cNew2" class="inp" type="password" autocomplete="off" maxlength="64"></label>
+        <button class="btn primary">${which}の合言葉を変える</button>
+      </form>
+      <p class="hint">変えても、もう登録した端末はそのまま使えます。新しい合言葉は、これから登録する端末だけに使います。全角・半角、大文字・小文字のちがいは同じとみなします。合言葉は LINE やメールに書かず、口で伝えてください。</p>
+    </div>`;
+}
+
 /* ==================== 押したとき ==================== */
 async function onClick(e) {
   const t = e.target.closest("button");
@@ -310,8 +381,23 @@ async function onClick(e) {
     const k = kPath(d.khide);
     await update(ref(db, k.path), { hidden: !k.x.hidden });
     toast(`${k.key}（${k.x.name}）を${k.x.hidden ? "出しました" : "かくしました"}`);
-  } else if (d.kdel || d.staffdel) {
-    ask = d.kdel || "staff:" + d.staffdel;
+  } else if (d.kdel || d.staffdel || d.devdel) {
+    ask = d.kdel || (d.staffdel ? "staff:" + d.staffdel : "dev:" + d.devdel);
+    draw(true);
+  } else if (d.devdelyes) {
+    const x = S.dev[d.devdelyes] || {};
+    t.disabled = true;
+    try {
+      await call("zairyoRemoveDevice")({ uid: d.devdelyes });
+    } catch (err) {
+      t.disabled = false;
+      throw err;
+    }
+    ask = "";
+    draw(true);
+    toast(`${x.name || ""}（${x.kiki || (x.role === "office" ? "事務所" : "現場")}）の端末を消しました`);
+  } else if (d.codekind) {
+    codeKind = d.codekind;
     draw(true);
   } else if ("askno" in d) {
     ask = "";
@@ -445,6 +531,22 @@ async function onSubmit(form) {
     clear("pNewName", "pNewText");
     await push(ref(db, PATH.place), { name, text, order: maxOrder(S.place) + 1 });
     toast(`${name} を足しました`);
+  } else if (kind === "code") {
+    // サーバーと同じ見方（全角・半角、前後の空白、大文字・小文字）でくらべる
+    const norm = id => z2h($(`#${id}`, form).value).trim().toLowerCase();
+    const a = norm("cNew1"), b = norm("cNew2");
+    if ([...a].length < 6) return toast("合言葉は6文字以上にしてください");
+    if (a !== b) return toast("2つの欄の合言葉がちがいます。もう一度入れてください");
+    const which = codeKind === "genba" ? "現場" : "事務所";
+    const btn = form.querySelector("button");
+    btn.disabled = true;
+    try {
+      await call("zairyoChangeCode")({ kind: codeKind, code: $("#cNew1", form).value });
+    } finally {
+      btn.disabled = false;
+    }
+    clear("cNew1", "cNew2");
+    toast(`${which}の合言葉を変えました。これから登録する端末は、新しい合言葉を使います`);
   }
 }
 

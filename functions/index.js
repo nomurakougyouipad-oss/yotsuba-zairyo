@@ -7,7 +7,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getDatabase, ServerValue } from "firebase-admin/database";
-import { verifyCode } from "./code.js";
+import { verifyCode, hashCode, normalizeCode, MIN_LEN } from "./code.js";
 
 setGlobalOptions({ region: "asia-southeast1", maxInstances: 3, memory: "256MiB", timeoutSeconds: 30 });
 initializeApp();
@@ -17,6 +17,7 @@ const db = () => (database ||= getDatabase());
 
 const KINDS = { genba: "genba", office: "office" };
 const NAME_MAX = 20;
+const KIKI_MAX = 40;   // 機種（例 iPhone・ホーム画面）。ページが調べて送ってくる。見分けるためだけに使う
 
 /* ---------- 合言葉の当てずっぽうを防ぐ ----------
    同じ端末で5回まちがえたら15分止める。
@@ -93,7 +94,66 @@ export const zairyoRegisterDevice = onCall({ invoker: "public" }, async request 
   const auth = getAuth();
   const user = await auth.getUser(uid);
   await auth.setCustomUserClaims(uid, { ...(user.customClaims || {}), zr_role: kind, zr_name: name });
-  await db().ref(`zairyo/devices/${uid}`).set({ role: kind, name, registeredAt: ServerValue.TIMESTAMP });
+  const kiki = String(data.kiki ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, KIKI_MAX);
+  await db().ref(`zairyo/devices/${uid}`).set({
+    role: kind, name, registeredAt: ServerValue.TIMESTAMP, seenAt: ServerValue.TIMESTAMP, ...(kiki ? { kiki } : {}),
+  });
   await db().ref(`config/tries/uid/${uid}`).remove();
   return { role: kind, name };
+});
+
+/* ---------- 事務所だけ：登録した端末を消す・合言葉を変える（11章 8） ---------- */
+
+/** 呼んだのが事務所の端末で、登録が消されていないこと。{uid, name} を返す */
+async function requireOffice(request) {
+  const uid = request.auth && request.auth.uid;
+  if (!uid || request.auth.token.zr_role !== "office") throw new HttpsError("permission-denied", "事務所のパソコンだけができます");
+  const d = (await db().ref(`zairyo/devices/${uid}`).get()).val();
+  if (!d || d.role !== "office") throw new HttpsError("permission-denied", "このパソコンの登録が消されています");
+  return { uid, name: d.name || "" };
+}
+
+/** 登録した端末を消す。data = { uid }
+ *  - データベースの登録（/zairyo/devices/{uid}）を消すので、ルールですぐ読めなくなる
+ *  - 材料注文の印（zr_role・zr_name）だけ外して、ログインのしるしを使えなくする（ほかのアプリの印は残す）。
+ *    ほかのアプリの印もなければ、ログインごと消す
+ *  - 写真の置き場（Storage）は、いま持っているしるしが切れるまで最大1時間ずれる
+ *  - いま使っている自分のパソコンは消せない */
+export const zairyoRemoveDevice = onCall({ invoker: "public" }, async request => {
+  const me = await requireOffice(request);
+  const uid = String((request.data || {}).uid || "");
+  if (!uid || uid.length > 128 || /[.#$\[\]\/]/.test(uid)) throw new HttpsError("invalid-argument", "消す端末がわかりません");
+  if (uid === me.uid) throw new HttpsError("failed-precondition", "いま使っているこのパソコンは、ここからは消せません");
+  const d = (await db().ref(`zairyo/devices/${uid}`).get()).val();
+  if (!d) throw new HttpsError("not-found", "その端末は、もう消されています");
+
+  const auth = getAuth();
+  try {
+    const user = await auth.getUser(uid);
+    const claims = { ...(user.customClaims || {}) };
+    delete claims.zr_role;
+    delete claims.zr_name;
+    if (Object.keys(claims).length) {
+      await auth.setCustomUserClaims(uid, claims);
+      await auth.revokeRefreshTokens(uid);
+    } else {
+      await auth.deleteUser(uid);
+    }
+  } catch (err) {
+    if (err.code !== "auth/user-not-found") throw err;
+  }
+  await db().ref(`zairyo/devices/${uid}`).remove();
+  return { removed: d.name || "", role: d.role, by: me.name };
+});
+
+/** 合言葉を変える。data = { kind: "genba" | "office", code }
+ *  変えても、もう登録ずみの端末はそのまま使える（登録のときだけ合言葉を見るため） */
+export const zairyoChangeCode = onCall({ invoker: "public" }, async request => {
+  const me = await requireOffice(request);
+  const data = request.data || {};
+  const kind = KINDS[data.kind];
+  if (!kind) throw new HttpsError("invalid-argument", "どちらの合言葉かがわかりません");
+  if ([...normalizeCode(data.code)].length < MIN_LEN) throw new HttpsError("invalid-argument", `合言葉は${MIN_LEN}文字以上にしてください`);
+  await db().ref(`config/codes/${kind}`).set({ ...hashCode(data.code), setAt: Date.now(), setBy: me.name });
+  return { kind };
 });

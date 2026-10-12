@@ -72,6 +72,20 @@ export function closeSheet() {
   if (lastFocus && document.contains(lastFocus)) lastFocus.focus({ preventScroll: true });
 }
 
+/* ---------- 書きかけの画面（現場） ----------
+   iPhone のホーム画面のアプリは、お店のページからもどると開きなおすことがある。
+   品物の画面・ネットでさがす の書きかけを端末にしまっておき、開きなおしたらその画面にもどす */
+const DRAFT_KEY = "yotsuba-zairyo-draft";
+export function loadDraft() {
+  try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || "null"); } catch (err) { return null; }
+}
+export function saveDraft(d) {
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch (err) { }
+}
+export function clearDraft() {
+  try { localStorage.removeItem(DRAFT_KEY); } catch (err) { }
+}
+
 /* ---------- 明るい／暗い ----------
    最初はスマホ・パソコンの設定どおり。☀／☾ を押したら覚えます（覚える名前は試作と同じ yotsuba-theme）
    覚えた方を画面が出る前に当てるのは、各ページの <head> の小さなスクリプトです */

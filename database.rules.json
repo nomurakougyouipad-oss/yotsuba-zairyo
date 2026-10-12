@@ -29,7 +29,15 @@
       "devices": {
         ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
         "$uid": {
-          ".read": "auth != null && auth.uid == $uid"
+          ".read": "auth != null && auth.uid == $uid",
+          "seenAt": {
+            ".write": "auth != null && auth.uid == $uid && data.parent().child('role').exists() && data.parent().child('role').val() == auth.token.zr_role",
+            ".validate": "newData.isNumber() && newData.val() == now"
+          },
+          "kiki": {
+            ".write": "auth != null && auth.uid == $uid && data.parent().child('role').exists() && data.parent().child('role').val() == auth.token.zr_role",
+            ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40"
+          }
         }
       },
       "master": {

@@ -8,7 +8,7 @@
 // - ネットでさがす：書いた言葉で、お店の検索のページを新しいタブで開くだけ（アプリの中には何も取りこまない）
 import { ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-storage.js";
 import { storage, auth } from "./firebase.js";
-import { esc, toast, openSheet } from "./common.js";
+import { esc, toast, openSheet, saveDraft, clearDraft } from "./common.js";
 
 export const MAX_PHOTOS = 4;
 export const SHOPS = [
@@ -179,8 +179,10 @@ export function attachHTML(lines, title = "写真・リンク") {
 
 /* ---------- ネットでさがす（現場の上のボタン） ---------- */
 let webQ = "";
-/** onFound(言葉) … 「見つけた物を注文に入れる」を押したとき（「自由に書く」を品名入りで開く） */
-export function openWebSearch(onFound) {
+/** onFound(言葉) … 「見つけた物を注文に入れる」を押したとき（「自由に書く」を品名入りで開く）
+ *  q0 … 書きかけからもどすときの言葉 */
+export function openWebSearch(onFound, q0) {
+  if (typeof q0 === "string") webQ = q0;
   const html = `
     <div class="pw" id="webWrap">
       <div class="panel-head"><div><span class="eyebrow">一覧にない物をさがす</span><h2 id="panelTitle">ネットでさがす</h2></div>
@@ -206,6 +208,7 @@ export function openWebSearch(onFound) {
         a.setAttribute("aria-disabled", String(!webQ));
       });
       if (webQ) { hint.textContent = "お店のページが別に開きます。"; hint.className = "hint"; }
+      saveDraft({ kind: "web", q: webQ });   // お店からもどってアプリが開きなおしても、この画面にもどす
     };
     q.addEventListener("input", up);
     q.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); q.blur(); } });
@@ -215,5 +218,5 @@ export function openWebSearch(onFound) {
       if (e.target.closest("#wToCart")) onFound(webQ);
     });
     up();
-  });
+  }, { onClose: clearDraft });
 }
