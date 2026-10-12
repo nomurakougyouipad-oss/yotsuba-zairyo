@@ -193,6 +193,61 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .sel-now.warn{color:var(--amber)}
 @media (max-width:360px){.jobs.fixed{grid-template-columns:repeat(2,minmax(0,1fr))}.newjob{grid-template-columns:1fr}}
 
+/* 現場：たのむ・カート */
+.ph-tabs{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line)}
+.ph-tabs button{border:0;background:none;min-height:48px;padding:8px 0 11px;font-size:16px;font-weight:800;color:var(--muted);border-bottom:3px solid transparent}
+.ph-tabs button[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--amber-btn)}
+.cats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.cats button{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:6px 4px;min-height:52px;min-width:0;font-weight:700;font-size:14px;line-height:1.25;color:var(--muted);word-break:keep-all;overflow-wrap:anywhere}
+.cats button[aria-selected="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.tile{position:relative;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:14px 12px 12px;min-height:84px;text-align:left;display:flex;flex-direction:column;justify-content:space-between;gap:6px;min-width:0}
+.tile:hover{border-color:var(--muted)}
+.t-name{font-size:16px;font-weight:800;line-height:1.3;padding-right:24px;word-break:keep-all;overflow-wrap:anywhere}
+.t-sub{font-size:12px;color:var(--muted)}
+.t-in{position:absolute;top:8px;right:8px;background:var(--amber-btn);color:var(--on-amber);font-family:var(--f-num);font-weight:600;font-size:13px;min-width:22px;height:22px;border-radius:11px;display:grid;place-items:center;padding:0 6px}
+.cartbar{position:sticky;bottom:0;z-index:5;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 10px);display:flex;align-items:center;justify-content:space-between;gap:10px;box-shadow:0 -4px 16px var(--shadow)}
+.cb-count{display:flex;align-items:baseline;gap:4px;font-size:13px;color:var(--muted)}
+.cb-count .num{font-size:28px;font-weight:600;color:var(--fg);line-height:1}
+.cb-empty{font-size:13px;color:var(--muted)}
+.cartbar .btn{white-space:nowrap;flex:none}
+.back{align-self:flex-start;border:0;background:none;padding:0 12px 0 0;min-height:44px;color:var(--muted);font-weight:700;font-size:15px}
+.h-cart{margin:0;font-size:18px;font-weight:800}
+.cartlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.cartlist li{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center}
+.cl-spec{font-weight:700;min-width:0;overflow-wrap:anywhere}
+.cl-note{display:block;font-weight:500;font-size:13px;color:var(--muted)}
+.cl-qty{font-family:var(--f-num);font-size:20px;font-weight:600;text-align:right;white-space:nowrap}
+.cl-qty small{font-family:var(--f-ja);font-size:13px;font-weight:500;margin-left:2px}
+.cl-act{grid-column:1 / -1;display:flex;gap:8px;justify-content:flex-end}
+.cl-act .linkbtn{min-height:44px;padding:0 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;background:var(--bg)}
+
+/* 下から出る画面（シート） */
+.sheet{position:fixed;inset:0;z-index:20;display:flex;justify-content:center;align-items:flex-end}
+.sheet-bg{position:absolute;inset:0;background:var(--scrim)}
+.panel{position:relative;width:min(480px,100%);max-height:92%;overflow-y:auto;overscroll-behavior:contain;background:var(--bg);border:1px solid var(--line);border-bottom:0;border-radius:18px 18px 0 0;padding:16px 18px 0}
+.pw{display:flex;flex-direction:column;gap:16px}
+.panel:has(.sheet-foot){scroll-padding-bottom:170px}
+.panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.panel-head h2{margin:0;font-size:20px;font-weight:800;line-height:1.35}
+.x{flex:none;width:44px;height:44px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-size:20px;line-height:1}
+.sheet-foot{position:sticky;bottom:0;z-index:2;background:var(--bg);border-top:1px solid var(--line);margin-inline:-18px;padding:10px 18px calc(env(safe-area-inset-bottom,0px) + 14px);display:flex;flex-direction:column;gap:8px}
+.opt{display:flex;flex-direction:column;gap:6px}
+.opt .lab,.qtyrow .lab{font-size:13px;font-weight:800;color:var(--muted)}
+.opt-chips{display:flex;flex-wrap:wrap;gap:6px}
+.opt-chips button{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 13px;font-weight:700;font-size:15px;min-height:44px;min-width:44px}
+.opt-chips button[aria-pressed="true"]{background:var(--surface2);border-color:var(--amber);color:var(--amber);box-shadow:inset 0 -2px 0 var(--amber)}
+.opt-chips .oth{border-style:dashed;color:var(--muted)}
+.qtyrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.stepper{display:flex;align-items:center;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface)}
+.stepper button{width:48px;height:48px;border:0;background:transparent;font-size:24px;font-weight:700}
+.stepper input{width:76px;height:48px;border:0;border-inline:1px solid var(--line);background:transparent;text-align:center;font-family:var(--f-num);font-size:22px}
+.unit-sel{height:48px;border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:0 10px;font-weight:700}
+.preview{background:var(--surface2);border-radius:10px;padding:10px 12px}
+.preview .lab{font-size:12px;color:var(--muted);font-weight:700}
+.preview p{margin:2px 0 0;font-weight:800;font-size:15px;overflow-wrap:anywhere}
+.ta{resize:vertical;line-height:1.6}
+
 /* つながりのたしかめ */
 .checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .checks li{display:flex;align-items:center;gap:12px;min-height:52px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}

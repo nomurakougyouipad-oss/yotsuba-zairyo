@@ -23,6 +23,40 @@ export function toast(msg) {
   toastTimer = setTimeout(() => { t.hidden = true; }, 2800);
 }
 
+/* ---------- 下から出る画面（シート） ----------
+   openSheet(html, after) … after(panel) で中身に動きをつける。× や外側を押す・Esc で閉じる */
+let lastFocus = null;
+export function openSheet(html, after) {
+  let sh = document.getElementById("sheet");
+  if (!sh) {
+    sh = document.createElement("div");
+    sh.id = "sheet";
+    sh.className = "sheet";
+    sh.hidden = true;
+    sh.innerHTML = '<div class="sheet-bg" data-close></div><div class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="panelTitle"></div>';
+    document.body.append(sh);
+    sh.addEventListener("click", e => { if (e.target.closest("[data-close]")) closeSheet(); });
+    document.addEventListener("keydown", e => { if (e.key === "Escape" && !sh.hidden) closeSheet(); });
+  }
+  if (sh.hidden) lastFocus = document.activeElement;
+  const p = sh.querySelector("#panel");
+  p.innerHTML = html;
+  p.scrollTop = 0;
+  sh.hidden = false;
+  document.body.style.overflow = "hidden";
+  if (after) after(p);
+  const f = p.querySelector("[data-autofocus]") || p.querySelector(".x");
+  if (f) f.focus({ preventScroll: true });
+}
+export function closeSheet() {
+  const sh = document.getElementById("sheet");
+  if (!sh || sh.hidden) return;
+  sh.hidden = true;
+  sh.querySelector("#panel").innerHTML = "";
+  document.body.style.overflow = "";
+  if (lastFocus && document.contains(lastFocus)) lastFocus.focus({ preventScroll: true });
+}
+
 /* ---------- 明るい／暗い ----------
    最初はスマホ・パソコンの設定どおり。☀／☾ を押したら覚えます（覚える名前は試作と同じ yotsuba-theme）
    覚えた方を画面が出る前に当てるのは、各ページの <head> の小さなスクリプトです */

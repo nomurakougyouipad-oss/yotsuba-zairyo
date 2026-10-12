@@ -53,6 +53,10 @@ export function jobPicker(el, opts) {
       <p class="hint" id="kjNote"></p>
     </section>`;
   const $ = s => el.querySelector(s);
+  if (st.typed) {   // 前に手で書いた注番・件名を、欄にもどす
+    $("#kjNo").value = st.chuban;
+    $("#kjName").value = st.kenmei;
+  }
 
   function changed() { if (opts.onChange) opts.onChange(value()); }
   function value() { return { chuban: st.chuban, kenmei: st.kenmei, typed: st.typed }; }
