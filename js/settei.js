@@ -1,4 +1,4 @@
-// 事務所の「⚙ 設定」：材料屋／注番の会社／注文する人／届け先／品物一覧／登録した端末
+// 事務所の「⚙ 設定」：材料屋／注番の会社／注文する人／届け先／品物一覧／登録した端末／バックアップ
 // - 中身はぜんぶデータベース（/zairyo/master・/common）。ここで変えると、すぐにほかの端末にも出る
 // - 名前などの欄は、入れ終わったとき（ほかを押す・Enter）にしまう
 // - ほかの端末で変わったときは、入れている途中の欄をこわさないように、欄から出てから画面をかきなおす
@@ -7,8 +7,9 @@ import { db, auth, call } from "./firebase.js";
 import { $, esc, toast } from "./common.js";
 import { errorText } from "./touroku.js";
 import { watchJobs } from "./nippo.js";
+import { BACKUP_PATHS, countText, readAll, saveBackup, lastBackup } from "./backup.js";
 
-const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"]];
+const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["backup", "バックアップ"]];
 const TAB_KEY = "yotsuba-zairyo-settab";
 const PATH = {
   sup: "zairyo/master/suppliers",
@@ -54,6 +55,7 @@ export function renderSettings(el) {
     try { localStorage.setItem(TAB_KEY, tab); } catch (err) { }
     el.querySelectorAll("[data-tab]").forEach(x => x.setAttribute("aria-selected", x === b));
     draw(true);
+    if (tab === "backup") readBk();
   });
   body.addEventListener("click", e => onClick(e).catch(showErr));
   body.addEventListener("change", e => onChange(e).catch(showErr));
@@ -67,6 +69,7 @@ export function renderSettings(el) {
   // 日報の注番（読むだけ）：注番の年の切りかえどき・日報の担当者から足す に使う
   watchJobs(d => { S.nippo = d; draw(); }, showErr);
   draw(true);
+  if (tab === "backup") readBk();
 }
 
 /** 画面をかきなおす。入れている途中の欄（data-edit）があるときは、欄から出るまで待つ */
@@ -85,7 +88,7 @@ function draw(force = false) {
   if (focusId) { const f = document.getElementById(focusId); if (f) f.focus(); }
 }
 
-const VIEW = { sup: supHTML, kaisha: kaishaHTML, staff: staffHTML, place: placeHTML, catalog: catalogHTML, dev: devHTML };
+const VIEW = { sup: supHTML, kaisha: kaishaHTML, staff: staffHTML, place: placeHTML, catalog: catalogHTML, dev: devHTML, backup: backupHTML };
 
 /* ==================== 材料屋 ==================== */
 function supHTML() {
@@ -357,11 +360,56 @@ function codeHTML() {
     </div>`;
 }
 
+/* ==================== バックアップ（11章 8-2） ==================== */
+let bk = null, bkBusy = false;   // いまのデータ（中身の数を出すため）／保存しているところ
+
+/** タブを開いたときに、いまのデータを読む（中身の数を出す） */
+function readBk() {
+  readAll().then(d => { bk = d; draw(); }, showErr);
+}
+
+function backupHTML() {
+  const last = lastBackup();
+  return `
+    <p class="hint">いまのデータを、このパソコンに1つのファイルで保存します。パソコンがこわれたり、まちがえて消したりしたときに、このファイルから元にもどせます。</p>
+    <div class="block"><h3>入るもの</h3>
+      <ul class="bk-list">${BACKUP_PATHS.map(([p, label]) => `
+        <li><span>${esc(label)}</span><span class="muted">${bk ? esc(countText(p, bk[p])) : "読んでいます…"}</span></li>`).join("")}
+      </ul>
+      <p class="hint">写真と合言葉は入りません。写真は、あとで作る「週に1回のまるごと保存」で守ります。</p>
+    </div>
+    <div class="block"><h3>今すぐ保存</h3>
+      <button type="button" class="btn primary big" data-backup${bkBusy ? " disabled" : ""}>${bkBusy ? "保存しています…" : "今すぐバックアップを保存"}</button>
+      <p class="muted">${last ? `このパソコンで前に保存したのは ${when(last.at)}（${esc(last.name)}）` : "このパソコンでは、まだ保存していません"}</p>
+      <p class="hint">ファイルは、パソコンの「ダウンロード」に入ります。人の名前や金額が入っているので、LINE やメールで外に送らないでください。</p>
+    </div>
+    <div class="block"><h3>元にもどすとき</h3>
+      <p class="hint">もどすのは、持ち主のパソコンで行います（まちがえて今のデータを上書きしないように、この画面からはもどせません）。こまったときは、保存したファイルを持って持ち主に知らせてください。</p>
+    </div>`;
+}
+
+async function doBackup() {
+  if (bkBusy) return;
+  bkBusy = true;
+  draw(true);
+  try {
+    const me = S.dev && auth.currentUser && S.dev[auth.currentUser.uid];
+    const r = await saveBackup((me && me.name) || "");
+    bk = r.data;
+    toast(`保存しました（${r.name}・${Math.max(1, Math.round(r.size / 1024))}KB）`);
+  } finally {
+    bkBusy = false;
+    draw(true);
+  }
+}
+
 /* ==================== 押したとき ==================== */
 async function onClick(e) {
   const t = e.target.closest("button");
   if (!t) return;
   const d = t.dataset;
+
+  if ("backup" in d) return doBackup();
 
   if (d.swaz) {
     const s = S.sup[d.swaz];

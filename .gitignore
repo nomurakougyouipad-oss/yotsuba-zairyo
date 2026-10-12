@@ -11,3 +11,5 @@ prototype/
 *-debug.log
 .firebase/
 node_modules/
+# もどす前に道具が保存する、いまのデータ（人の名前・金額が入る）
+backups/

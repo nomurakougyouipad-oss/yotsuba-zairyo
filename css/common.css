@@ -488,3 +488,8 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .lightbox img{max-width:100%;max-height:100%;object-fit:contain;border-radius:6px;background:#fff}
 .lightbox .x{position:absolute;top:calc(env(safe-area-inset-top,0px) + 12px);right:12px}
 .draft-row{justify-content:space-between;margin-bottom:8px}
+/* バックアップ */
+.bk-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.bk-list li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 12px;padding:8px 0;border-bottom:1px solid var(--line)}
+.bk-list li:last-child{border-bottom:0}
+.bk-list .muted{font-size:13px}
