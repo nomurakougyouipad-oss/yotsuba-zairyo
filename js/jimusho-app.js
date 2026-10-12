@@ -2,13 +2,14 @@
 // - 11章 5-1：依頼を見る。現場から送られた依頼を新しい順に。取り消された依頼は、下にたたんで灰色で
 // - 11章 5-2：依頼の中身で、品物ごとに材料屋を決める（現場が連絡した材料屋 → なければ品物一覧の「いつもの材料屋」）→
 //   材料屋ごとに「注文の文をコピー」→「注文した」。注文を取り消して依頼にもどすこともできる（js/chumon.js）
-// - 注文ごと・工事ごと・届いた は 5-3、納品書の金額・請求は 5-4
+// - 11章 5-3：注文ごと（ようすでしぼる＝上の箱を押す）・工事（注番）ごと・注文の中身（届いた・もどす・コピー・取り消して依頼にもどす）
+// - 納品書の金額・請求は 5-4
 import { ref, onValue } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db } from "./firebase.js";
-import { $, esc, zenkana, toast, runChecks, openSheet } from "./common.js";
+import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet } from "./common.js";
 import { errorText } from "./touroku.js";
-import { normCatalog, lineText, fmtQty, kibouText } from "./tanomu.js";
-import { orderText, draftOrder, placeOrder, cancelOrder } from "./chumon.js";
+import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
+import { orderText, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, backToWait } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 
 const pad = n => String(n).padStart(2, "0");
@@ -22,7 +23,8 @@ const isNew = r => r.status === "sent";
 
 export function startOfficeApp(main, me) {
   const st = {
-    view: "irai", q: "", reqs: null, orders: null, catalog: null, sups: null, places: null,
+    view: "irai", filter: "all", q: "", reqs: null, orders: null, catalog: null, sups: null, places: null,
+    openOrderId: "",   // いま中身を出している注文
     settingsOpen: false,
     pick: {},        // 依頼ごとの、品物にえらんだ材料屋 {依頼id: {品物id: 材料屋id}}（「注文した」までは、この画面だけ）
     openId: "",      // いま中身を出している依頼
@@ -59,27 +61,37 @@ export function startOfficeApp(main, me) {
   }
   const newReqs = () => (st.reqs || []).filter(r => isNew(r) && matchReq(r));
   const ordersOf = reqId => (st.orders || []).filter(o => o.reqId === reqId);
+  function matchOrder(o) {
+    const q = st.q.trim().normalize("NFKC").toLowerCase();
+    if (!q) return true;
+    return [o.chuban, o.kenmei, o.supplierName, o.chumonsha, o.tantou, o.basho, o.memo, ...Object.values(o.lines || {}).map(l => l.spec + " " + (l.note || ""))]
+      .some(v => String(v || "").normalize("NFKC").toLowerCase().includes(q));
+  }
+  const liveOrders = () => (st.orders || []).filter(o => o.status !== "cancelled" && matchOrder(o));
 
   /* ---------- 上の箱・タブ ---------- */
   function drawTop() {
     const n = newReqs().length;
-    const wait = (st.orders || []).filter(o => o.status === "wait").length;
     const box = (cls, c, label, num, attrs) =>
       `<button type="button" class="box ${cls}" ${attrs} style="--c:${c}"><span class="lab">${label}</span><span class="num">${num}<span class="unit">件</span></span></button>`;
+    const base = liveOrders();
     $("#boxes", main).innerHTML =
-      box(`new${n ? " has" : ""}`, "var(--amber)", "現場からの新しい依頼", st.reqs ? n : "…", `data-view="irai" aria-pressed="${st.view === "irai"}"`) +
-      // 押してしぼりこむのは 5-3 から（いまは数だけ）
-      box("soon", "var(--amber)", "材料が<wbr>まだ届いていない", st.orders ? wait : "…", "disabled") +
-      box("soon", "var(--blue)", "届いた・<wbr>請求まだ", "—", "disabled") +
-      box("soon", "var(--grey)", "請求ずみ", "—", "disabled");
+      box(`new${n ? " has" : ""}`, "var(--amber)", "現場からの新しい依頼", st.reqs ? n : "…", `data-newbox aria-pressed="${st.view === "irai"}"`) +
+      // 押すと、その注文だけの一覧（「注文ごと」）。もう一度押すと、しぼりこみをやめる
+      ["wait", "arrived", "billed"].map(s => box("", ST[s].color, ST[s].label.replace("材料が", "材料が<wbr>").replace("・", "・<wbr>"),
+        st.orders ? base.filter(o => o.status === s).length : "…",
+        `data-filter="${s}" aria-pressed="${st.view !== "irai" && st.filter === s}"`)).join("");
     const all = (st.reqs || []).filter(isNew).length;
     main.querySelectorAll("#seg [data-view]").forEach(b => {
       b.setAttribute("aria-selected", b.dataset.view === st.view);
       if (b.dataset.view === "irai") b.innerHTML = "依頼" + (all ? `<span class="badge">${all}</span>` : "");
     });
+    const parts = [];
+    if (st.view !== "irai" && st.filter !== "all") parts.push(`「<b>${ST[st.filter].label}</b>」だけ`);
+    if (st.q.trim()) parts.push(`「<b>${esc(st.q.trim())}</b>」でさがし中`);
     const note = $("#filterNote", main);
-    note.hidden = !st.q.trim();
-    note.innerHTML = st.q.trim() ? `<span>「<b>${esc(st.q.trim())}</b>」でさがし中</span><button type="button" class="linkbtn" id="clearQ">ぜんぶ表示にもどす</button>` : "";
+    note.hidden = !parts.length;
+    note.innerHTML = parts.length ? `<span>${parts.join("・")}</span><button type="button" class="linkbtn" id="clearQ">ぜんぶ表示にもどす</button>` : "";
   }
 
   /* ---------- 一覧 ---------- */
@@ -104,12 +116,68 @@ export function startOfficeApp(main, me) {
       </article>`;
   }
 
+  /* 注文のカード（試作の cardHTML と同じ） */
+  function orderCard(o) {
+    const s = ST[o.status] || ST.wait, late = isLate(o, ymd(0)), cx = o.status === "cancelled";
+    return `
+      <article class="ocard${cx ? " cx" : ""}" tabindex="0" data-open="${esc(o.id)}" style="--c:${s.color}">
+        <div class="card-head"><span class="sup">${esc(o.supplierName)}</span>
+          <span class="ochip${o.status === "wait" ? " solid" : o.status === "arrived" ? " blue" : ""}">${s.chip}</span></div>
+        <div class="kouji"><span class="chuban">${esc(o.chuban)}</span><span class="kenmei">${esc(zenkana(o.kenmei))}</span></div>
+        <div class="items">${esc(Object.values(o.lines || {}).map(lineText).join("\n"))}</div>
+        <dl class="meta">
+          <div><dt>希望日</dt><dd${late ? ' class="late"' : ""}>${esc(kibouText(o.kibou))}${late ? "（すぎています）" : ""}</dd></div>
+          <div><dt>届け先</dt><dd>${esc(o.basho || "—")}</dd></div>
+          <div><dt>注文者</dt><dd>${esc(o.chumonsha || "—")}</dd></div>
+          <div><dt>注文した</dt><dd>${md(o.orderedAt)}</dd></div>
+        </dl>
+        <div class="card-foot"><span class="amt"><span>金額はまだ</span></span>
+          ${o.status === "wait" ? `<button type="button" class="btn primary" data-next="${esc(o.id)}">届いた</button>` : ""}</div>
+      </article>`;
+  }
+
+  /** 並び：まだ届いていない → 届いた → 請求ずみ。その中で、希望日がすぎた注文が上、そのあと新しい順 */
+  function sortOrders(list) {
+    const rank = { wait: 0, arrived: 1, billed: 2, cancelled: 3 }, today = ymd(0);
+    return list.slice().sort((a, b) => (rank[a.status] - rank[b.status]) || ((isLate(b, today) ? 1 : 0) - (isLate(a, today) ? 1 : 0)) || ((b.orderedAt || 0) - (a.orderedAt || 0)));
+  }
+
+  function drawOrders(list) {
+    if (!st.orders) { list.innerHTML = '<p class="muted">読んでいます…</p>'; return; }
+    const shown = sortOrders(liveOrders().filter(o => st.filter === "all" || o.status === st.filter));
+    const cxs = st.filter === "all" ? sortOrders((st.orders || []).filter(o => o.status === "cancelled" && matchOrder(o))) : [];
+    list.innerHTML =
+      (shown.length ? `<div class="ocards">${shown.map(orderCard).join("")}</div>` : '<p class="empty">あてはまる注文はありません。</p>') +
+      (cxs.length ? `<details class="block hidbox" id="cxOrders"><summary>取り消した注文（${cxs.length}）</summary><div class="ocards">${cxs.map(orderCard).join("")}</div></details>` : "");
+  }
+
+  /* 工事（注番）ごと：注番ごとの注文の数。押すと、その注番の注文だけの一覧 */
+  function drawKouji(list) {
+    if (!st.orders) { list.innerHTML = '<p class="muted">読んでいます…</p>'; return; }
+    const groups = new Map();
+    liveOrders().filter(o => st.filter === "all" || o.status === st.filter).forEach(o => {
+      if (!groups.has(o.chuban)) groups.set(o.chuban, []);
+      groups.get(o.chuban).push(o);
+    });
+    if (!groups.size) { list.innerHTML = '<p class="empty">あてはまる工事はありません。</p>'; return; }
+    const cards = [...groups.entries()].sort((a, b) => b[0].slice(2).localeCompare(a[0].slice(2)) || a[0].localeCompare(b[0])).map(([cb, os]) => {
+      const w = os.filter(o => o.status === "wait").length, a = os.filter(o => o.status === "arrived").length;
+      const color = w ? "var(--amber)" : a ? "var(--blue)" : "var(--grey)";
+      const latest = os.reduce((x, o) => (o.orderedAt || 0) > (x.orderedAt || 0) ? o : x, os[0]);
+      return `
+        <button type="button" class="kcard" data-kouji="${esc(cb)}" style="--c:${color}">
+          <span class="kouji"><span class="chuban">${esc(cb)}</span><span class="kenmei">${esc(zenkana(latest.kenmei))}</span></span>
+          <span class="kstats"><span>注文 <b>${os.length}</b> 件</span><span>材料がまだ届いていない <b>${w}</b></span><span>請求まだ <b>${a}</b></span></span>
+          <span class="kcost"><span class="lab">材料費</span><span class="muted">納品書の金額を入れると出ます（次に作ります）</span></span>
+        </button>`;
+    }).join("");
+    list.innerHTML = `<div class="ocards">${cards}</div>`;
+  }
+
   function drawList() {
     const list = $("#list", main);
-    if (st.view !== "irai") {
-      list.innerHTML = `<p class="empty">「${st.view === "orders" ? "注文ごと" : "工事（注番）ごと"}」は、次に作ります（5-3）。</p>`;
-      return;
-    }
+    if (st.view === "orders") return drawOrders(list);
+    if (st.view === "kouji") return drawKouji(list);
     if (!st.reqs) { list.innerHTML = '<p class="muted">読んでいます…</p>'; return; }
     const news = newReqs();
     const cxs = st.reqs.filter(r => isCancelled(r) && matchReq(r));
@@ -121,10 +189,10 @@ export function startOfficeApp(main, me) {
   }
 
   function draw() {
-    const open = !!$("#cxBox[open]", main);
+    const open = [...main.querySelectorAll("#list details[id][open]")].map(d => d.id);
     drawTop();
     drawList();
-    if (open && $("#cxBox", main)) $("#cxBox", main).open = true;
+    for (const id of open) { const d = $(`#${id}`, main); if (d) d.open = true; }
   }
 
   /* ---------- 依頼の中身（右から出る）：材料屋を決めて注文する ---------- */
@@ -251,6 +319,7 @@ export function startOfficeApp(main, me) {
     const panel = document.getElementById("panel");
     const y = keepScroll && panel ? panel.scrollTop : 0;
     st.openId = id;
+    st.openOrderId = "";
     openSheet(reqHTML(r), p => {
       p.scrollTop = y;
       const w = p.querySelector("#reqWrap");
@@ -327,29 +396,160 @@ export function startOfficeApp(main, me) {
     }
   }
 
+  /* ---------- 注文の中身（右から出る）：届いた・もどす・コピー・取り消して依頼にもどす ---------- */
+  function orderHTML(o) {
+    const s = ST[o.status] || ST.wait, late = isLate(o, ymd(0)), cx = o.status === "cancelled";
+    const steps = [["注文した", o.orderedAt, true], ["届いた", o.arrivedAt, o.status === "arrived" || o.status === "billed"], ["請求が来た", o.billedAt, o.status === "billed"]];
+    let act = "";
+    if (o.status === "wait") {
+      act = `<div class="block act" style="--c:${s.color}"><h3>つぎにやること</h3>
+          <p>材料は届きましたか？<br><span class="hint">納品書の金額は、あとで入れられます（次に作ります）。</span></p>
+          <button type="button" class="btn primary big" data-arrive="${esc(o.id)}">届いた（金額はあとで）</button></div>`;
+    } else if (o.status === "arrived") {
+      act = `<div class="block act" style="--c:${s.color}"><h3>つぎにやること</h3>
+          <p>納品書の金額と、請求が来たことは、次に作ります（5-4）。</p>
+          <button type="button" class="linkbtn" data-back="${esc(o.id)}">「材料がまだ届いていない」にもどす</button></div>`;
+    } else if (cx) {
+      act = `<div class="block"><p class="warn">この注文は取り消しました${o.cancelledAt ? `（${md(o.cancelledAt)} ${hm(o.cancelledAt)}・${esc(o.cancelledBy || "")}）` : ""}。品物は依頼にもどしました。</p></div>`;
+    }
+    return `
+      <div class="pw" id="orderWrap">
+        <div class="panel-head"><div>
+          <span class="ochip${o.status === "wait" ? " solid" : o.status === "arrived" ? " blue" : ""}">${s.chip}</span>
+          <h2 id="panelTitle" class="mt6">${esc(o.supplierName)}</h2>
+          <div class="kouji"><span class="chuban">${esc(o.chuban)}</span><span class="kenmei">${esc(zenkana(o.kenmei))}</span></div>
+        </div><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
+        ${cx ? "" : `<div class="block"><ol class="steps" style="--c:${s.color}">${steps.map(([l, d, done]) => `<li class="${done ? "done" : ""}">${l}<span class="d">${done && d ? md(d) : ""}</span></li>`).join("")}</ol></div>`}
+        ${act}
+        <div class="block"><h3>品名・数量</h3><ul class="g-lines">${Object.values(o.lines || {}).map(l => `<li>${esc(lineText(l))}</li>`).join("")}</ul></div>
+        <div class="block"><dl class="dl">
+          <dt>希望日</dt><dd${late ? ' class="late"' : ""}>${esc(kibouText(o.kibou))}${late ? "（すぎています）" : ""}</dd>
+          <dt>届け先</dt><dd>${esc(o.basho || "—")}</dd>
+          <dt>注文者</dt><dd>${esc(o.chumonsha || "—")}</dd>
+          <dt>担当者</dt><dd>${esc(o.tantou || "—")}</dd>
+          <dt>来たところ</dt><dd>${o.reqId ? `現場のスマホ（${esc(o.chumonsha)}さん）` : "LINE・電話"}</dd>
+          <dt>注文した</dt><dd>${md(o.orderedAt)} ${hm(o.orderedAt)}（${esc(o.orderedBy || "")}）</dd>
+          ${o.arrivedAt ? `<dt>届いた</dt><dd>${md(o.arrivedAt)} ${hm(o.arrivedAt)}（${esc(o.arrivedBy || "")}）</dd>` : ""}
+          ${o.contacted ? `<dt>連絡ずみ</dt><dd>${esc(o.chumonsha)}さんが ${esc(o.supplierName)} に連絡ずみ</dd>` : ""}
+          ${o.memo ? `<dt>メモ</dt><dd>${esc(o.memo)}</dd>` : ""}
+        </dl></div>
+        <div class="row"><button type="button" class="btn" data-ocopy="${esc(o.id)}">注文の文をコピー（メール・LINE用）</button></div>
+        <div class="field" id="oCopyFb" hidden><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
+          <textarea class="inp ta copybox" rows="12" readonly></textarea></div>
+        ${o.status === "wait" ? `
+          <div class="cx-start" id="ocx-${esc(o.id)}">
+            <button type="button" class="btn danger" data-ocancel="${esc(o.id)}">注文を取り消して依頼にもどす</button>
+            <span class="hint">押しまちがえたときや、材料屋を変えたいときに。材料屋に連絡したあとなら、材料屋にも取り消しを伝えてください。</span>
+          </div>` : ""}
+      </div>`;
+  }
+
+  function openOrder(id, keepScroll = false) {
+    const o = (st.orders || []).find(x => x.id === id);
+    if (!o) return;
+    const panel = document.getElementById("panel");
+    const y = keepScroll && panel ? panel.scrollTop : 0;
+    st.openOrderId = id;
+    st.openId = "";
+    openSheet(orderHTML(o), p => {
+      p.scrollTop = y;
+      const w = p.querySelector("#orderWrap");
+      w.addEventListener("click", e => onOrderClick(e, w).catch(ex => toast(errorText(ex))));
+    }, { side: true });
+  }
+
+  async function onOrderClick(e, w) {
+    const t = e.target.closest("[data-arrive],[data-back],[data-ocopy],[data-ocancel],[data-ocyes],[data-ocno]");
+    if (!t || t.disabled) return;
+    const d = t.dataset, o = (st.orders || []).find(x => x.id === st.openOrderId);
+    if (!o) return;
+    const busy = async (label, fn) => {
+      const old = t.textContent;
+      t.disabled = true;
+      t.textContent = label;
+      try { await fn(); } catch (ex) { t.disabled = false; t.textContent = old; throw ex; }
+    };
+    if (d.arrive) {
+      await busy("しまっています…", () => markArrived(o, me));
+      toast("「届いた」にしました。納品書の金額は、あとで入れられます");
+    } else if (d.back) {
+      await busy("もどしています…", () => backToWait(o));
+      toast("「材料がまだ届いていない」にもどしました");
+    } else if (d.ocopy) {
+      const text = orderText(o), fb = w.querySelector("#oCopyFb");
+      fb.hidden = false;
+      fb.querySelector("textarea").value = text;
+      try {
+        await navigator.clipboard.writeText(text);
+        toast("注文の文をコピーしました。LINE やメールにはりつけられます");
+      } catch (ex) {
+        fb.querySelector("textarea").select();
+        toast("コピーできませんでした。下の文を選んでコピーしてください");
+      }
+    } else if (d.ocancel) {
+      const box = w.querySelector(`#ocx-${CSS.escape(d.ocancel)}`);
+      box.className = "confirm";
+      box.innerHTML = `<p class="confirm-q">この注文を取り消して、品物を依頼にもどしますか？</p>
+        <div class="confirm-btns"><button type="button" class="btn danger" data-ocyes="${esc(d.ocancel)}">取り消す</button><button type="button" class="btn" data-ocno>やめる</button></div>`;
+      box.scrollIntoView({ block: "nearest" });
+    } else if ("ocno" in d) {
+      openOrder(o.id, true);
+    } else if (d.ocyes) {
+      const r = (st.reqs || []).find(x => x.id === o.reqId);
+      await busy("取り消しています…", () => cancelOrder(o, r, me));
+      toast(`${o.supplierName} への注文を取り消しました。品物は依頼にもどりました`);
+    }
+  }
+
   /** データが変わったら、出している中身もかきなおす（見ていた場所のまま。えらびかけの材料屋はのこす） */
   function refreshPanel() {
     const sh = document.getElementById("sheet");
-    if (!st.openId || !sh || sh.hidden || !document.getElementById("reqWrap")) return;
+    if (!sh || sh.hidden) return;
     const a = document.activeElement;
-    if (a && a.closest && a.closest("#reqWrap") && a.matches("select, textarea")) return;   // えらんでいる途中はかきなおさない
-    openReq(st.openId, true);
+    if (st.openId && document.getElementById("reqWrap")) {
+      if (a && a.closest && a.closest("#reqWrap") && a.matches("select, textarea")) return;   // えらんでいる途中はかきなおさない
+      if (document.querySelector("#reqWrap .confirm")) return;   // 「本当に？」を出している途中はかきなおさない
+      openReq(st.openId, true);
+    } else if (st.openOrderId && document.getElementById("orderWrap")) {
+      if (a && a.closest && a.closest("#orderWrap") && a.matches("textarea")) return;
+      if (document.querySelector("#orderWrap .confirm")) return;   // 「本当に？」を出している途中はかきなおさない
+      openOrder(st.openOrderId, true);
+    }
   }
 
   /* ---------- 押したとき（一覧） ---------- */
   main.addEventListener("click", e => {
-    const t = e.target.closest("[data-view],[data-reqopen],[data-req],#setBtn,#setBack,#clearQ");
+    const t = e.target.closest("[data-newbox],[data-filter],[data-view],[data-next],[data-kouji],[data-reqopen],[data-req],[data-open],#setBtn,#setBack,#clearQ");
     if (!t || t.disabled) return;
-    if (t.dataset.view) { st.view = t.dataset.view; draw(); }
-    else if (t.dataset.reqopen) openReq(t.dataset.reqopen);
-    else if (t.dataset.req) openReq(t.dataset.req);
+    const d = t.dataset;
+    if ("newbox" in d) { st.view = "irai"; st.filter = "all"; draw(); }
+    else if (d.filter) {
+      // ようすの箱：その注文だけの一覧。もう一度押すと、しぼりこみをやめる
+      st.filter = st.view !== "irai" && st.filter === d.filter ? "all" : d.filter;
+      if (st.view === "irai") st.view = "orders";
+      draw();
+    }
+    else if (d.view) { st.view = d.view; draw(); }
+    else if (d.next) {
+      const o = (st.orders || []).find(x => x.id === d.next);
+      if (!o) return;
+      t.disabled = true;
+      markArrived(o, me).then(() => toast("「届いた」にしました。納品書の金額は、あとで入れられます"), ex => { t.disabled = false; toast(errorText(ex)); });
+    }
+    else if (d.kouji) { st.view = "orders"; st.q = d.kouji; $("#q", main).value = d.kouji; draw(); window.scrollTo({ top: 0 }); }
+    else if (d.reqopen) openReq(d.reqopen);
+    else if (d.req) openReq(d.req);
+    else if (d.open) openOrder(d.open);
     else if (t.id === "setBtn") showSettings(true);
     else if (t.id === "setBack") showSettings(false);
-    else if (t.id === "clearQ") { st.q = ""; $("#q", main).value = ""; draw(); }
+    else if (t.id === "clearQ") { st.q = ""; st.filter = "all"; $("#q", main).value = ""; draw(); }
   });
   main.addEventListener("keydown", e => {
-    const c = e.target.closest && e.target.closest("[data-req]");
-    if (c && e.target === c && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openReq(c.dataset.req); }
+    const c = e.target.closest && e.target.closest("[data-req],[data-open]");
+    if (c && e.target === c && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      if (c.dataset.req) openReq(c.dataset.req); else openOrder(c.dataset.open);
+    }
   });
   main.addEventListener("input", e => {
     if (e.target.id === "q") { st.q = e.target.value; draw(); }

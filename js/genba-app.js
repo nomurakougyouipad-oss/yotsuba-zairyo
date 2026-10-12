@@ -22,19 +22,27 @@ const hm = ts => { const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.
 const linesOf = r => Object.values(r.lines || {});
 const isCancelled = r => r.status === "cancelled";
 
-/** 依頼の進み具合。os = この依頼から事務所が作った注文（取り消した注文は数えない）。届いた は 11章 5-3 で足す */
+/** 依頼の進み具合。os = この依頼から事務所が作った注文（取り消した注文は数えない） */
 function progress(r, os = []) {
   if (isCancelled(r)) return { step: 0, label: "取り消した" };
   const act = os.filter(o => o.status !== "cancelled");
   if (!act.length) return { step: 1, label: "事務所で確認中" };
   const names = [...new Set(act.map(o => o.supplierName))].join("・");
   const orderedAt = Math.min(...act.map(o => o.orderedAt || Infinity));
-  return { step: 2, label: `${r.status === "ordered" ? "事務所が注文した" : "一部を注文した"}（${names}）`, orderedAt };
+  const arrived = act.filter(o => o.status === "arrived" || o.status === "billed");
+  // 全部注文して、その注文が全部届いたら「届いた」
+  if (r.status === "ordered" && arrived.length === act.length) {
+    return { step: 3, label: `届いた（${r.basho || "届け先"}）`, orderedAt, arrivedAt: Math.max(...arrived.map(o => o.arrivedAt || 0)) };
+  }
+  const label = r.status !== "ordered" ? "一部を注文した" : arrived.length ? "一部が届いた" : "事務所が注文した";
+  return { step: 2, label: `${label}（${names}）`, orderedAt };
 }
 /** 品物ごとのようす */
-function lineStatus(l, os) {
+function lineStatus(l, os, r) {
   const o = l.orderId && os.find(x => x.id === l.orderId && x.status !== "cancelled");
-  return o ? { cls: "s2", text: `注文ずみ（${o.supplierName}）・まだ届いていない` } : { cls: "s1", text: "事務所で確認中" };
+  if (!o) return { cls: "s1", text: "事務所で確認中" };
+  if (o.status === "arrived" || o.status === "billed") return { cls: "s3", text: `届いた（${r.basho || o.basho || "届け先"}）` };
+  return { cls: "s2", text: `注文ずみ（${o.supplierName}）・まだ届いていない` };
 }
 
 export function startGenbaApp(main, me) {
@@ -332,7 +340,7 @@ export function startGenbaApp(main, me) {
       : st.reqs.map(r => {
         const pg = progress(r, ordersFor(r.id)), ls = linesOf(r);
         return `
-          <button type="button" class="sent${isCancelled(r) ? " cx" : ""}" data-sent="${esc(r.id)}">
+          <button type="button" class="sent${isCancelled(r) ? " cx" : ""}${pg.step >= 3 ? " got" : ""}" data-sent="${esc(r.id)}">
             <span class="sent-top"><span>${md(r.sentAt)} ${hm(r.sentAt)} に送った</span><span>${ls.length}点</span></span>
             <span class="kouji"><span class="chuban">${esc(r.chuban)}</span><span class="kenmei">${esc(zenkana(r.kenmei))}</span></span>
             <span class="items">${esc(ls.map(lineText).join("\n"))}</span>
@@ -350,7 +358,7 @@ export function startGenbaApp(main, me) {
     if (!r) return;
     const os = ordersFor(r.id), pg = progress(r, os), ls = linesOf(r);
     const canCancel = !isCancelled(r) && !r.ordered;
-    const steps = [["送った", r.sentAt, pg.step >= 1], ["注文した", pg.orderedAt, pg.step >= 2], ["届いた", null, pg.step >= 3]];
+    const steps = [["送った", r.sentAt, pg.step >= 1], ["注文した", pg.orderedAt, pg.step >= 2], ["届いた", pg.arrivedAt, pg.step >= 3]];
     const html = `
       <div class="pw" id="sentWrap">
         <div class="panel-head"><div><span class="eyebrow">送ったもの　${md(r.sentAt)} ${hm(r.sentAt)}</span>
@@ -359,11 +367,11 @@ export function startGenbaApp(main, me) {
         ${isCancelled(r)
           ? `<div class="block"><p class="warn">${r.cancelledAt ? `${md(r.cancelledAt)} ${hm(r.cancelledAt)} に` : ""}取り消しました</p></div>`
           : `<div class="block">
-              <ol class="steps" style="--c:var(--amber)">${steps.map(([l, d, done]) => `<li class="${done ? "done" : ""}">${l}<span class="d">${done && d ? md(d) : ""}</span></li>`).join("")}</ol>
+              <ol class="steps" style="--c:${pg.step >= 3 ? "var(--blue)" : "var(--amber)"}">${steps.map(([l, d, done]) => `<li class="${done ? "done" : ""}">${l}<span class="d">${done && d ? md(d) : ""}</span></li>`).join("")}</ol>
               <p class="center"><b>${esc(pg.label)}</b></p>
             </div>`}
         <div class="block"><h3>品物</h3>
-          <ul class="slines">${ls.map(l => { const s = lineStatus(l, os); return `<li><span>${esc(lineText(l))}</span>${isCancelled(r) ? "" : `<span class="st ${s.cls}">${esc(s.text)}</span>`}</li>`; }).join("")}</ul>
+          <ul class="slines">${ls.map(l => { const s = lineStatus(l, os, r); return `<li><span>${esc(lineText(l))}</span>${isCancelled(r) ? "" : `<span class="st ${s.cls}">${esc(s.text)}</span>`}</li>`; }).join("")}</ul>
         </div>
         <div class="block"><dl class="dl">
           <dt>いつほしい</dt><dd>${esc(kibouText(r.kibou))}</dd>

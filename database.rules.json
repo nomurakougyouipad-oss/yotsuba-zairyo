@@ -147,6 +147,8 @@
           "orderedByUid": { ".validate": "newData.isString() && (data.exists() || newData.val() == auth.uid)" },
           "cancelledAt": { ".validate": "newData.isNumber() && newData.val() == now" },
           "cancelledBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "arrivedAt": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
+          "arrivedBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "lines": {
             "$line": {
               ".validate": "$line.length <= 40 && newData.hasChildren(['spec', 'qty', 'unit'])",

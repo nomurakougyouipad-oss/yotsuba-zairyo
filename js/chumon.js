@@ -63,6 +63,29 @@ export async function placeOrder(r, draft, me) {
   return key;
 }
 
+/** 注文のようす（試作の ST と同じ。箱は上の縁に色：オレンジ＝待ち、青＝届いた、灰色＝おわり） */
+export const ST = {
+  wait: { label: "材料がまだ届いていない", chip: "待ち", color: "var(--amber)" },
+  arrived: { label: "届いた・請求まだ", chip: "届いた", color: "var(--blue)" },
+  billed: { label: "請求ずみ", chip: "請求ずみ", color: "var(--grey)" },
+  cancelled: { label: "取り消した", chip: "取り消した", color: "var(--grey)" },
+};
+
+/** 希望日がすぎているか（まだ届いていない注文で、希望日が日付のとき。最短はすぎない） */
+export function isLate(o, today) {
+  return o.status === "wait" && /^\d{4}-\d{2}-\d{2}$/.test(o.kibou || "") && o.kibou < today;
+}
+
+/** 届いた（金額はあとで）。me = 事務所の端末 {name} */
+export async function markArrived(o, me) {
+  await update(ref(db, `zairyo/orders/${o.id}`), { status: "arrived", arrivedAt: serverTimestamp(), arrivedBy: me.name });
+}
+
+/** 「材料がまだ届いていない」にもどす（届いたを押しまちがえたとき） */
+export async function backToWait(o) {
+  await update(ref(db, `zairyo/orders/${o.id}`), { status: "wait", arrivedAt: null, arrivedBy: null });
+}
+
 /** 注文を取り消して、品物を依頼にもどす（注文は消さずに「取り消した」の印） */
 export async function cancelOrder(o, r, me) {
   const upd = {

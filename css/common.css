@@ -250,6 +250,8 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .sent{background:var(--surface);border:1px solid var(--line);border-top:4px solid var(--amber-btn);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;text-align:left;width:100%}
 .sent:hover{border-color:var(--muted);border-top-color:var(--amber-btn)}
 .sent.cx{border-top-color:var(--grey);opacity:.6}
+.sent.got{border-top-color:var(--blue)}
+.sent.got:hover{border-top-color:var(--blue)}
 .sent-top{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--muted)}
 .kouji{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;min-width:0}
 .items{font-size:14px;white-space:pre-line;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;background:var(--surface2);border-radius:6px;padding:6px 9px;overflow-wrap:anywhere}
@@ -333,6 +335,18 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .oitem{border:1px solid var(--line);border-left:4px solid var(--amber-btn);border-radius:10px;padding:10px 12px;background:var(--surface);display:flex;flex-direction:column;gap:6px}
 .oitem.cx{border-left-color:var(--grey);opacity:.7}
 .oi-head{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}
+/* 事務所：注文ごと・工事ごと・注文の中身 */
+.ochip.blue{border-color:var(--blue);color:var(--blue)}
+.late{color:var(--danger);font-weight:700}
+.mt6{margin-top:6px}
+.block.act{background:var(--surface2);border-color:var(--c)}
+.block.act .btn.big{align-self:flex-start}
+.kcard{background:var(--surface);border:1px solid var(--line);border-top:5px solid var(--c);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;text-align:left;min-width:0}
+.kcard:hover{border-color:var(--muted);border-top-color:var(--c)}
+.kstats{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;color:var(--muted)}
+.kstats b{color:var(--fg);font-family:var(--f-num);font-weight:600;font-size:15px}
+.kcost{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line);padding-top:8px;font-size:13px}
+.kcost .lab{color:var(--muted);font-weight:700}
 @media (max-width:700px){
   .lrow.has-sup{grid-template-columns:minmax(0,1fr) auto}
   .lrow.has-sup .lsup{grid-column:1 / -1}
