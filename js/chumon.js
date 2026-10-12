@@ -6,6 +6,7 @@ import { ref, push, update, serverTimestamp } from "https://www.gstatic.com/fire
 import { db, auth } from "./firebase.js";
 import { zenkana } from "./common.js";
 import { lineText, kibouText } from "./tanomu.js";
+import { attachOf } from "./shashin.js";
 
 const linesArr = o => Object.values(o.lines || {});
 
@@ -16,6 +17,9 @@ export function orderText(o) {
   L.push(`工事件名　${zenkana(o.kenmei || "")}`);
   L.push(`注文番号　${o.chuban}`, "");
   L.push("品名", ...linesArr(o).map(lineText));
+  const at = attachOf(o.lines);
+  at.links.forEach(h => L.push("参考：" + h));
+  if (at.photos.length) L.push("※品物の写真を別に送ります");
   L.push("");
   L.push("納入希望日", kibouText(o.kibou));
   if (o.contacted) L.push(`${o.supplierName}さんに連絡済みです`);
@@ -33,6 +37,8 @@ export function draftOrder(r, supId, sup, lineIds, bashoText) {
   for (const id of lineIds) {
     const l = r.lines[id];
     lines[id] = { key: l.key || "", cat: l.cat || "", name: l.name || "", vals: l.vals || {}, spec: l.spec, note: l.note || "", qty: l.qty, unit: l.unit };
+    if (l.photos) lines[id].photos = Object.values(l.photos);   // 写真・リンクも注文についていく
+    if (l.link) lines[id].link = l.link;
   }
   return {
     reqId: r.id, supplier: supId, supplierName: sup.name, to: sup.to || "御中",

@@ -113,6 +113,8 @@
               "note": { ".validate": "newData.isString() && newData.val().length <= 200" },
               "qty": { ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() < 100000" },
               "unit": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 10" },
+              "photos": { "$i": { ".validate": "newData.isString() && newData.val().matches(/^zairyo\\/photos\\/[A-Za-z0-9]+\\/[A-Za-z0-9]+\\.jpg$/)" } },
+              "link": { ".validate": "newData.isString() && newData.val().length <= 500 && newData.val().matches(/^https?:\\/\\/.+/)" },
               "supplier": { ".validate": "newData.isString() && newData.val().length <= 40" },
               "orderId": { ".validate": "newData.isString() && newData.val().length <= 40" },
               "$other": { ".validate": false }
@@ -222,6 +224,8 @@
               "note": { ".validate": "newData.isString() && newData.val().length <= 200" },
               "qty": { ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() < 100000" },
               "unit": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 10" },
+              "photos": { "$i": { ".validate": "newData.isString() && newData.val().matches(/^zairyo\\/photos\\/[A-Za-z0-9]+\\/[A-Za-z0-9]+\\.jpg$/)" } },
+              "link": { ".validate": "newData.isString() && newData.val().length <= 500 && newData.val().matches(/^https?:\\/\\/.+/)" },
               "$other": { ".validate": false }
             }
           },

@@ -14,6 +14,7 @@ import { watchJobs } from "./nippo.js";
 import { jobPicker } from "./kouji.js";
 import { normCatalog, openItem, buildSpec, lineText, loadCart, saveCart, newForm, fmtQty, ymd, kibouText } from "./tanomu.js";
 import { yen, linePrice, priceText, reqMoney } from "./chumon.js";
+import { attachHTML, fillPhotos, deletePhoto, openWebSearch } from "./shashin.js";
 
 const CAT_KEY = "yotsuba-zairyo-cat";   // さいごに見た種類（この端末だけ）
 const byOrder = ([, a], [, b]) => (a.order ?? 999) - (b.order ?? 999);
@@ -59,6 +60,7 @@ export function startGenbaApp(main, me) {
   try { st.cat = localStorage.getItem(CAT_KEY) || ""; catChosen = !!st.cat; } catch (err) { }
 
   main.innerHTML = `
+    <div class="g-tools"><button type="button" class="btn websearch" id="webBtn">🔍 ネットでさがす</button></div>
     <div class="ph-tabs" role="tablist" aria-label="画面">
       <button type="button" role="tab" data-gtab="tanomu">たのむ</button>
       <button type="button" role="tab" data-gtab="sent">送ったもの</button>
@@ -169,7 +171,8 @@ export function startGenbaApp(main, me) {
       <h2 class="h-cart">カートの中身（${lines.length}点）</h2>
       <ul class="cartlist">${lines.map(l => `
         <li>
-          <span class="cl-spec">${esc(l.spec)}${l.note ? `<span class="cl-note">${esc(l.note)}</span>` : ""}</span>
+          <span class="cl-spec">${esc(l.spec)}${l.note ? `<span class="cl-note">${esc(l.note)}</span>` : ""}${(l.photos && l.photos.length) || l.link
+            ? `<span class="cl-note">${[l.photos && l.photos.length ? `写真${l.photos.length}枚` : "", l.link ? "リンクあり" : ""].filter(Boolean).join("・")}</span>` : ""}</span>
           <span class="cl-qty">${esc(fmtQty(l.qty))}<small>${esc(l.unit)}</small></span>
           <span class="cl-act">
             <button type="button" class="linkbtn" data-cedit="${esc(l.uid)}">なおす</button>
@@ -277,6 +280,8 @@ export function startGenbaApp(main, me) {
     const lines = {};
     for (const l of st.cart.lines) {
       lines[l.uid] = { key: l.key, cat: l.cat, name: l.name, vals: l.vals || {}, spec: l.spec, note: l.note || "", qty: Number(l.qty), unit: l.unit };
+      if (l.photos && l.photos.length) lines[l.uid].photos = l.photos;
+      if (l.link) lines[l.uid].link = l.link;
     }
     const req = {
       chumonsha: me.name,
@@ -391,6 +396,7 @@ export function startGenbaApp(main, me) {
             return `<li><span>${esc(lineText(l))}</span>${isCancelled(r) ? "" : `<span class="st ${s.cls}">${esc(s.text)}</span>`}${lp ? `<span class="lp">${esc(priceText(lp))}</span>` : ""}</li>`;
           }).join("")}</ul>
         </div>
+        ${attachHTML(r.lines)}
         ${moneyHTML(r, os)}
         <div class="block"><dl class="dl">
           <dt>いつほしい</dt><dd>${esc(kibouText(r.kibou))}</dd>
@@ -407,6 +413,7 @@ export function startGenbaApp(main, me) {
       </div>`;
     openSheet(html, p => {
       const w = p.querySelector("#sentWrap");
+      fillPhotos(w);
       w.addEventListener("click", async e => {
         const row = w.querySelector("#cxRow");
         if (e.target.id === "cxBtn") {
@@ -448,9 +455,17 @@ export function startGenbaApp(main, me) {
     else nippoRow("wait", "読んでいます…");
   }
 
+  /** カートに入れる（品物・★いつもの・ネットでさがす から） */
+  function addLine(line) {
+    st.cart.lines.push(line);
+    saveCart(st.cart);
+    draw();
+    toast(`カートに入れました（${st.cart.lines.length}点）`);
+  }
+
   /* ---------- 押したとき ---------- */
   main.addEventListener("click", e => {
-    const t = e.target.closest("[data-gtab],[data-cat],[data-item],[data-fav],[data-sent],[data-cedit],[data-cdel],[data-kibou],[data-basho],[data-contact],[data-csup],#sendBtn");
+    const t = e.target.closest("[data-gtab],[data-cat],[data-item],[data-fav],[data-sent],[data-cedit],[data-cdel],[data-kibou],[data-basho],[data-contact],[data-csup],#sendBtn,#webBtn");
     if (!t || t.disabled) return;
     const d = t.dataset, f = st.cart.form;
     if (d.gtab) {
@@ -464,20 +479,17 @@ export function startGenbaApp(main, me) {
       try { localStorage.setItem(CAT_KEY, st.cat); } catch (err) { }
       draw();
     } else if (d.item) {
-      openItem(st.catalog, d.item, null, line => {
-        st.cart.lines.push(line);
-        saveCart(st.cart);
-        draw();
-        toast(`カートに入れました（${st.cart.lines.length}点）`);
+      openItem(st.catalog, d.item, null, addLine);
+    } else if (t.id === "webBtn") {
+      // 見つけた物は「自由に書く」に品名を入れて開く（スクショをつけて、カートへ）
+      openWebSearch(q => {
+        const free = st.catalog && ([...st.catalog.item.values()].find(x => x.key === "tool:free") || [...st.catalog.item.values()].find(x => x.free));
+        if (!free) { toast("「自由に書く」が品物一覧にありません。事務所に知らせてください"); return; }
+        openItem(st.catalog, free.key, { vals: { __free: q }, qty: 1, unit: free.unit || "個", note: "" }, addLine);
       });
     } else if (d.fav) {
       const f = favList()[Number(d.fav)];
-      if (f) openItem(st.catalog, f.key, { vals: f.vals, qty: f.qty, unit: f.unit, note: f.note }, line => {
-        st.cart.lines.push(line);
-        saveCart(st.cart);
-        draw();
-        toast(`カートに入れました（${st.cart.lines.length}点）`);
-      });
+      if (f) openItem(st.catalog, f.key, { vals: f.vals, qty: f.qty, unit: f.unit, note: f.note }, addLine);
     } else if (d.sent) {
       openSent(d.sent);
     } else if (d.cedit) {
@@ -486,6 +498,8 @@ export function startGenbaApp(main, me) {
     } else if (d.cdel) {
       if (askDel !== d.cdel) { askDel = d.cdel; draw(); return; }   // けすときは2回押す
       askDel = "";
+      const gone = st.cart.lines.find(x => x.uid === d.cdel);
+      (gone && gone.photos || []).forEach(deletePhoto);
       st.cart.lines = st.cart.lines.filter(x => x.uid !== d.cdel);
       saveCart(st.cart);
       draw();

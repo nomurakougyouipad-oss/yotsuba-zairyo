@@ -83,7 +83,7 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .btn.danger{color:var(--danger);border-color:var(--danger);background:transparent}
 .form{display:flex;flex-direction:column;gap:14px}
 .field{display:flex;flex-direction:column;gap:5px;min-width:0}
-.field label{font-size:14px;font-weight:700}
+.field label,.field .lab{font-size:14px;font-weight:700}
 .inp{width:100%;min-width:0;min-height:48px;border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:10px 12px;font-size:16px}
 .hint{margin:0;font-size:12px;color:var(--muted)}
 .err{margin:0;font-size:14px;color:var(--danger);font-weight:700}
@@ -450,3 +450,31 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .b-items{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
 .okmsg{margin:0;padding:10px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--blue);color:var(--blue);font-weight:700}
 @media (max-width:520px){ .brow{grid-template-columns:1fr} }
+/* 写真・リンク・ネットでさがす（11章 6） */
+.g-tools{display:flex;justify-content:flex-end}
+.btn.websearch{min-height:44px}
+.webbox{display:flex;flex-direction:column;gap:12px;border:1px dashed var(--line);border-radius:10px;padding:12px}
+.shops{display:flex;flex-wrap:wrap;gap:6px}
+.btn.shop{text-decoration:none}
+.btn.shop[aria-disabled="true"]{opacity:.55}
+.shops.big{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+.shops.big .btn.shop{justify-content:center;min-height:52px;font-size:15px;padding:8px 4px}
+.howto{margin:0;padding-left:1.4em;font-size:14px;line-height:1.8;color:var(--muted)}
+.hint.ok{color:var(--blue)}
+.hint.bad{color:var(--danger);font-weight:700}
+.photos{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.photos.sm .ph-img{width:52px;height:52px}
+.ph{position:relative;display:inline-block}
+.ph-img{display:block;border:1px solid var(--line);border-radius:8px;padding:0;overflow:hidden;background:var(--surface);width:72px;height:72px}
+.ph-img img{width:100%;height:100%;object-fit:cover;display:block}
+.ph-img.ng{display:grid;place-items:center;font-size:11px;color:var(--muted)}
+.ph-x{position:absolute;top:-10px;right:-10px;width:32px;height:32px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--fg);font-weight:800;line-height:1;padding:0}
+.ph-add{display:inline-flex;align-items:center;justify-content:center;width:72px;height:72px;border:1px dashed var(--muted);border-radius:8px;font-weight:700;font-size:13px;color:var(--muted);cursor:pointer}
+.ph-add:focus-within{outline:2px solid var(--amber)}
+.ph-busy{font-size:13px;color:var(--muted)}
+.photos.drop{outline:2px dashed var(--amber);outline-offset:4px;border-radius:8px}
+.attach{display:flex;flex-direction:column;gap:8px}
+.shoplink{font-weight:700;color:var(--blue);overflow-wrap:anywhere;align-self:flex-start;min-height:32px;display:inline-flex;align-items:center}
+.lightbox{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.86);display:flex;align-items:center;justify-content:center;padding:16px}
+.lightbox img{max-width:100%;max-height:100%;object-fit:contain;border-radius:6px;background:#fff}
+.lightbox .x{position:absolute;top:calc(env(safe-area-inset-top,0px) + 12px);right:12px}

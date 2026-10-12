@@ -11,6 +11,7 @@ import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
 import { orderText, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, markBilled, backToArrived, billMany } from "./chumon.js";
 import { renderSettings } from "./settei.js";
+import { photosHTML, fillPhotos, attachHTML, linkLabel } from "./shashin.js";
 
 const pad = n => String(n).padStart(2, "0");
 const md = ts => { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()}`; };
@@ -217,6 +218,13 @@ export function startOfficeApp(main, me) {
     }
     return p;
   }
+  /** 品物の行についている写真（小さい絵）とリンク */
+  function lineAttach(l) {
+    const ps = Object.values(l.photos || {});
+    return (ps.length ? `<div class="photos sm">${photosHTML(ps)}</div>` : "") +
+      (l.link ? `<a class="shoplink" href="${esc(l.link)}" target="_blank" rel="noopener noreferrer">${esc(linkLabel(l.link))} のページを開く</a>` : "");
+  }
+
   /** 材料屋ごとのまとまり（まだ注文していない品物だけ） */
   function groupsOf(r) {
     const p = picksOf(r), m = new Map(), none = [];
@@ -246,7 +254,7 @@ export function startOfficeApp(main, me) {
           </select>`;
       return `
         <div class="lrow${cx ? "" : " has-sup"}${l.orderId ? " ordered" : ""}">
-          <div class="lspec">${catName(l.cat) ? `<span class="tag">${esc(catName(l.cat))}</span>` : ""}${esc(l.spec)}${l.note ? " " + esc(l.note) : ""}</div>
+          <div class="lspec">${catName(l.cat) ? `<span class="tag">${esc(catName(l.cat))}</span>` : ""}${esc(l.spec)}${l.note ? " " + esc(l.note) : ""}${lineAttach(l)}</div>
           <div class="lqty"><span class="num">${esc(fmtQty(l.qty))}</span>${esc(l.unit)}</div>
           ${cx ? "" : `<div class="lsup">${sup}</div>`}
         </div>`;
@@ -287,7 +295,8 @@ export function startOfficeApp(main, me) {
         return `
           <div class="group">
             <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">${esc(s.to || "御中")}</span><span class="hint g-n">${ids.length}点</span></div>
-            <ul class="g-lines">${ids.map(id => `<li>${esc(lineText(r.lines[id]))}</li>`).join("")}</ul>
+            <ul class="g-lines">${ids.map(id => { const l = r.lines[id], n = Object.keys(l.photos || {}).length;
+              return `<li>${esc(lineText(l))}${n ? ` <span class="tag">写真${n}枚は別に送る</span>` : ""}${l.link ? ` <span class="tag">リンクつき</span>` : ""}</li>`; }).join("")}</ul>
             <div class="row"><button type="button" class="btn" data-gcopy="${esc(sid)}">注文の文をコピー</button>
               <button type="button" class="btn primary" data-gorder="${esc(sid)}">注文した</button></div>
             <div class="field" data-gfb="${esc(sid)}" hidden><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
@@ -326,6 +335,7 @@ export function startOfficeApp(main, me) {
     st.openOrderId = "";
     openSheet(reqHTML(r), p => {
       p.scrollTop = y;
+      fillPhotos(p);
       const w = p.querySelector("#reqWrap");
       w.addEventListener("change", e => {
         const s = e.target.closest("[data-pick]");
@@ -498,6 +508,7 @@ export function startOfficeApp(main, me) {
         ${act}
         ${cx ? "" : slipBlockHTML(o)}
         <div class="block"><h3>品名・数量</h3><ul class="g-lines">${Object.values(o.lines || {}).map(l => `<li>${esc(lineText(l))}</li>`).join("")}</ul></div>
+        ${attachHTML(o.lines, "写真・リンク（材料屋に写真を送るときは、写真を開いて保存してください）")}
         <div class="block"><dl class="dl">
           <dt>希望日</dt><dd${late ? ' class="late"' : ""}>${esc(kibouText(o.kibou))}${late ? "（すぎています）" : ""}</dd>
           <dt>届け先</dt><dd>${esc(o.basho || "—")}</dd>
@@ -531,6 +542,7 @@ export function startOfficeApp(main, me) {
     st.openId = "";
     openSheet(orderHTML(o), p => {
       p.scrollTop = y;
+      fillPhotos(p);
       const w = p.querySelector("#orderWrap");
       w.addEventListener("click", e => onOrderClick(e, w).catch(ex => toast(errorText(ex))));
       w.addEventListener("input", e => {

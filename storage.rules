@@ -1,0 +1,32 @@
+rules_version = '2';
+
+// よつば材料注文の写真の置き場（Firebase Storage・東京 asia-northeast1）
+// - 現場・事務所が上げる写真：zairyo/photos/{端末の番号}/{番号}.jpg
+//   上げられるのは、その端末の本人だけ（JPEG・3MB まで）。見られる・消せるのは、本人と事務所
+// - Storage のルールはデータベースを読めないので、役割はログインのしるし（zr_role）で見る。
+//   事務所が端末の登録を消しても、しるしは最大1時間のこる（Storage だけ、最大1時間のずれがある）
+// - 材料屋（2回目）に見せるときは、そのときに決める
+// - それ以外の場所は、だれも読めない・書けない
+service firebase.storage {
+  match /b/{bucket}/o {
+    function member() {
+      return request.auth != null && (request.auth.token.zr_role == 'genba' || request.auth.token.zr_role == 'office');
+    }
+    function office() {
+      return request.auth != null && request.auth.token.zr_role == 'office';
+    }
+
+    match /zairyo/photos/{uid}/{file} {
+      allow read: if member() && (request.auth.uid == uid || office());
+      allow create: if member() && request.auth.uid == uid
+        && file.matches('[A-Za-z0-9]+[.]jpg')
+        && request.resource.size < 3 * 1024 * 1024
+        && request.resource.contentType == 'image/jpeg';
+      allow delete: if member() && (request.auth.uid == uid || office());
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

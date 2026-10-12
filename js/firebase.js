@@ -5,6 +5,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/fireba
 import { getDatabase, ref, onValue, get } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { initializeAuth, browserLocalPersistence, indexedDBLocalPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-functions.js";
+import { getStorage } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-storage.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBcbbpWgnsUO00_CkvSEV7QLCl0sXjKlEw",
@@ -24,6 +25,7 @@ export const auth = initializeAuth(app, {
   persistence: [browserLocalPersistence, indexedDBLocalPersistence, browserSessionPersistence],
 });
 const functions = getFunctions(app, "asia-southeast1");   // サーバーのプログラムの場所（データベースと同じシンガポール）
+export const storage = getStorage(app);                   // 写真の置き場（東京 asia-northeast1。10/12 持ち主）
 
 /** サーバーのプログラムを呼ぶ。call("zairyoRegisterDevice")({ … }) */
 export const call = name => httpsCallable(functions, name);

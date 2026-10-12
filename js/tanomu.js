@@ -1,8 +1,9 @@
 // たのむ（現場）：品物の種類 → 品物 → 寸法をえらぶ → 数 → カート。試作の「たのむ」と同じ
 // - 品物一覧はデータベース（/zairyo/master/catalog）。書き方のひな形（tpl）に、えらんだ値を入れて品名にする（buildSpec）
 // - カートは、この端末にしまう（iPhone はほかのアプリから戻ると、開きなおすことがあるため）
-// - 写真・リンク・ネットでさがすは 11章 6 で足す
+// - 「自由に書く」と「金物」には、お店で探すボタン・写真（4枚まで）・お店のページのリンク（11章 6。js/shashin.js）
 import { esc, toast, openSheet, closeSheet } from "./common.js";
+import { SHOPS, MAX_PHOTOS, safeLink, linkLabel, photoPicker, deletePhoto } from "./shashin.js";
 
 /* ---------- 品物一覧 ---------- */
 const arr = v => (Array.isArray(v) ? v : Object.values(v || {})).filter(x => x != null);
@@ -76,6 +77,11 @@ export function openItem(catalog, key, src, onSave) {
   const vals = src ? { ...src.vals } : {};
   const qty0 = src ? src.qty : 1, unit0 = src ? src.unit : it.unit, note0 = src ? src.note || "" : "";
   const units = catalog.units.includes(unit0) ? catalog.units : [...catalog.units, unit0];
+  const web = !!(it.free || it.id === "kanamono");   // ネットで探す・写真・リンクをつけられる品物
+  const photos0 = src && src.photos ? [...src.photos] : [];   // はじめについていた写真
+  const photos = [...photos0];
+  const link0 = (src && src.link) || "";
+  let saved = false;
 
   const optHTML = it.opts.map(([k, choices]) => {
     const v = vals[k] || "", other = !!v && !choices.includes(v);
@@ -102,6 +108,16 @@ export function openItem(catalog, key, src, onSave) {
         <div class="stepper"><button type="button" id="qMinus" aria-label="へらす">−</button><input id="iQty" inputmode="decimal" value="${esc(fmtQty(qty0))}" aria-label="数"><button type="button" id="qPlus" aria-label="ふやす">＋</button></div>
         <select id="iUnit" class="unit-sel" aria-label="単位">${units.map(u => `<option${u === unit0 ? " selected" : ""}>${esc(u)}</option>`).join("")}</select>
       </div>
+      ${web ? `
+        <div class="webbox">
+          <div class="field"><span class="lab">ネットでさがす</span>
+            <div class="shops">${SHOPS.map(sh => `<a class="btn shop" data-shop="${sh.id}" href="#" target="_blank" rel="noopener noreferrer">${sh.name}</a>`).join("")}</div>
+            <span class="hint" id="iShopHint">上に書いた品名でさがします。見つけたらスクショを撮って、下でつけてください。</span></div>
+          <div class="field"><span class="lab">写真・スクショ（${MAX_PHOTOS}枚まで）</span><div class="photos" id="iPhotos"></div></div>
+          <div class="field"><label for="iLink">お店のページのリンク（あれば）</label>
+            <input id="iLink" class="inp" inputmode="url" autocomplete="off" placeholder="https:// ではじまるリンクをはりつける" value="${esc(link0)}">
+            <span class="hint" id="iLinkHint"></span></div>
+        </div>` : ""}
       <div class="sheet-foot">
         <div class="preview"><span class="lab">こう書いて送ります</span><p id="iPrev"></p></div>
         <p class="err" id="iErr" role="alert"></p>
@@ -115,12 +131,42 @@ export function openItem(catalog, key, src, onSave) {
     const readQty = () => { const n = parseFloat(String(g("#iQty").value).normalize("NFKC")); return Number.isFinite(n) && n > 0 ? n : 0; };
     const preview = () => {
       const spec = buildSpec(it, vals), n = g("#iNote").value.trim(), q = readQty();
+      const extra = web ? [photos.length ? `写真${photos.length}枚` : "", safeLink(g("#iLink").value) ? "リンク" : ""].filter(Boolean).join("・") : "";
       g("#iPrev").textContent = spec || n
-        ? `${(spec + (n ? " " + n : "")).trim()}　${q ? fmtQty(q) : "?"}${g("#iUnit").value}`
+        ? `${(spec + (n ? " " + n : "")).trim()}　${q ? fmtQty(q) : "?"}${g("#iUnit").value}${extra ? `（${extra}つき）` : ""}`
         : "（まだ何もえらんでいません）";
     };
+    // ネットでさがす：品名の言葉で、お店の検索を新しいタブで開くだけ
+    const words = () => (it.free ? g("#iFree").value : `${buildSpec(it, vals)} ${g("#iNote").value}`).trim().replace(/s+/g, " ");
+    const upShops = () => {
+      if (!web) return;
+      const q = words();
+      w.querySelectorAll("[data-shop]").forEach(a => {
+        a.href = q ? SHOPS.find(sh => sh.id === a.dataset.shop).url(q) : "#";
+        a.setAttribute("aria-disabled", String(!q));
+      });
+    };
+    const upLink = () => {
+      if (!web) return;
+      const v = g("#iLink").value.trim(), h = g("#iLinkHint"), ok = safeLink(v);
+      h.className = "hint" + (v ? (ok ? " ok" : " bad") : "");
+      h.textContent = !v ? "" : ok ? `${linkLabel(ok)} のページ` : "https:// ではじまるリンクをはりつけてください";
+    };
+    let picker = null;
+    if (web) { picker = photoPicker(g("#iPhotos"), photos, preview); upShops(); upLink(); }
 
     w.addEventListener("click", e => {
+      const shop = e.target.closest("[data-shop]");
+      if (shop) {
+        if (!words()) {
+          e.preventDefault();
+          const h = g("#iShopHint");
+          h.textContent = "先に品名を書いてください（その言葉でさがします）";
+          h.className = "hint bad";
+          (g("#iFree") || g("#iNote")).focus();
+        }
+        return;
+      }
       const chip = e.target.closest("[data-v]"), oth = e.target.closest("[data-oth]");
       if (chip || oth) {
         const grp = e.target.closest("[data-opt]"), k = grp.dataset.opt, inp = grp.querySelector("[data-othin]");
@@ -154,7 +200,14 @@ export function openItem(catalog, key, src, onSave) {
         if (it.free && !spec) { err.textContent = "品名・寸法を書いてください"; g("#iFree").focus(); return; }
         if (!it.free && !Object.keys(vals).length && !n) { err.textContent = "材質や大きさを1つ以上えらぶか、寸法・メモを書いてください"; return; }
         if (!q) { err.textContent = "数を入れてください"; g("#iQty").focus(); return; }
+        if (picker && picker.isBusy()) { err.textContent = "写真を上げています。少し待ってください"; return; }
+        const lk = web ? g("#iLink").value.trim() : "";
+        if (lk && !safeLink(lk)) { err.textContent = "リンクの形がちがいます（https:// ではじまるもの）"; g("#iLink").focus(); return; }
         const line = { uid: (src && src.uid) || newUid(), key, cat: it.cat, name: it.name, vals: { ...vals }, spec, note: n, qty: q, unit: g("#iUnit").value };
+        if (web) { line.photos = [...photos]; line.link = safeLink(lk); }
+        saved = true;
+        // 外した写真（はじめについていて、いまはない）は、置き場から消す
+        photos0.filter(p => !photos.includes(p)).forEach(deletePhoto);
         closeSheet();
         onSave(line, !!(src && src.uid));
       }
@@ -166,9 +219,14 @@ export function openItem(catalog, key, src, onSave) {
         if (v) vals[k] = v; else delete vals[k];
       }
       if (e.target.id === "iFree") vals.__free = e.target.value;
+      if (e.target.id === "iLink") upLink();
+      upShops();
       preview();
     });
     w.addEventListener("change", e => { if (e.target.id === "iUnit") preview(); });
     preview();
+  }, {
+    // 入れずに閉じたら、この画面でつけた写真（はじめにはなかった写真）は、置き場から消す
+    onClose: () => { if (!saved) photos.filter(p => !photos0.includes(p)).forEach(deletePhoto); },
   });
 }

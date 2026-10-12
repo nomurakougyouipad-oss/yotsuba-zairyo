@@ -29,9 +29,17 @@ export function toast(msg) {
 
 /* ---------- 下から出る画面（シート） ----------
    openSheet(html, after, { side }) … after(panel) で中身に動きをつける。× や外側を押す・Esc で閉じる
-   side: true … 右から出す（事務所のパソコン用。広い画面で、右に高さいっぱい） */
-let lastFocus = null;
+   side: true … 右から出す（事務所のパソコン用。広い画面で、右に高さいっぱい）
+   onClose() … 閉じたとき（×・外側・Esc・closeSheet()。べつの中身に入れかえたときも）に1回だけ呼ぶ */
+let lastFocus = null, onCloseNow = null;
+function runOnClose() {
+  const f = onCloseNow;
+  onCloseNow = null;
+  if (f) { try { f(); } catch (err) { } }
+}
 export function openSheet(html, after, opts = {}) {
+  runOnClose();
+  onCloseNow = opts.onClose || null;
   let sh = document.getElementById("sheet");
   if (!sh) {
     sh = document.createElement("div");
@@ -57,6 +65,7 @@ export function openSheet(html, after, opts = {}) {
 export function closeSheet() {
   const sh = document.getElementById("sheet");
   if (!sh || sh.hidden) return;
+  runOnClose();
   sh.hidden = true;
   sh.querySelector("#panel").innerHTML = "";
   document.body.style.overflow = "";
