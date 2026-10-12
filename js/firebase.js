@@ -3,7 +3,7 @@
 // - Firebase の部品の版は、ほかのよつばのアプリと同じ 12.19.0
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
 import { getDatabase, ref, onValue, get } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
-import { getAuth } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+import { initializeAuth, browserLocalPersistence, indexedDBLocalPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-functions.js";
 
 const firebaseConfig = {
@@ -18,7 +18,11 @@ const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig);
 export const db = getDatabase(app);
-export const auth = getAuth(app);
+// ログインの保存場所：localStorage を先に使う（10/12 iPhone で、開きなおすとログインが消えたため。ためしに変えた）
+// 前に IndexedDB にしまったログインは、Firebase が localStorage へ移してくれる
+export const auth = initializeAuth(app, {
+  persistence: [browserLocalPersistence, indexedDBLocalPersistence, browserSessionPersistence],
+});
 const functions = getFunctions(app, "asia-southeast1");   // サーバーのプログラムの場所（データベースと同じシンガポール）
 
 /** サーバーのプログラムを呼ぶ。call("zairyoRegisterDevice")({ … }) */

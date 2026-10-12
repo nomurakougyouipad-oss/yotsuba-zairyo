@@ -6,22 +6,37 @@ import { onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/f
 import { ref, get } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { auth, db, call } from "./firebase.js";
 
-/** ログインの状態が分かるまで待つ */
+/** ページを開いたときのログインの状態が分かるまで待つ（答えは使わず、そのあとは auth.currentUser を見る。
+ *  開いたときにログインしていなくても、登録でログインしたあとは currentUser に入るため） */
 const authReady = new Promise(resolve => {
-  const off = onAuthStateChanged(auth, user => { off(); resolve(user); });
+  const off = onAuthStateChanged(auth, () => { off(); resolve(); });
 });
+
+/* 登録した端末の番号を、ブラウザにも控えておく（ログインだけが消えたときに気づけるように） */
+const UID_KEY = "yotsuba-zairyo-uid";
+function lastUid() {
+  try { return localStorage.getItem(UID_KEY) || ""; } catch (err) { return ""; }
+}
+function saveUid(uid) {
+  try { localStorage.setItem(UID_KEY, uid); } catch (err) { }
+}
 
 /** この端末の登録をしらべる
  *  { role: "genba" | "office", name } … 登録ずみ
  *  { role: null, removed: true }      … 事務所が登録を消した
+ *  { role: null, lost: true }         … 登録したはずのログインが、この端末から消えていた
  *  null                               … まだ登録していない */
 export async function whoAmI() {
-  const user = await authReady;
-  if (!user) return null;
-  const { claims } = await user.getIdTokenResult();
-  if (!claims.zr_role) return null;
+  await authReady;
+  const user = auth.currentUser;
+  if (!user) return lastUid() ? { role: null, lost: true } : null;
+  let { claims } = await user.getIdTokenResult();
   const snap = await get(ref(db, `zairyo/devices/${user.uid}`));
-  if (!snap.exists()) return { role: null, removed: true };
+  if (!snap.exists()) return claims.zr_role ? { role: null, removed: true } : null;
+  // 登録はあるのに、トークンが登録の前のまま残っていたときは、新しくしてから見る
+  if (!claims.zr_role) ({ claims } = await user.getIdTokenResult(true));
+  if (!claims.zr_role) return null;
+  saveUid(user.uid);
   return { role: claims.zr_role, name: claims.zr_name || "" };
 }
 
@@ -29,7 +44,10 @@ export async function whoAmI() {
 export async function register(kind, code, name = "") {
   if (!auth.currentUser) await signInAnonymously(auth);
   const res = await call("zairyoRegisterDevice")({ kind, code, name });
-  if (res.data && res.data.role) await auth.currentUser.getIdToken(true);
+  if (res.data && res.data.role) {
+    await auth.currentUser.getIdToken(true);
+    saveUid(auth.currentUser.uid);
+  }
   return res.data;
 }
 
@@ -49,7 +67,32 @@ export function errorText(err) {
 
 /** iPhone の Safari で開いている（ホーム画面のアプリではない）か */
 export function isIPhoneBrowser() {
-  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-  const standalone = navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
-  return ios && !standalone;
+  return isIOS() && !isStandalone();
+}
+function isIOS() {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+function isStandalone() {
+  return navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+}
+
+/** しらべ用の1行（登録の画面の下に小さく出す。登録が消える問題が分かったら外す）
+ *  例：しらべ用：番号 aBjfGP／前の番号 なし／保存 LS○ IDB○／ホーム画面のアプリ */
+export async function diagText() {
+  let ls = false;
+  try {
+    localStorage.setItem("yotsuba-zairyo-test", "1");
+    ls = localStorage.getItem("yotsuba-zairyo-test") === "1";
+    localStorage.removeItem("yotsuba-zairyo-test");
+  } catch (err) { }
+  const idb = await new Promise(resolve => {
+    try {
+      const req = indexedDB.open("yotsuba-zairyo-test");
+      req.onsuccess = () => { req.result.close(); indexedDB.deleteDatabase("yotsuba-zairyo-test"); resolve(true); };
+      req.onerror = () => resolve(false);
+    } catch (err) { resolve(false); }
+  });
+  const cur = auth.currentUser ? auth.currentUser.uid.slice(0, 6) : "なし";
+  const last = lastUid() ? lastUid().slice(0, 6) : "なし";
+  return `しらべ用：番号 ${cur}／前の番号 ${last}／保存 LS${ls ? "○" : "×"} IDB${idb ? "○" : "×"}／${isStandalone() ? "ホーム画面のアプリ" : "ブラウザ"}`;
 }

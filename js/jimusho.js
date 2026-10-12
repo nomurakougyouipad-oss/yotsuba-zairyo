@@ -3,7 +3,7 @@
 import { ref, onValue, set, remove, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db } from "./firebase.js";
 import { $, esc, initTheme, runChecks } from "./common.js";
-import { whoAmI, register, errorText } from "./touroku.js";
+import { whoAmI, register, errorText, diagText } from "./touroku.js";
 
 initTheme();
 const main = $("#main");
@@ -31,6 +31,7 @@ function showCode(me) {
     <section class="card narrow-card">
       <h2>はじめての登録</h2>
       ${me && me.removed ? '<p class="warn">このパソコンの登録は消されています。もう一度登録してください。</p>' : ""}
+      ${me && me.lost ? '<p class="warn">このパソコンに覚えていた登録が、消えていました。もう一度登録してください。</p>' : ""}
       ${me && me.role === "genba" ? '<p class="warn">この端末は、現場のスマホとして登録されています。事務所の合言葉で登録すると、事務所のパソコンに変わります。</p>' : ""}
       <form id="codeForm" class="form" novalidate>
         <div class="field">
@@ -45,7 +46,9 @@ function showCode(me) {
         <p class="err" id="err" role="alert"></p>
         <button class="btn primary big full" type="submit" id="go">登録する</button>
       </form>
+      <p class="hint" id="diag"></p>
     </section>`;
+  diagText().then(t => { if ($("#diag")) $("#diag").textContent = t; });
   const go = $("#go"), err = $("#err");
   $("#codeForm").addEventListener("submit", async e => {
     e.preventDefault();

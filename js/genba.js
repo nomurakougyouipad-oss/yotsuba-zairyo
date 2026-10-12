@@ -1,7 +1,7 @@
 // 現場のスマホ（index.html）
 // 登録していない → 会社の合言葉 → 名前をえらぶ → 登録ずみの画面（材料をたのむ画面は 11章 4 で作る）
 import { $, esc, initTheme, registerSW, runChecks } from "./common.js";
-import { whoAmI, register, errorText, isIPhoneBrowser } from "./touroku.js";
+import { whoAmI, register, errorText, isIPhoneBrowser, diagText } from "./touroku.js";
 
 initTheme();
 registerSW();
@@ -21,7 +21,7 @@ async function start() {
   }
   if (me && me.role === "genba") return showHome(me);
   if (me && me.role === "office") return showOfficeDevice();
-  showCode(me && me.removed);
+  showCode(me);
 }
 
 const IPHONE_NOTE = `
@@ -36,13 +36,14 @@ const IPHONE_NOTE = `
   </section>`;
 
 /** 会社の合言葉を入れる */
-function showCode(removed) {
+function showCode(me) {
   $("#who").textContent = "現場のスマホ";
   main.innerHTML = `
     ${isIPhoneBrowser() ? IPHONE_NOTE : ""}
     <section class="card">
       <h2>はじめての登録</h2>
-      ${removed ? '<p class="warn">このスマホの登録は消されています。もう一度登録してください。</p>' : ""}
+      ${me && me.removed ? '<p class="warn">このスマホの登録は消されています。もう一度登録してください。</p>' : ""}
+      ${me && me.lost ? '<p class="warn">このスマホに覚えていた登録が、消えていました。もう一度登録してください。何度もこうなるときは、事務所に知らせてください。</p>' : ""}
       <form id="codeForm" class="form" novalidate>
         <div class="field">
           <label for="code">会社の合言葉</label>
@@ -51,7 +52,9 @@ function showCode(removed) {
         <p class="err" id="err" role="alert"></p>
         <button class="btn primary big full" type="submit" id="go">次へ</button>
       </form>
+      <p class="hint" id="diag"></p>
     </section>`;
+  diagText().then(t => { if ($("#diag")) $("#diag").textContent = t; });
   const go = $("#go"), err = $("#err");
   $("#codeForm").addEventListener("submit", async e => {
     e.preventDefault();
@@ -86,7 +89,7 @@ function showNames(code, staff) {
         <p class="warn">注文する人の一覧が、まだありません。事務所で名前を足してもらってから、もう一度ためしてください。</p>`}
       <button class="btn ghost full" type="button" id="back">もどる</button>
     </section>`;
-  $("#back").addEventListener("click", () => showCode(false));
+  $("#back").addEventListener("click", () => showCode(null));
   if (!staff.length) return;
 
   let chosen = "";
