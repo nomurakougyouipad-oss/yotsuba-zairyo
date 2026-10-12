@@ -28,9 +28,10 @@ export function toast(msg) {
 }
 
 /* ---------- 下から出る画面（シート） ----------
-   openSheet(html, after) … after(panel) で中身に動きをつける。× や外側を押す・Esc で閉じる */
+   openSheet(html, after, { side }) … after(panel) で中身に動きをつける。× や外側を押す・Esc で閉じる
+   side: true … 右から出す（事務所のパソコン用。広い画面で、右に高さいっぱい） */
 let lastFocus = null;
-export function openSheet(html, after) {
+export function openSheet(html, after, opts = {}) {
   let sh = document.getElementById("sheet");
   if (!sh) {
     sh = document.createElement("div");
@@ -43,6 +44,7 @@ export function openSheet(html, after) {
     document.addEventListener("keydown", e => { if (e.key === "Escape" && !sh.hidden) closeSheet(); });
   }
   if (sh.hidden) lastFocus = document.activeElement;
+  sh.classList.toggle("side", !!opts.side);
   const p = sh.querySelector("#panel");
   p.innerHTML = html;
   p.scrollTop = 0;

@@ -276,10 +276,64 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .dl dt{color:var(--muted);white-space:nowrap}
 .dl dd{margin:0;min-width:0;overflow-wrap:anywhere;white-space:pre-line}
 
+/* 事務所：上の箱・タブ・依頼のカード */
+.boxes{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.box{background:var(--surface);border:1px solid var(--line);border-top:5px solid var(--c);border-radius:10px;padding:12px 14px 10px;text-align:left;display:flex;flex-direction:column;gap:2px;transition:background .15s;min-height:96px}
+.box:hover:not(:disabled){background:var(--surface2)}
+.box[aria-pressed="true"]{background:var(--surface2);border-color:var(--c)}
+.box .lab{font-size:13px;font-weight:700;color:var(--muted);line-height:1.35;word-break:keep-all;overflow-wrap:anywhere}
+.box[aria-pressed="true"] .lab{color:var(--fg)}
+.box .num{font-family:var(--f-num);font-size:40px;font-weight:600;line-height:1.05;margin-top:auto}
+.box .unit{font-family:var(--f-ja);font-size:14px;font-weight:500;margin-left:4px;color:var(--muted)}
+.box.new.has{background:var(--amber-btn);border-color:var(--amber-btn);color:var(--on-amber)}
+.box.new.has .lab,.box.new.has .unit{color:var(--on-amber)}
+.box.soon{opacity:.55;cursor:default}
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.toolbar .seg{background:var(--surface)}
+.toolbar .search{flex:1 1 220px;width:auto}
+.badge{font-family:var(--f-num);font-weight:600;font-size:12px;background:var(--amber-btn);color:var(--on-amber);border-radius:9px;min-width:18px;height:18px;padding:0 5px;display:inline-grid;place-items:center;margin-left:6px}
+.filter-note{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:14px;color:var(--muted)}
+.filter-note b{color:var(--fg)}
+.ocards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:12px}
+.ocard{background:var(--surface);border:1px solid var(--line);border-top:5px solid var(--c);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;cursor:pointer;min-width:0}
+.ocard:hover{border-color:var(--muted);border-top-color:var(--c)}
+.ocard.cx{opacity:.65}
+.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.sup{font-weight:800;font-size:16px;line-height:1.35;min-width:0}
+.ochip{flex:none;font-size:12px;font-weight:700;border:1px solid var(--muted);color:var(--muted);border-radius:999px;padding:1px 10px;white-space:nowrap}
+.ochip.solid{background:var(--amber-btn);border-color:var(--amber-btn);color:var(--on-amber)}
+.meta{display:flex;flex-wrap:wrap;gap:4px 16px;margin:0;font-size:13px}
+.meta div{display:flex;gap:6px}
+.meta dt{color:var(--muted)}
+.meta dd{margin:0;font-weight:500}
+.hl{color:var(--amber);font-weight:700}
+.card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid var(--line);padding-top:8px;margin-top:auto}
+.amt{display:flex;align-items:baseline;gap:6px;font-size:13px;color:var(--muted)}
+.amt .num{font-family:var(--f-num);font-size:20px;font-weight:600;color:var(--fg)}
+.lrows{display:flex;flex-direction:column}
+.lrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.lrows .lrow:first-child{border-top:0;padding-top:0}
+.lspec{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.tag{display:inline-block;font-size:11px;font-weight:700;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 6px;margin-right:6px;vertical-align:1px}
+.lqty{white-space:nowrap;font-size:13px}
+.lqty .num{font-family:var(--f-num);font-size:18px;font-weight:600;margin-right:2px}
+@media (max-width:700px){
+  .boxes{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .box{padding:10px 10px 8px}
+  .box .num{font-size:32px}
+  .box .lab{font-size:12px}
+  .toolbar .seg{flex:1 1 100%}
+  .toolbar .seg button{flex:1;padding-inline:6px}
+  .toolbar .btn{flex:1 1 100%}
+}
+
 /* 下から出る画面（シート） */
 .sheet{position:fixed;inset:0;z-index:20;display:flex;justify-content:center;align-items:flex-end}
 .sheet-bg{position:absolute;inset:0;background:var(--scrim)}
 .panel{position:relative;width:min(480px,100%);max-height:92%;overflow-y:auto;overscroll-behavior:contain;background:var(--bg);border:1px solid var(--line);border-bottom:0;border-radius:18px 18px 0 0;padding:16px 18px 0}
+/* 右から出す（事務所のパソコン用） */
+.sheet.side{justify-content:flex-end;align-items:stretch}
+.sheet.side .panel{width:min(620px,100%);max-height:none;height:100%;border:0;border-left:1px solid var(--line);border-radius:0;padding-top:calc(env(safe-area-inset-top,0px) + 16px)}
 /* いちばん下に、iPhone の下のすき間（safe-area）＋少しの余白。下の帯（.sheet-foot）がある画面は、帯の中につける */
 .pw{display:flex;flex-direction:column;gap:16px;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 24px)}
 .pw:has(.sheet-foot){padding-bottom:0}

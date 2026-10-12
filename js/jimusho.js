@@ -1,8 +1,8 @@
 // 事務所のパソコン（jimusho.html）
-// 登録していない → 事務所の合言葉＋このパソコンの名前 → 登録ずみの画面（いまは「⚙ 設定」だけ。依頼・注文の画面は 11章 5）
-import { $, esc, initTheme, runChecks } from "./common.js";
+// 登録していない → 事務所の合言葉＋このパソコンの名前 → 登録ずみの画面（上の箱・依頼／注文ごと／工事ごと・⚙ 設定。js/jimusho-app.js）
+import { $, esc, initTheme } from "./common.js";
 import { whoAmI, register, errorText } from "./touroku.js";
-import { renderSettings } from "./settei.js";
+import { startOfficeApp } from "./jimusho-app.js";
 
 initTheme();
 const main = $("#main");
@@ -69,12 +69,5 @@ function showCode(me) {
 /** 登録ずみ */
 function showHome(me) {
   $("#who").textContent = `事務所のパソコン・${me.name}`;
-  main.innerHTML = `
-    <section class="card" id="settei"></section>
-    <section class="card">
-      <h2>つながりのたしかめ</h2>
-      <ul class="checks" id="checks"></ul>
-    </section>`;
-  renderSettings($("#settei"));
-  runChecks($("#checks"));
+  startOfficeApp(main, me);
 }
