@@ -1,0 +1,72 @@
+/* よつば材料注文 共通の見た目（B案「ダーク工場」。色の名前は試作と同じ） */
+:root{
+  --bg:#F3F5F7; --surface:#FFFFFF; --surface2:#FFF6E3; --line:#D9DEE4;
+  --fg:#14191E; --muted:#5F6B77;
+  --amber:#C77A12; --amber-btn:#F5A623; --on-amber:#14191E;
+  --blue:#2668A3; --grey:#9AA4AE; --danger:#B23A2C;
+  --scrim:rgba(15,20,24,.45); --shadow:rgba(20,25,30,.10);
+  --f-ja:"M PLUS 1p","Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo",sans-serif;
+  --f-num:"Oswald","Arial Narrow","M PLUS 1p",sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F1418; --surface:#171E24; --surface2:#1F2830; --line:#2B353E;
+    --fg:#F3F5F7; --muted:#8A96A3;
+    --amber:#F2A81D; --amber-btn:#F2A81D; --on-amber:#0F1418;
+    --blue:#5FB0E8; --grey:#5B6773; --danger:#F07A6C;
+    --scrim:rgba(0,0,0,.6); --shadow:rgba(0,0,0,.45);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F1418; --surface:#171E24; --surface2:#1F2830; --line:#2B353E;
+  --fg:#F3F5F7; --muted:#8A96A3;
+  --amber:#F2A81D; --amber-btn:#F2A81D; --on-amber:#0F1418;
+  --blue:#5FB0E8; --grey:#5B6773; --danger:#F07A6C;
+  --scrim:rgba(0,0,0,.6); --shadow:rgba(0,0,0,.45);
+  color-scheme:dark;
+}
+
+[hidden]{display:none!important}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg)}
+body{color:var(--fg);font-family:var(--f-ja);font-size:15px;line-height:1.6;-webkit-text-size-adjust:100%}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer}
+button:disabled{cursor:default;opacity:.5}
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.muted{color:var(--muted)}
+
+.wrap{max-width:1120px;margin:0 auto;padding-inline:16px;padding-block:18px 64px;display:flex;flex-direction:column;gap:16px}
+.wrap.narrow{max-width:520px}
+
+/* 上のバー */
+.top{display:flex;align-items:center;gap:10px 14px}
+.brand{display:flex;align-items:center;gap:12px;min-width:0;flex:1 1 auto}
+.mark{display:grid;grid-template-columns:repeat(2,9px);gap:3px;flex:none}
+.mark i{width:9px;height:9px;border-radius:5px 5px 5px 1px;background:var(--amber-btn)}
+.mark i:nth-child(2){transform:scaleX(-1)}
+.mark i:nth-child(3){transform:scaleY(-1)}
+.mark i:nth-child(4){transform:scale(-1,-1)}
+h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
+.sub{margin:2px 0 0;font-size:12px;color:var(--muted)}
+.theme{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--surface);flex:none}
+.theme button{border:0;background:transparent;width:44px;height:44px;font-size:17px;color:var(--muted)}
+.theme button[aria-pressed="true"]{background:var(--surface2);color:var(--amber)}
+
+/* 箱（上の縁に色。オレンジ＝待ち・工事中、青＝届いた、灰色＝終わり） */
+.card{background:var(--surface);border:1px solid var(--line);border-top:4px solid var(--amber-btn);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card h2{margin:0;font-size:17px;font-weight:800}
+.card p{margin:0}
+
+/* つながりのたしかめ */
+.checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.checks li{display:flex;align-items:center;gap:12px;min-height:52px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+.checks .mk{flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:15px;background:var(--surface2);color:var(--muted)}
+.checks li[data-state="ok"] .mk{background:var(--blue);color:var(--surface)}
+.checks li[data-state="bad"] .mk{background:var(--danger);color:var(--surface)}
+.checks .what{font-weight:700;line-height:1.35}
+.checks .say{font-size:13px;color:var(--muted);line-height:1.45}
+.checks li[data-state="bad"] .say{color:var(--danger);font-weight:700}
