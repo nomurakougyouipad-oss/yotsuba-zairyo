@@ -33,6 +33,10 @@
 html,body{margin:0;background:var(--bg)}
 body{color:var(--fg);font-family:var(--f-ja);font-size:15px;line-height:1.6;-webkit-text-size-adjust:100%}
 button,input,textarea,select{font:inherit;color:inherit}
+/* iPhone で続けて押したとき（2回タップ）に、画面が大きくならないように。指2本で広げる拡大はできる */
+html,button,a,input,select,textarea,label,summary{touch-action:manipulation}
+/* 入力の欄は 16px 以上（iPhone は、16px より小さい欄を押すと画面を大きくするため） */
+input,select,textarea{font-size:16px}
 button{cursor:pointer}
 button:disabled{cursor:default;opacity:.5}
 :focus-visible{outline:2px solid var(--amber);outline-offset:2px}
@@ -141,7 +145,7 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .kcode{font-family:var(--f-num);font-weight:600;font-size:17px;color:var(--amber);letter-spacing:.03em}
 .kname-wrap{display:flex;gap:6px;min-width:0}
 .kname{flex:2 1 0;min-width:0}
-.kkana{flex:1 1 0;min-width:0;font-size:13px}
+.kkana{flex:1 1 0;min-width:0}
 .kact{display:flex;gap:14px;align-items:center;justify-content:flex-end;white-space:nowrap}
 .kask{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--surface2);border:1px solid var(--amber);border-radius:8px;padding:8px 10px;font-size:13px;font-weight:700}
 .kadd{display:grid;grid-template-columns:8.5em minmax(0,1fr) auto;gap:6px}
