@@ -3,6 +3,10 @@ import { watchConnected, canReadMaster } from "./firebase.js";
 
 export const $ = (sel, el = document) => el.querySelector(sel);
 
+/** 半角カナ（ﾌｧｲﾝｹﾐｶﾙ）だけを全角（ファインケミカル）にする。画面に出すときだけ使う（日報などのデータは変えない）。
+ *  英数字・記号など、ほかの字はそのまま */
+export const zenkana = s => String(s ?? "").replace(/[｡-ﾟ]+/g, m => m.normalize("NFKC"));
+
 /** 文字を HTML に入れるときに使う（名前などに < > があっても、こわれないように） */
 export const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 

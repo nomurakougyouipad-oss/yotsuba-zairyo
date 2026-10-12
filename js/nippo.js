@@ -24,7 +24,7 @@ export const CHUBAN_RE = /^[A-Z]{2}\d{5}$/;
 /** 日報の注番を見張る。変わるたびに cb を呼ぶ
  *  cb({ open, fixed, all, bad })
  *    open  … えらべる工事（常設でない）[{chuban, kenmei, tantou, fixed:false}]
- *    fixed … 常設の注番（工場で使う物）[{chuban, kenmei, tantou, fixed:true}]
+ *    fixed … 常設の注番（現場の画面では「固定の注番」）[{chuban, kenmei, tantou, fixed:true}]
  *    all   … 日報にある注番ぜんぶ Map(注番 → {…, closed})（終わった注番も入る。手で書いた注番のたしかめに使う）
  *    bad   … 形がちがう注番（えらぶ一覧には出さない）
  *  返り値：見張るのをやめる関数 */

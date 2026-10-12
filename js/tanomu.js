@@ -33,15 +33,35 @@ export const fmtQty = n => { const x = Number(n); return Number.isFinite(x) ? St
 /** 1行の書き方（例 "SUS304 六角ボルト M12×50(B,N)　×10組"） */
 export const lineText = l => l.spec + (l.note ? " " + l.note : "") + "　×" + fmtQty(l.qty) + l.unit;
 
+/* ---------- 日付 ---------- */
+const pad = n => String(n).padStart(2, "0");
+/** この端末の日付で YYYY-MM-DD（days 日あと） */
+export function ymd(days = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+/** ほしい日の書き方：最短 ／ 本日（10/12）／ 10/13（火） */
+export function kibouText(k) {
+  if (!k || k === "最短") return "最短";
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(k);
+  if (!m) return String(k);
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  const md = `${+m[2]}/${+m[3]}`;
+  return k === ymd(0) ? `本日（${md}）` : `${md}（${"日月火水木金土"[d.getDay()]}）`;
+}
+
 /* ---------- カート（この端末にしまう） ---------- */
 const CART_KEY = "yotsuba-zairyo-cart";
-/** { lines: [{uid, key, cat, name, vals, spec, note, qty, unit}], job: {chuban, kenmei, typed} | null } */
+/** { lines: [{uid, key, cat, name, vals, spec, note, qty, unit}], job: {chuban, kenmei, typed} | null,
+ *    form: {kibou, bashoId, contactOn, contacted, memo} } */
+export const newForm = () => ({ kibou: "最短", bashoId: "", contactOn: false, contacted: "", memo: "" });
 export function loadCart() {
   try {
     const v = JSON.parse(localStorage.getItem(CART_KEY) || "null");
-    if (v && Array.isArray(v.lines)) return { lines: v.lines, job: v.job || null };
+    if (v && Array.isArray(v.lines)) return { lines: v.lines, job: v.job || null, form: { ...newForm(), ...(v.form || {}) } };
   } catch (err) { }
-  return { lines: [], job: null };
+  return { lines: [], job: null, form: newForm() };
 }
 export function saveCart(cart) {
   try { localStorage.setItem(CART_KEY, JSON.stringify(cart)); } catch (err) { }

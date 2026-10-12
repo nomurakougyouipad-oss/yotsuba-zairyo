@@ -187,6 +187,7 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .jobs.fixed button .kenmei{font-size:14px;font-weight:700;order:1}
 .jobs.fixed button[aria-checked="true"]::after{top:6px;right:6px;transform:none;width:18px;height:18px;font-size:11px}
 .jobs-label{font-size:12px;color:var(--muted);font-weight:700;margin-top:4px}
+.jobs .more{border-style:dashed;align-items:center;text-align:center;padding:9px 12px;color:var(--muted);font-weight:700}
 .newjob{display:grid;grid-template-columns:8.5em minmax(0,1fr);gap:8px}
 .hint.warn{color:var(--amber);font-weight:700}
 .sel-now{margin:0;padding:10px 12px;border-radius:10px;background:var(--bg);font-weight:700}
@@ -221,6 +222,16 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .cl-qty small{font-family:var(--f-ja);font-size:13px;font-weight:500;margin-left:2px}
 .cl-act{grid-column:1 / -1;display:flex;gap:8px;justify-content:flex-end}
 .cl-act .linkbtn{min-height:44px;padding:0 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;background:var(--bg)}
+
+.pick{display:flex;flex-wrap:wrap;gap:6px}
+.pick button{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:9px 14px;font-weight:700;font-size:15px;min-height:48px}
+.pick button[aria-pressed="true"]{background:var(--surface2);border-color:var(--amber);color:var(--amber);box-shadow:inset 0 -2px 0 var(--amber)}
+.pick.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+.center{text-align:center}
+.done-screen{align-items:center;text-align:center;padding:28px 16px}
+.done-screen .ok{width:64px;height:64px;border-radius:50%;background:var(--blue);color:var(--surface);display:grid;place-items:center;font-size:34px;font-weight:800}
+.done-screen h2{font-size:20px}
+.done-screen .btns{display:flex;flex-direction:column;gap:8px;width:100%}
 
 /* 下から出る画面（シート） */
 .sheet{position:fixed;inset:0;z-index:20;display:flex;justify-content:center;align-items:flex-end}
