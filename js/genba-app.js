@@ -362,9 +362,9 @@ export function startGenbaApp(main, me) {
           ${r.memo ? `<dt>メモ</dt><dd>${esc(r.memo)}</dd>` : ""}
         </dl></div>
         ${canCancel ? `
-          <div class="row" id="cxRow">
-            <button type="button" class="btn danger" id="cxBtn">この注文を取り消す</button>
-            <span class="hint">事務所が注文する前なら、取り消せます</span>
+          <div class="cx-start" id="cxRow">
+            <button type="button" class="btn danger full" id="cxBtn">この注文を取り消す</button>
+            <span class="hint center">事務所が注文する前なら、取り消せます</span>
           </div>` : ""}
         <p class="err" id="cxErr" role="alert"></p>
       </div>`;
@@ -373,8 +373,12 @@ export function startGenbaApp(main, me) {
       w.addEventListener("click", async e => {
         const row = w.querySelector("#cxRow");
         if (e.target.id === "cxBtn") {
-          row.innerHTML = '<span><b>本当に取り消しますか？</b></span><button type="button" class="btn danger" id="cxYes">取り消す</button><button type="button" class="btn" id="cxNo">やめる</button>';
-          row.querySelector("#cxNo").focus();
+          // 1行目に文字、2行目に大きいボタン2つ
+          row.className = "confirm";
+          row.innerHTML = `<p class="confirm-q">本当に取り消しますか？</p>
+            <div class="confirm-btns"><button type="button" class="btn danger" id="cxYes">取り消す</button><button type="button" class="btn" id="cxNo">やめる</button></div>`;
+          row.scrollIntoView({ block: "nearest" });
+          row.querySelector("#cxNo").focus({ preventScroll: true });
         } else if (e.target.id === "cxNo") {
           openSent(id);
         } else if (e.target.id === "cxYes") {

@@ -280,12 +280,21 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .sheet{position:fixed;inset:0;z-index:20;display:flex;justify-content:center;align-items:flex-end}
 .sheet-bg{position:absolute;inset:0;background:var(--scrim)}
 .panel{position:relative;width:min(480px,100%);max-height:92%;overflow-y:auto;overscroll-behavior:contain;background:var(--bg);border:1px solid var(--line);border-bottom:0;border-radius:18px 18px 0 0;padding:16px 18px 0}
-.pw{display:flex;flex-direction:column;gap:16px}
+/* いちばん下に、iPhone の下のすき間（safe-area）＋少しの余白。下の帯（.sheet-foot）がある画面は、帯の中につける */
+.pw{display:flex;flex-direction:column;gap:16px;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 24px)}
+.pw:has(.sheet-foot){padding-bottom:0}
 .panel:has(.sheet-foot){scroll-padding-bottom:170px}
 .panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
 .panel-head h2{margin:0;font-size:20px;font-weight:800;line-height:1.35}
 .x{flex:none;width:44px;height:44px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-size:20px;line-height:1}
-.sheet-foot{position:sticky;bottom:0;z-index:2;background:var(--bg);border-top:1px solid var(--line);margin-inline:-18px;padding:10px 18px calc(env(safe-area-inset-bottom,0px) + 14px);display:flex;flex-direction:column;gap:8px}
+.sheet-foot{position:sticky;bottom:0;z-index:2;background:var(--bg);border-top:1px solid var(--line);margin-inline:-18px;padding:10px 18px calc(env(safe-area-inset-bottom,0px) + 16px);display:flex;flex-direction:column;gap:8px}
+/* 「本当に○○しますか？」：1行目に文字、2行目に大きいボタン2つ */
+.confirm{display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid var(--danger);border-radius:12px;background:var(--surface)}
+.confirm-q{margin:0;font-weight:800;font-size:16px}
+.confirm-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.confirm-btns .btn{min-height:52px;font-size:16px}
+.cx-start{display:flex;flex-direction:column;align-items:stretch;gap:6px}
+.cx-start .btn{min-height:52px}
 .opt{display:flex;flex-direction:column;gap:6px}
 .opt .lab,.qtyrow .lab{font-size:13px;font-weight:800;color:var(--muted)}
 .opt-chips{display:flex;flex-wrap:wrap;gap:6px}
