@@ -162,6 +162,43 @@
           "$other": { ".validate": false }
         }
       },
+      "imports": {
+        ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
+        ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
+        "$id": {
+          ".validate": "newData.hasChildren(['at', 'by', 'items'])",
+          "at": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
+          "by": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "byUid": { ".validate": "newData.isString() && newData.val().length <= 128" },
+          "count": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "files": {
+            "$f": {
+              "name": { ".validate": "newData.isString() && newData.val().length <= 200" },
+              "kind": { ".validate": "newData.isString() && newData.val().matches(/^(scan|table|paste)$/)" },
+              "scan": { ".validate": "newData.isString() && newData.val().matches(/^zairyo\\/scans\\/[A-Za-z0-9]+\\/[A-Za-z0-9]+\\.jpg$/)" },
+              "$other": { ".validate": false }
+            }
+          },
+          "items": {
+            "$i": {
+              "orderId": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "slipId": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "created": { ".validate": "newData.isBoolean()" },
+              "arrived": { ".validate": "newData.isBoolean()" },
+              "priceIds": { "$p": { ".validate": "newData.isString() && newData.val().length <= 40" } },
+              "amount": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+              "chuban": { ".validate": "newData.isString() && newData.val().length <= 12" },
+              "sup": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "no": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "$other": { ".validate": false }
+            }
+          },
+          "undone": { ".validate": "newData.isBoolean()" },
+          "undoneAt": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
+          "undoneBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "$other": { ".validate": false }
+        }
+      },
       "prices": {
         ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
         ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
@@ -228,6 +265,8 @@
               },
               "by": { ".validate": "newData.isString() && newData.val().length <= 40" },
               "at": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
+              "scan": { ".validate": "newData.isString() && newData.val().matches(/^zairyo\\/scans\\/[A-Za-z0-9]+\\/[A-Za-z0-9]+\\.jpg$/)" },
+              "imp": { ".validate": "newData.isString() && newData.val().length <= 40" },
               "$other": { ".validate": false }
             }
           },

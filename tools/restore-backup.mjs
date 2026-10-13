@@ -20,6 +20,7 @@ const PATHS = [
   ["zairyo/orders", "注文"],
   ["zairyo/invoices", "まとめて請求"],
   ["zairyo/prices", "単価の記録"],
+  ["zairyo/imports", "納品書の取りこみの記録"],
   ["zairyo/master", "設定"],
   ["zairyo/devices", "登録した端末"],
   ["common", "注番の会社"],

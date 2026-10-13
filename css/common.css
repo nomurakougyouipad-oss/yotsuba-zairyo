@@ -573,3 +573,6 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .imp-sum{margin:0;font-size:14px}
 @media (max-width:700px){.imp-card{grid-template-columns:1fr}}
 .imp-card.table{grid-template-columns:1fr}
+.imp-log{display:flex;flex-direction:column;gap:6px;padding:8px 0;border-bottom:1px solid var(--line)}
+.imp-log:last-child{border-bottom:0}
+.imp-log .btn{align-self:flex-start}

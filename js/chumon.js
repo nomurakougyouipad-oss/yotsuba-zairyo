@@ -108,7 +108,9 @@ export const cost = o => (o.seikyu != null ? o.seikyu : o.nouhin != null ? o.nou
 export const slipsOf = o => Object.entries(o.slips || {}).sort(([, a], [, b]) => (a.at || 0) - (b.at || 0));
 
 /** 納品書の金額を入れる。slip = {no, date, amount, rows:{品物id:{spec, qty, unit, price?, amount}}}
- *  まだ届いていない注文なら「届いた」にする。単価があれば単価の記録（/zairyo/prices）にも残す */
+ *  まだ届いていない注文なら「届いた」にする。単価があれば単価の記録（/zairyo/prices）にも残す
+ *  （取りこみのときは slip に scan（スキャンの置き場所）と imp（取りこみの番号）もつく）
+ *  返り値：{ sid: 納品書の番号, priceIds: 単価の記録の番号, arrived: 「届いた」にしたか }（まとめて取り消すときに使う） */
 export async function addSlip(o, slip, me) {
   const sid = push(ref(db, `zairyo/orders/${o.id}/slips`)).key;
   const total = slipsOf(o).reduce((s, [, x]) => s + (Number(x.amount) || 0), 0) + (Number(slip.amount) || 0);
@@ -122,9 +124,11 @@ export async function addSlip(o, slip, me) {
     upd[`${base}/arrivedAt`] = serverTimestamp();
     upd[`${base}/arrivedBy`] = me.name;
   }
+  const priceIds = [];
   for (const [lid, r] of Object.entries(slip.rows || {})) {
     if (r.price == null) continue;
     const pk = push(ref(db, "zairyo/prices")).key;
+    priceIds.push(pk);
     const line = (o.lines || {})[lid] || {};
     upd[`zairyo/prices/${pk}`] = {
       spec: r.spec, price: r.price, unit: r.unit || "", sup: o.supplier, supName: o.supplierName, key: line.key || "",
@@ -132,6 +136,7 @@ export async function addSlip(o, slip, me) {
     };
   }
   await update(ref(db), upd);
+  return { sid, priceIds, arrived: o.status === "wait" };
 }
 
 /** 納品書を消す（入れまちがえたとき） */

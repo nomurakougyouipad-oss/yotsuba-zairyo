@@ -12,6 +12,7 @@ export const BACKUP_PATHS = [
   ["zairyo/orders", "注文"],
   ["zairyo/invoices", "まとめて請求"],
   ["zairyo/prices", "単価の記録"],
+  ["zairyo/imports", "納品書の取りこみの記録"],
   ["zairyo/master", "設定（材料屋・注文する人・届け先・品物一覧）"],
   ["zairyo/devices", "登録した端末"],
   ["common", "注番の会社・固定の注番・注番の年"],

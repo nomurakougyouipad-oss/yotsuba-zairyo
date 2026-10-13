@@ -451,9 +451,10 @@ export function startOfficeApp(main, me) {
             <div class="sl-top"><span class="sl-lab">納品書${s.no ? "　No." + esc(s.no) : ""}${s.date ? "　" + esc(s.date.slice(5).replace("-", "/").replace(/^0/, "")) : ""}</span>
               ${s.amount != null ? `<span class="money">${yen(s.amount)}</span><span>円</span>` : '<span class="hint">金額なし</span>'}
               <button type="button" class="linkbtn muted" data-slipdel="${esc(sid)}">消す</button></div>
+            ${s.scan ? `<button type="button" class="linkbtn" data-phview="${esc(s.scan)}">納品書のスキャンを見る</button>` : ""}
             ${s.rows && Object.keys(s.rows).length ? `<details class="sl-rows"><summary>明細（${Object.keys(s.rows).length}行）</summary><ul>${Object.values(s.rows).map(r =>
               `<li>${esc(r.spec)}${r.qty != null ? "　×" + esc(fmtQty(r.qty)) + esc(r.unit || "") : ""}${r.price != null ? "　@" + yen(r.price) : ""}　${yen(r.amount)}円</li>`).join("")}</ul></details>` : ""}
-            <span class="hint">入れた人：${esc(s.by || "")}</span>
+            <span class="hint">入れた人：${esc(s.by || "")}${s.imp ? "（納品書の取りこみ）" : ""}</span>
           </li>`).join("")}</ul>
           ${sl.length > 1 ? `<p class="ptotal"><span>納品書の合計</span><span class="money">${yen(o.nouhin)}</span><span>円</span></p>` : ""}
           <div class="row"><button type="button" class="linkbtn" data-slipmore>＋ 納品書をもう1枚入れる</button></div>` : ""}

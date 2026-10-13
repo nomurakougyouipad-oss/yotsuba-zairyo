@@ -7,12 +7,16 @@
 // - 入れると、注文の「納品書の金額」に入る（5-4 の addSlip と同じ）。まだ届いていない注文は「届いた」になる。
 //   金額のない納品書は「届いた」にするだけ
 // - 7-5b：材料集計表（Excel・CSV・はりつけた表）も同じ画面で読む（js/hyou.js。AI は使わない）。注番＋材料屋＋納品書番号（なければ日付）ごとにまとめる
-// - 同じ納品書を止める・取りこみの記録・まとめて取り消す・元のスキャンの保存は 7-5c
-import { ref, get, push, set, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
-import { db, auth, call } from "./firebase.js";
+// - 7-5c：同じ納品書はもう入っていれば「入れない」にして知らせる（同じ材料屋で同じ納品書番号・同じ注文に同じ金額と日付・この取りこみの中で同じもの）。
+//   入れたら取りこみの記録（/zairyo/imports：いつ・だれが・どのファイル・どの注文に何を入れたか）。「前の取りこみ」から、まとめて取り消せる
+//   （入れた納品書の金額と単価の記録を消す・「届いた」にした注文はもどす・新しく作った注文は取り消す・請求ずみの注文はさわらない）。
+//   元のスキャンは Storage の zairyo/scans/{端末の番号}/{番号}.jpg に保存して、注文の納品書から見られる
+import { ref, get, push, set, update, query, limitToLast, onValue, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+import { ref as sref, uploadBytes, deleteObject } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-storage.js";
+import { db, auth, call, storage } from "./firebase.js";
 import { esc, zenkana, toast, openSheet } from "./common.js";
 import { ymd } from "./tanomu.js";
-import { addSlip, markArrived, yen, toPrice, ST } from "./chumon.js";
+import { addSlip, markArrived, yen, toPrice, ST, slipsOf } from "./chumon.js";
 import { watchJobs, CHUBAN_RE } from "./nippo.js";
 import { matchSupplier } from "./line-parse.js";
 import { errorText } from "./touroku.js";
@@ -142,7 +146,7 @@ function toGroups(res, supList, prefixOk) {
 export function openImport({ sups, getOrders, me }) {
   const supList = Object.entries(sups || {}).sort(byOrder);
   const cards = [];   // [{ name, page, thumb, parts, status: "wait"|"reading"|"done"|"err"|"notslip", kind, err, groups }]
-  let jobs = null, stopJobs = null, kaisha = {}, kotei = {};
+  let jobs = null, stopJobs = null, closeLog = null, kaisha = {}, kotei = {};
   const prefixOk = ch => !!kaisha[ch.slice(0, 2)] || Object.keys(kotei).some(k => k.slice(0, 2) === ch.slice(0, 2));
 
   const html = `
@@ -155,6 +159,7 @@ export function openImport({ sups, getOrders, me }) {
       <details class="block hidbox" id="impPasteBox"><summary>表をはりつける（Excel からコピーした表）</summary>
         <textarea id="impPaste" class="inp ta" rows="5" placeholder="見出しの行（注番・品名・金額 など）もいっしょにコピーして、ここにはりつけてください"></textarea>
         <div class="row"><button type="button" class="btn" id="impPasteGo">読み取る</button></div></details>
+      <details class="block hidbox" id="impLog"><summary>前の取りこみ（まとめて取り消す）</summary><div id="impLogList" class="stack"><p class="muted">読んでいます…</p></div></details>
       <div id="impList" class="stack"></div>
       <div class="sheet-foot" id="impFoot" hidden><p class="err" id="impErr"></p>
         <button type="button" class="btn primary big full" id="impGo"></button></div>
@@ -225,6 +230,7 @@ export function openImport({ sups, getOrders, me }) {
           const cv = await c.scan.page(c.k);
           c.thumb = thumbOf(cv);
           c.parts = scanParts(cv);
+          c.full = await new Promise(res => cv.toBlob(res, "image/jpeg", 0.85));   // 入れるときに Storage に保存する
         }
         render();
         const r = (await call("zairyoAi", { timeout: 300000 })({ task: "slip", images: c.parts, force })).data;
@@ -246,13 +252,36 @@ export function openImport({ sups, getOrders, me }) {
     /* ---------- 入れる先（注番＋材料屋の注文） ---------- */
     const candidates = gr => (getOrders() || []).filter(o => o.status !== "cancelled" && o.chuban === gr.chuban)
       .sort((a, b) => (a.supplier === gr.supId ? 0 : 1) - (b.supplier === gr.supId ? 0 : 1) || (b.orderedAt || 0) - (a.orderedAt || 0));
+    /** もう入っている納品書か → { o, s }（この取りこみの中で前に同じものがあるときは { same: true }） */
+    function dupOf(gr) {
+      const amt = sumOf(gr);
+      for (const o of getOrders() || []) {
+        if (o.status === "cancelled" || o.supplier !== gr.supId) continue;
+        for (const [, s] of slipsOf(o)) {
+          if (gr.no && s.no && s.no === gr.no) return { o, s };
+          if (o.chuban === gr.chuban && !gr.noPrice && s.amount === amt && (!s.date || !gr.date || s.date === gr.date)) return { o, s };
+        }
+      }
+      for (const c of cards) for (const x of c.groups) {
+        if (x === gr) return null;
+        if (x.supId === gr.supId && x.chuban === gr.chuban && sumOf(x) === amt && (x.no || "") === (gr.no || "")) return { same: true };
+      }
+      return null;
+    }
     function defaultDest(gr) {
+      if (dupOf(gr)) return "skip";
       const hit = candidates(gr).find(o => o.supplier === gr.supId && (o.status === "wait" || o.status === "arrived"));
       return hit ? hit.id : "";   // 合う注文がないときは、事務員さんが「新しい注文として入れる」か「入れない」をえらぶ
     }
 
     /* ---------- 画面 ---------- */
     const sumOf = gr => gr.rows.reduce((s, r) => s + (r.amount || 0), 0);
+    const md = ts => { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()}`; };
+    function dupHTML(gr) {
+      const d = dupOf(gr);
+      if (!d) return "";
+      return `<p class="okmsg">${d.same ? "同じ納品書が、この取りこみの前のほうにもあります" : `この納品書は、もう入っています（${esc(d.o.supplierName)}・${esc(d.o.chuban)}${d.s.at ? `・${md(d.s.at)} ${esc(d.s.by || "")}` : ""}）`}。${gr.dest === "skip" ? "「入れない」にしています。入れるときは、入れる先をえらびなおしてください。" : ""}</p>`;
+    }
     function groupHTML(gr, ci, gi) {
       if (gr.saved) return `<div class="imp-g done"><p class="okmsg">入れました：${esc(gr.savedText || "")}</p></div>`;
       const cand = candidates(gr);
@@ -261,6 +290,7 @@ export function openImport({ sups, getOrders, me }) {
         `<option value="new"${gr.dest === "new" ? " selected" : ""}>新しい注文として入れる</option><option value="skip"${gr.dest === "skip" ? " selected" : ""}>入れない</option>`;
       return `
         <div class="imp-g" data-c="${ci}" data-g="${gi}">
+          ${dupHTML(gr)}
           ${gr.doubt.length ? `<ul class="imp-doubt">${gr.doubt.map(d => `<li>${esc(d)}</li>`).join("")}</ul>` : ""}
           <div class="imp-f">
             <label class="mini">材料屋<select class="inp" data-f="supId"><option value="">えらんでください</option>${supList.map(([id, s]) => `<option value="${esc(id)}"${gr.supId === id ? " selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
@@ -383,11 +413,15 @@ export function openImport({ sups, getOrders, me }) {
       const go = g("#impGo");
       go.disabled = true;
       go.textContent = "入れています…";
-      let n = 0;
+      const imp = push(ref(db, "zairyo/imports")).key;   // この取りこみの番号（記録と、納品書の imp）
+      const items = [], used = new Set();
       for (const gr of list) {
+        const c = cards.find(x => x.groups.includes(gr));
         try {
-          let o = gr.dest === "new" ? await newOrder(gr) : (getOrders() || []).find(x => x.id === gr.dest);
+          const created = gr.dest === "new";
+          const o = created ? await newOrder(gr) : (getOrders() || []).find(x => x.id === gr.dest);
           if (!o) throw new Error("入れる先の注文が見つかりません");
+          const item = { orderId: o.id, created, arrived: o.status === "wait", amount: gr.noPrice ? 0 : sumOf(gr), chuban: o.chuban, sup: o.supplier, no: gr.no || "" };
           if (gr.noPrice) {
             if (o.status === "wait") await markArrived(o, me);
           } else {
@@ -399,20 +433,108 @@ export function openImport({ sups, getOrders, me }) {
               if (r.price != null) x.price = r.price;
               rows["r" + String(i + 1).padStart(2, "0")] = x;
             });
-            const slip = { date: gr.date || ymd(0), amount: sumOf(gr), rows };
+            const slip = { date: gr.date || ymd(0), amount: sumOf(gr), rows, imp };
             if (gr.no) slip.no = gr.no;
-            await addSlip(o, slip, me);
+            const scan = await scanOf(c);
+            if (scan) slip.scan = scan;
+            const r = await addSlip(o, slip, me);
+            item.slipId = r.sid;
+            if (r.priceIds.length) item.priceIds = r.priceIds;
           }
+          items.push(item);
+          used.add(c);
           gr.saved = true;
           gr.savedText = `${o.supplierName}・${o.chuban}${gr.noPrice ? "（届いたにしました）" : `・${yen(sumOf(gr))}円`}`;
-          n++;
         } catch (ex) {
           gr.err = errorText(ex);
         }
       }
+      // 取りこみの記録（まとめて取り消すときに使う）
+      if (items.length) {
+        const files = [...used].map(c => {
+          const f = { name: c.name.slice(0, 200), kind: c.table ? (c.name === "はりつけた表" ? "paste" : "table") : "scan" };
+          if (c.scanPath) f.scan = c.scanPath;
+          return f;
+        });
+        await set(ref(db, `zairyo/imports/${imp}`), {
+          at: serverTimestamp(), by: me.name, byUid: auth.currentUser.uid, count: items.length, files, items,
+        }).catch(ex => toast("取りこみの記録をのこせませんでした（" + errorText(ex) + "）"));
+      }
       render();
-      toast(n ? `納品書を ${n}件 入れました` : "入れられませんでした");
+      toast(items.length ? `納品書を ${items.length}件 入れました` : "入れられませんでした");
     }
+
+    /** スキャンを Storage に保存して、置き場所を返す（1枚につき1回。表のときは保存しない） */
+    async function scanOf(c) {
+      if (!c || c.table || !c.full) return "";
+      if (c.scanPath) return c.scanPath;
+      const path = `zairyo/scans/${auth.currentUser.uid}/${push(ref(db, "zairyo/imports")).key.replace(/[^A-Za-z0-9]/g, "")}.jpg`;
+      try {
+        await uploadBytes(sref(storage, path), c.full, { contentType: "image/jpeg" });
+        c.scanPath = path;
+      } catch (ex) {
+        toast("スキャンを保存できませんでした（納品書の金額は入れます）");
+        return "";
+      }
+      return path;
+    }
+
+    /* ---------- 前の取りこみ・まとめて取り消す ---------- */
+    let imports = null, askUndo = "";
+    const hm = ts => { const d = new Date(ts); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`; };
+    const stopLog = onValue(query(ref(db, "zairyo/imports"), limitToLast(10)), snap => { imports = snap.val() || {}; drawLog(); }, () => { g("#impLogList").innerHTML = '<p class="warn">記録を読めませんでした</p>'; });
+    function drawLog() {
+      const list = Object.entries(imports || {}).sort(([, a], [, b]) => (b.at || 0) - (a.at || 0));
+      g("#impLogList").innerHTML = !list.length ? '<p class="muted">まだ取りこみはありません。</p>' : list.map(([id, r]) => `
+        <div class="imp-log">
+          <div><b>${r.at ? `${md(r.at)} ${hm(r.at)}` : ""}</b>　${esc(r.by || "")}・${r.count || 0}件
+            <span class="muted">（${Object.values(r.files || {}).map(f => esc(f.name)).join("・")}）</span></div>
+          ${r.undone ? `<p class="muted">取り消しました（${r.undoneAt ? `${md(r.undoneAt)} ${hm(r.undoneAt)}・` : ""}${esc(r.undoneBy || "")}）</p>`
+            : askUndo === id ? `<div class="confirm"><p class="confirm-q">この取りこみで入れた納品書の金額を消して、「届いた」にした注文はもどし、新しく作った注文は取り消します。よいですか？</p>
+              <div class="confirm-btns"><button type="button" class="btn danger" data-undoyes="${esc(id)}">取り消す</button><button type="button" class="btn" data-undono>やめる</button></div></div>`
+            : `<button type="button" class="btn" data-undo="${esc(id)}">まとめて取り消す</button>`}
+        </div>`).join("");
+    }
+    g("#impLogList").addEventListener("click", e => {
+      const t = e.target.closest("button");
+      if (!t) return;
+      if (t.dataset.undo) { askUndo = t.dataset.undo; drawLog(); }
+      else if ("undono" in t.dataset) { askUndo = ""; drawLog(); }
+      else if (t.dataset.undoyes) {
+        t.disabled = true;
+        undoImport(t.dataset.undoyes).then(msg => { askUndo = ""; toast(msg); }, ex => { t.disabled = false; toast(errorText(ex)); });
+      }
+    });
+    async function undoImport(id) {
+      const rec = imports[id], skipped = [];
+      if (!rec || rec.undone) return "もう取り消してあります";
+      for (const it of Object.values(rec.items || {})) {
+        const o = (getOrders() || []).find(x => x.id === it.orderId);
+        if (!o) continue;
+        if (o.status === "billed") { skipped.push(o.chuban); continue; }   // 請求ずみの注文はさわらない
+        const base = `zairyo/orders/${o.id}`, upd = {};
+        const rest = slipsOf(o).filter(([sid]) => sid !== it.slipId);
+        if (it.slipId && (o.slips || {})[it.slipId]) {
+          upd[`${base}/slips/${it.slipId}`] = null;
+          upd[`${base}/nouhin`] = rest.length ? rest.reduce((s, [, x]) => s + (Number(x.amount) || 0), 0) : null;
+        }
+        Object.values(it.priceIds || {}).forEach(p => { upd[`zairyo/prices/${p}`] = null; });
+        if (it.created) {
+          upd[`${base}/status`] = "cancelled";
+          upd[`${base}/cancelledAt`] = serverTimestamp();
+          upd[`${base}/cancelledBy`] = me.name;
+        } else if (it.arrived && o.status === "arrived" && !rest.length) {
+          upd[`${base}/status`] = "wait";
+          upd[`${base}/arrivedAt`] = null;
+          upd[`${base}/arrivedBy`] = null;
+        }
+        if (Object.keys(upd).length) await update(ref(db), upd);
+      }
+      Object.values(rec.files || {}).forEach(f => { if (f.scan) deleteObject(sref(storage, f.scan)).catch(() => { }); });
+      await update(ref(db, `zairyo/imports/${id}`), { undone: true, undoneAt: serverTimestamp(), undoneBy: me.name });
+      return skipped.length ? `取り消しました（${skipped.join("・")} は請求ずみなので、そのままにしました）` : "取りこみを取り消しました";
+    }
+    closeLog = stopLog;
 
     /** 納品書から新しい注文を作る（まだ届いていない注文として作ってから、納品書を入れる） */
     async function newOrder(gr) {
@@ -446,5 +568,5 @@ export function openImport({ sups, getOrders, me }) {
       document.body.appendChild(d);
     }
     render();
-  }, { side: true, onClose: () => { if (stopJobs) stopJobs(); } });
+  }, { side: true, onClose: () => { if (stopJobs) stopJobs(); if (closeLog) closeLog(); } });
 }
