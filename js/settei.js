@@ -488,7 +488,7 @@ function aiHTML() {
     <div class="block"><h3>AI につながるかためす</h3>
       <button type="button" class="btn" data-aiping${ai.busy ? " disabled" : ""}>${ai.busy ? "ためしています…" : "ためす"}</button>
       ${t ? (t.ok ? `<p class="okmsg">○ つながりました（${(t.ms / 1000).toFixed(1)}秒・AI の答え「${esc(t.reply)}」）</p>` : `<p class="warn">× ${esc(t.msg)}</p>`) : ""}
-      <p class="hint">押すと AI を1回呼びます（1回 1円もかかりません）。いまのモデル：Claude Opus 5.5（納品書の読み取りを作るときに、本物の納品書でくらべて決めなおします）。</p></div>`;
+      <p class="hint">押すと AI を1回呼びます（1回 1円もかかりません）。このためしは Claude Opus 5.5 を使います。LINE の品名の当ては Claude Sonnet 5.5 です（くらべて決めました）。</p></div>`;
 }
 
 async function pingAi() {

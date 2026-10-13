@@ -3,7 +3,8 @@
 //   ページ・GitHub・チャットには出さない。このプログラムも、キーを画面や記録に出さない
 // - 呼べるのは事務所の端末だけ（lib.js の requireOffice）
 // - 1日の回数の上限（AI_DAILY_LIMIT）。使った回数とトークンは /config/ai/days/{日付}（だれも読めない場所）に書き、画面にはこのプログラムが返す
-// - モデルは 7-5 で本物の納品書でくらべてから、持ち主が決める。それまでは Claude Opus 5.5
+// - モデル：品名の当て（7-4）は Claude Sonnet 5.5（10/13 持ち主が Haiku・Sonnet・Opus をくらべて決めた。商品名をそのまま残し、ゆれもなかった）。
+//   つながるかのためしは Claude Opus 5.5。納品書の読み取り（7-5）は、作るときに決める
 // - Claude が断った（refusal）ときは、Claude のサーバーがほかのモデルでやりなおす（fallbacks: "default"）
 // - task: "ping"＝つながるかのためし、"usage"＝今日使った回数、"match"＝LINE の品名を品物一覧に当てる（7-4。答えは構造化出力の JSON）。
 //   納品書を読む（7-5）は、あとで足す
@@ -13,7 +14,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { db, requireOffice } from "./lib.js";
 
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
-const MODEL = "claude-opus-5-5";
+const MODEL = "claude-opus-5-5";          // つながるかのためし
+const MATCH_MODEL = "claude-sonnet-5-5";   // 品名の当て（7-4）
 const AI_DAILY_LIMIT = 100;   // 1日に AI を呼べる回数（事務所ぜんぶで）。Claude Console の月の上限（$10）とは別の、こちらの安全柵
 const JST = 9 * 60 * 60 * 1000;
 const today = () => new Date(Date.now() + JST).toISOString().slice(0, 10);
@@ -36,7 +38,7 @@ async function addTokens(usage = {}) {
 
 async function usageNow() {
   const d = (await dayRef().get()).val() || {};
-  return { used: d.count || 0, limit: AI_DAILY_LIMIT, tokensIn: d.in || 0, tokensOut: d.out || 0, model: MODEL, key: keyShape() };
+  return { used: d.count || 0, limit: AI_DAILY_LIMIT, tokensIn: d.in || 0, tokensOut: d.out || 0, model: MODEL, matchModel: MATCH_MODEL, key: keyShape() };
 }
 
 /** キーの「形」だけ（中身は返さない）：sk-ant- ではじまるか・長さ・空白や改行が入っていないか。貼りつけのずれを見つけるため */
@@ -165,7 +167,7 @@ async function matchItems(client, data) {
   if (!list.length) throw new HttpsError("invalid-argument", "当てる品名がありません");
   const item = await catalogItems();
   if (!item.size) throw new HttpsError("failed-precondition", "品物一覧が、まだ入っていません");
-  const model = COMPARE_MODELS[data.model] ? data.model : MODEL;
+  const model = COMPARE_MODELS[data.model] ? data.model : MATCH_MODEL;
   const t0 = Date.now();
   let res;
   try {
