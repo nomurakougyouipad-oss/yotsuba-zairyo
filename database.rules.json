@@ -43,6 +43,31 @@
       "backupLog": {
         ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'"
       },
+      "notify": {
+        "tokens": {
+          ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
+          "$token": {
+            ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office' && ((!data.exists() && newData.child('uid').val() == auth.uid) || data.child('uid').val() == auth.uid)",
+            ".validate": "$token.matches(/^[A-Za-z0-9_:-]+$/) && $token.length >= 20 && $token.length <= 4096 && newData.hasChildren(['uid', 'name', 'at'])",
+            "uid": { ".validate": "newData.val() == auth.uid" },
+            "name": { ".validate": "newData.isString() && newData.val().length <= 60" },
+            "ua": { ".validate": "newData.isString() && newData.val().length <= 80" },
+            "at": { ".validate": "newData.val() == now" },
+            "$other": { ".validate": false }
+          }
+        },
+        "tests": {
+          "$id": {
+            ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office' && data.child('uid').val() == auth.uid",
+            ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office' && ((!data.exists() && newData.child('uid').val() == auth.uid) || (data.child('uid').val() == auth.uid && !newData.exists()))",
+            ".validate": "newData.hasChildren(['token', 'uid', 'at'])",
+            "token": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_:-]+$/) && newData.val().length >= 20 && newData.val().length <= 4096" },
+            "uid": { ".validate": "newData.val() == auth.uid" },
+            "at": { ".validate": "newData.val() == now" },
+            "$other": { ".validate": false }
+          }
+        }
+      },
       "master": {
         ".read": "auth != null && (auth.token.zr_role == 'genba' || auth.token.zr_role == 'office') && root.child('zairyo/devices/' + auth.uid + '/role').val() == auth.token.zr_role",
         ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",

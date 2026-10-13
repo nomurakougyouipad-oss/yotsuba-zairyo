@@ -13,6 +13,8 @@ import { db, requireOffice } from "./lib.js";
 export { zairyoBackup } from "./backup.js";
 // AI（Claude）の入口は ai.js（11章 7-3）
 export { zairyoAi } from "./ai.js";
+// プッシュ通知（現場から新しい依頼・ためしの通知）は notify.js（10/14）
+export { zairyoNotifyRequest, zairyoNotifyTest } from "./notify.js";
 
 setGlobalOptions({ region: "asia-southeast1", maxInstances: 3, memory: "256MiB", timeoutSeconds: 30 });
 initializeApp();

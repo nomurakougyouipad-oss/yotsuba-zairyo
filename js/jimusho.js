@@ -3,6 +3,7 @@
 import { $, esc, initTheme } from "./common.js";
 import { whoAmI, register, errorText } from "./touroku.js";
 import { startOfficeApp } from "./jimusho-app.js";
+import { refreshPush } from "./tsuuchi.js";
 
 initTheme();
 const main = $("#main");
@@ -70,4 +71,6 @@ function showCode(me) {
 function showHome(me) {
   $("#who").textContent = `事務所のパソコン・${me.name}`;
   startOfficeApp(main, me);
+  // 通知がオンのパソコンは、開いたときにだまって通知の番号を新しくする（番号はときどき変わるため。失敗しても画面は止めない）
+  refreshPush().catch(err => console.warn("[通知] 番号を新しくできませんでした", err));
 }

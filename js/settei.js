@@ -8,9 +8,10 @@ import { $, esc, toast } from "./common.js";
 import { errorText } from "./touroku.js";
 import { watchJobs, watchWorkers } from "./nippo.js";
 import { BACKUP_PATHS, countText, readAll, saveBackup, lastBackup } from "./backup.js";
+import { pushState, enablePush, disablePush, testPush } from "./tsuuchi.js";
 import { normCatalog, buildSpec } from "./tanomu.js";
 
-const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["memo", "覚えた当て方"], ["backup", "バックアップ"], ["ai", "AI"]];
+const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["memo", "覚えた当て方"], ["notify", "通知"], ["backup", "バックアップ"], ["ai", "AI"]];
 const TAB_KEY = "yotsuba-zairyo-settab";
 const PATH = {
   sup: "zairyo/master/suppliers",
@@ -22,6 +23,7 @@ const PATH = {
   dev: "zairyo/devices",          // 登録した端末（事務所だけ読める。消す・合言葉を変えるのはサーバーのプログラム）
   blog: "zairyo/backupLog",       // 自動の保存の結果（サーバーのプログラム zairyoBackup が書く）
   memo: "zairyo/master/itemMemo",  // LINE の品名の、覚えた当て方（7-4）
+  notify: "zairyo/notify/tokens",  // 通知がオンのパソコン（10/14。js/tsuuchi.js）
   year: "common/chubanYear",      // 注番の年（2けた）。12/20〜25 ごろに事務所が切りかえる（日付からは決めない）
 };
 const S = {};                 // データベースの中身（読みこむまでは undefined）
@@ -97,7 +99,7 @@ function draw(force = false) {
   if (focusId) { const f = document.getElementById(focusId); if (f) f.focus(); }
 }
 
-const VIEW = { sup: supHTML, kaisha: kaishaHTML, staff: staffHTML, place: placeHTML, catalog: catalogHTML, dev: devHTML, memo: memoHTML, backup: backupHTML, ai: aiHTML };
+const VIEW = { sup: supHTML, kaisha: kaishaHTML, staff: staffHTML, place: placeHTML, catalog: catalogHTML, dev: devHTML, memo: memoHTML, notify: notifyHTML, backup: backupHTML, ai: aiHTML };
 
 /* ==================== 材料屋 ==================== */
 function supHTML() {
@@ -310,6 +312,57 @@ function catalogHTML() {
 
 /* ==================== 登録した端末・合言葉（11章 8） ==================== */
 const when = ms => { const d = new Date(ms); return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`; };
+
+/* ==================== 通知（10/14） ==================== */
+let pushBusy = "", pushNote = null;   // いましていること（on・test・off）／前の結果 { ok, text }
+
+/** このパソコンの通知（オン・オフ・ためし）と、通知がオンのパソコンの一覧 */
+function notifyHTML() {
+  const st = pushState();
+  const note = pushNote ? `<p class="${pushNote.ok ? "ok-note" : "err"}" role="status">${esc(pushNote.text)}</p>` : "";
+  let mine;
+  if (st === "unsupported") mine = '<p class="warn">このブラウザでは、通知を使えません。Edge か Chrome で開いてください。</p>';
+  else if (st === "blocked") mine = `<p class="warn">このパソコンでは、通知が止められています。</p>
+      <p class="hint">アドレスバーの左のマーク（鍵など）を押して →「通知」を「許可」にしてから、このページを開きなおしてください。</p>`;
+  else if (st === "on") mine = `<p><b>このパソコン：通知はオンです</b></p>
+      <div class="row">
+        <button type="button" class="btn" data-pushtest${pushBusy ? " disabled" : ""}>${pushBusy === "test" ? "送っています…" : "ためしに通知を送る"}</button>
+        <button type="button" class="btn" data-pushoff${pushBusy ? " disabled" : ""}>${pushBusy === "off" ? "オフにしています…" : "オフにする"}</button>
+      </div>`;
+  else mine = `<button type="button" class="btn primary big full" data-pushon${pushBusy ? " disabled" : ""}>${pushBusy === "on" ? "オンにしています…" : "通知をオンにする"}</button>
+      <p class="hint">押すと、ブラウザが「通知を許可しますか」とたずねます。「許可」を押してください。</p>`;
+  const pcs = Object.values(S.notify || {}).filter(Boolean);
+  const names = [...new Set(pcs.map(t => t.name || "?"))].sort(ja);
+  return `
+    <p class="hint">現場から新しい依頼が来たら、パソコンの右下に知らせます。このページを閉じていても届きます（パソコンの電源が入っていて、Edge や Chrome が裏で動いているとき）。オンにするのは、パソコン1台ずつです。</p>
+    <div class="block"><h3>このパソコンの通知</h3>${mine}${note}</div>
+    <div class="block"><h3>通知がオンのパソコン（${names.length}台）</h3>${names.length
+      ? `<ul class="plain">${names.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : '<p class="muted">まだありません</p>'}</div>
+    <p class="hint">右下に出ないとき：Windows の「応答不可（集中モード）」がオンになっていないか、Windows の設定 → システム → 通知 で、Edge（Chrome）の通知がオンかを見てください。</p>`;
+}
+
+async function pushDo(what) {
+  if (pushBusy) return;
+  pushBusy = what; pushNote = null; draw(true);
+  try {
+    if (what === "on") {
+      await enablePush();
+      pushNote = { ok: true, text: "通知をオンにしました。「ためしに通知を送る」で、右下に出るかたしかめてください。" };
+    } else if (what === "off") {
+      await disablePush();
+      pushNote = { ok: true, text: "このパソコンの通知を、オフにしました。" };
+    } else {
+      const r = await testPush();
+      pushNote = r.ok ? { ok: true, text: "送りました。右下に「ためしの通知」が出れば、だいじょうぶです。" }
+        : { ok: false, text: `送れませんでした（${r.error}）` };
+    }
+  } catch (err) {
+    console.error("[通知]", what, err);
+    pushNote = { ok: false, text: `${what === "on" ? "オンにできませんでした" : what === "off" ? "オフにできませんでした" : "送れませんでした"}（${err.code === "denied" || err.code === "default" ? err.message : errorText(err)}）` };
+  } finally {
+    pushBusy = ""; draw(true);
+  }
+}
 
 function devHTML() {
   if (!S.dev) return LOADING;
@@ -527,6 +580,9 @@ async function onClick(e) {
 
   if ("backup" in d) return doBackup();
   if ("aiping" in d) return pingAi();
+  if ("pushon" in d) return pushDo("on");
+  if ("pushtest" in d) return pushDo("test");
+  if ("pushoff" in d) return pushDo("off");
 
   if (d.swaz) {
     const s = S.sup[d.swaz];
