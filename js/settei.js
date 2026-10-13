@@ -6,7 +6,7 @@ import { ref, onValue, set, update, remove, push, serverTimestamp } from "https:
 import { db, auth, call } from "./firebase.js";
 import { $, esc, toast } from "./common.js";
 import { errorText } from "./touroku.js";
-import { watchJobs } from "./nippo.js";
+import { watchJobs, watchWorkers } from "./nippo.js";
 import { BACKUP_PATHS, countText, readAll, saveBackup, lastBackup } from "./backup.js";
 import { normCatalog, buildSpec } from "./tanomu.js";
 
@@ -28,10 +28,12 @@ const S = {};                 // データベースの中身（読みこむま�
 let tab = "sup", body = null, waiting = false;
 let kQ = "", ask = "";        // 注番の会社のさがす言葉／「本当に消しますか？」を出している行
 let codeKind = "genba";       // 合言葉を変える：現場 / 事務所
-const pickOwners = new Set();  // 日報の担当者から足す人（えらんでいるところ）
+const pickOwners = new Set();  // 日報の人から足す人（えらんでいるところ）
 
 const LOADING = '<p class="muted">読んでいます…</p>';
 const BAD_KEY = /[.#$\[\]\/]/;
+// 人の名前でないもの（日報の担当の欄の「その他」「なし」「よつば」など、数字やローマ字の入ったもの、会社や班の名前）は、足す候補に出さない
+const NOT_PERSON = /^(その他|そのた|他|ほか|なし|無し|ナシ|未定|不明|共通|全員|全体|全社|みんな|事務所|事務|会社|本社|営業|工務|現場|[ー－\-―]+)$|よつば|ヨツバ|四つ葉|四葉|テスト|[0-9０-９A-Za-zＡ-Ｚａ-ｚ]|(会社|工業|建設|産業|商事|商会|農園|工場|班|組|課|係)$/;
 const z2h = s => String(s ?? "").normalize("NFKC");
 const ja = (a, b) => String(a).localeCompare(String(b), "ja");
 const byOrder = ([, a], [, b]) => (a.order ?? 999) - (b.order ?? 999) || ja(a.name, b.name);
@@ -70,8 +72,10 @@ export function renderSettings(el) {
   for (const [key, path] of Object.entries(PATH)) {
     onValue(ref(db, path), snap => { S[key] = key === "year" ? (snap.val() || "") : (snap.val() || {}); draw(); }, showErr);
   }
-  // 日報の注番（読むだけ）：注番の年の切りかえどき・日報の担当者から足す に使う
+  // 日報の注番（読むだけ）：注番の年の切りかえどき・日報の人から足す に使う
   watchJobs(d => { S.nippo = d; draw(); }, showErr);
+  // 日報の作業者の名簿（読むだけ）：日報の人から足す に使う
+  watchWorkers(w => { S.workers = w; draw(); }, showErr);
   draw(true);
   if (tab === "backup") readBk();
   if (tab === "ai") readAi();
@@ -239,18 +243,26 @@ function staffHTML() {
     <p class="hint">かくしても消しても、その名前でもう登録したスマホは、そのまま使えます。</p>`;
 }
 
-/** 日報の担当者で、まだ「注文する人」にいない人。押してえらんで、まとめて足す（全部いっぺんには入れない） */
+/** 日報の工事の担当者と、日報の作業者の名簿の人で、まだ「注文する人」にいない人。押してえらんで、まとめて足す（全部いっぺんには入れない）
+ *  協力会社の人は、たたんだ所に分けて出す（ごちゃつかないように）。日報に書いただけの手伝いの人（名簿にない名前）は出さない */
 function ownersBlock() {
-  if (!S.nippo) return '<div class="block"><h3>日報の担当者から足す</h3><p class="muted">日報を読んでいます…</p></div>';
-  const owners = [...new Set([...S.nippo.open, ...S.nippo.fixed].map(j => j.tantou).filter(Boolean))];
-  const cand = owners.filter(n => !S.staff[n] && !BAD_KEY.test(n) && [...n].length <= 20).sort(ja);
-  for (const n of [...pickOwners]) if (!cand.includes(n)) pickOwners.delete(n);
-  return `
-    <div class="block"><h3>日報の担当者から足す</h3>${cand.length ? `
-      <p class="hint">日報の工事の担当者で、まだここにいない人です（${cand.length}人）。足す人を押してえらんでください。材料をたのまない人や、人の名前でないものは、えらばなくてだいじょうぶです。</p>
-      <div class="owners">${cand.map(n => `<button type="button" data-pickowner="${esc(n)}" aria-pressed="${pickOwners.has(n)}">${esc(n)}</button>`).join("")}</div>
-      <button type="button" class="btn primary" data-addowners${pickOwners.size ? "" : " disabled"}>${pickOwners.size ? `えらんだ ${pickOwners.size}人を足す` : "足す人を押してください"}</button>`
-      : '<p class="muted">日報の担当者は、みんな入っています。</p>'}
+  const head = '<div class="block"><h3>日報の人から足す</h3>';
+  if (!S.nippo || !S.workers) return head + '<p class="muted">日報を読んでいます…</p></div>';
+  const ok = n => n && !S.staff[n] && !BAD_KEY.test(n) && !NOT_PERSON.test(n) && [...n].length <= 20;
+  const owners = [...S.nippo.open, ...S.nippo.fixed].map(j => String(j.tantou || "").trim());
+  const jisha = S.workers.filter(w => w.kubun === "自社").map(w => w.name);
+  const main = [...new Set([...owners, ...jisha])].filter(ok).sort(ja);
+  const kyo = new Map();   // 協力会社の人 → 会社の名前
+  for (const w of S.workers) if (w.kubun !== "自社" && ok(w.name) && !main.includes(w.name) && !kyo.has(w.name)) kyo.set(w.name, w.shozoku);
+  const partner = [...kyo.keys()].sort(ja);
+  for (const n of [...pickOwners]) if (!main.includes(n) && !kyo.has(n)) pickOwners.delete(n);
+  if (!main.length && !partner.length) return head + '<p class="muted">日報の人は、みんな入っています。</p></div>';
+  const btn = (n, co) => `<button type="button" data-pickowner="${esc(n)}" aria-pressed="${pickOwners.has(n)}">${esc(n)}${co ? ` <small>${esc(co)}</small>` : ""}</button>`;
+  return `${head}
+      <p class="hint">日報の工事の担当者と、日報の名簿の人で、まだここにいない人です（${main.length}人）。材料をたのむ人を押してえらんでください。</p>
+      ${main.length ? `<div class="owners">${main.map(n => btn(n)).join("")}</div>` : '<p class="muted">よつばの人は、みんな入っています。</p>'}
+      ${partner.length ? `<details class="kyo" id="ownersKyo"><summary>協力会社の人（${partner.length}人）</summary><div class="owners">${partner.map(n => btn(n, kyo.get(n))).join("")}</div></details>` : ""}
+      <button type="button" class="btn primary" data-addowners${pickOwners.size ? "" : " disabled"}>${pickOwners.size ? `えらんだ ${pickOwners.size}人を足す` : "足す人を押してください"}</button>
     </div>`;
 }
 

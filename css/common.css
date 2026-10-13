@@ -186,6 +186,9 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .owners button small{font-size:11px;font-weight:700}
 .owners button .n{font-family:var(--f-num);font-size:13px;font-weight:500;opacity:.8;margin-left:2px}
 .owners button[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.kyo{margin:10px 0}
+.kyo summary{cursor:pointer;font-weight:700;color:var(--muted);min-height:44px;display:flex;align-items:center}
+.kyo .owners{margin-top:4px}
 .jobs{display:flex;flex-direction:column;gap:6px}
 .jobs button{position:relative;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:9px 40px 9px 12px;min-height:52px;text-align:left;display:flex;flex-direction:column;gap:0}
 .chuban{font-family:var(--f-num);font-weight:600;font-size:17px;letter-spacing:.03em;color:var(--amber)}
