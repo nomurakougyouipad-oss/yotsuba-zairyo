@@ -146,3 +146,10 @@ export function aliasToLearn(raw, sup, sups) {
   if (sups.some(([, x]) => aliasList(x).includes(k))) return "";   // もうどこかの読みかえにある
   return k;
 }
+
+/* ---------- 覚えた当て方（7-4） ----------
+   一度たしかめて入れた品名の書き方は /zairyo/master/itemMemo に覚えて、次から AI なしで当てる。
+   くらべる形は、全角半角・大文字小文字・空白・「×」「x」「*」のちがいをそろえたもの */
+export const memoKey = s => nfkc(s).toUpperCase().replace(/\s+/g, "").replace(/[×X*]/g, "x");
+/** データベースのキーに使える形（. # $ [ ] / を使わない） */
+export const memoDbKey = s => encodeURIComponent(memoKey(s)).replace(/\./g, "%2E").slice(0, 300);

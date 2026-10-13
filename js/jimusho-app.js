@@ -824,7 +824,7 @@ export function startOfficeApp(main, me) {
     else if (d.open) openOrder(d.open);
     else if (t.id === "billBtn") { bulk.done = ""; openBulk(); }
     else if (t.id === "lineBtn") {
-      openLineOrder({ sups: st.sups, places: st.places, me, onPlaced: id => { st.view = "orders"; st.filter = "all"; draw(); openOrder(id); } });
+      openLineOrder({ sups: st.sups, places: st.places, catalog: st.catalog, me, onPlaced: id => { st.view = "orders"; st.filter = "all"; draw(); openOrder(id); } });
     }
     else if (t.id === "setBtn") showSettings(true);
     else if (t.id === "setBack") showSettings(false);

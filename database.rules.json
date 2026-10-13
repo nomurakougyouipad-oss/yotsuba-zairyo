@@ -82,6 +82,17 @@
         "catalog": {
           ".validate": "newData.hasChildren(['cats', 'units'])"
         },
+        "itemMemo": {
+          "$k": {
+            ".validate": "$k.length <= 300 && (newData.hasChildren(['key']) || newData.hasChildren(['free']) || newData.hasChildren(['note']))",
+            "key": { ".validate": "newData.isString() && newData.val().length <= 40" },
+            "vals": { "$v": { ".validate": "$v.length <= 20 && newData.isString() && newData.val().length <= 200" } },
+            "free": { ".validate": "newData.val() == true" },
+            "note": { ".validate": "newData.val() == true" },
+            "at": { ".validate": "newData.isNumber()" },
+            "$other": { ".validate": false }
+          }
+        },
         "$other": { ".validate": false }
       },
       "requests": {

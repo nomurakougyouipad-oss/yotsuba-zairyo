@@ -5,8 +5,8 @@
 // - 1日の回数の上限（AI_DAILY_LIMIT）。使った回数とトークンは /config/ai/days/{日付}（だれも読めない場所）に書き、画面にはこのプログラムが返す
 // - モデルは 7-5 で本物の納品書でくらべてから、持ち主が決める。それまでは Claude Opus 5.5
 // - Claude が断った（refusal）ときは、Claude のサーバーがほかのモデルでやりなおす（fallbacks: "default"）
-// - いまは「つながるか」のためし（task: "ping"）と、今日使った回数（task: "usage"）だけ。
-//   品名を品物一覧に当てる（7-4）・納品書を読む（7-5）は、あとで足す
+// - task: "ping"＝つながるかのためし、"usage"＝今日使った回数、"match"＝LINE の品名を品物一覧に当てる（7-4。答えは構造化出力の JSON）。
+//   納品書を読む（7-5）は、あとで足す
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import Anthropic from "@anthropic-ai/sdk";
@@ -68,7 +68,119 @@ function aiError(err) {
   return new HttpsError("internal", "AI がうまく動きませんでした");
 }
 
-/** data = { task: "ping" | "usage" } */
+/* ---------- 7-4：LINE の品名を品物一覧に当てる（試作の matchPrompt・cleanMatch と同じ考え方） ---------- */
+const arr = v => (Array.isArray(v) ? v : Object.values(v || {})).filter(x => x != null);
+const MATCH_MAX_LINES = 60;
+
+/** データベースの品物一覧 → Map(キー → {name, tpl, opts:[[名前, [値]]], unit})（「自由に書く」はのぞく） */
+async function catalogItems() {
+  const raw = (await db().ref("zairyo/master/catalog").get()).val() || {};
+  const item = new Map();
+  for (const c of arr(raw.cats)) {
+    for (const it of arr(c.items)) {
+      if (it.free) continue;
+      item.set(`${c.id}:${it.id}`, { name: it.name, tpl: it.tpl || "", unit: it.unit || "", opts: arr(it.opts).map(o => [o[0], arr(o[1])]) });
+    }
+  }
+  return item;
+}
+
+function matchPrompt(item, list) {
+  const cat = [...item].map(([k, it]) => `${k}｜${it.name}｜${it.tpl}｜${it.opts.map(([n, v]) => `${n}=${v.join("/")}`).join("；")}｜単位 ${it.unit}`).join("\n");
+  return "あなたは鉄工所の事務員を手伝います。現場の人が LINE に書いた材料の注文を、会社の「品物一覧」に当てはめてください。\n\n" +
+    "# 品物一覧（1行に1品物。キー｜名前｜書き方のひな形｜えらべる値｜単位）\n" + cat + "\n\n" +
+    "# LINE の品名の行（番号: 文）\n" + list.map(x => `${x.i}: ${x.text}`).join("\n") + "\n\n" +
+    "# 決まり\n" +
+    "- 品物1つにつき答えを1つ。見出しの行（例「SS400 PL」）は、その下の行にかかる。見出しだけの行は品物にしない。\n" +
+    "- lines には、その品物に使った行の番号をすべて入れる（見出しの行も入れる）。\n" +
+    "- 品物ではない行（例：ミルシートお願いします、届け先の住所、↑、使い道のメモ）は rows に入れず、notes に行番号を入れる。どの行も rows か notes のどちらかに入れる。\n" +
+    "- key は品物一覧のキー。当てはまる品物がないときは null（そのときも、品物の行なら rows に入れる）。\n" +
+    "- vals は、ひな形の {} の名前と値の組。えらべる値にあるときは、その書き方にそろえる（例：25A10s → 呼び径 25A・厚さ 10s／6000 → 定尺6m／t3.2 は 厚さ t3.2）。えらべる値にないサイズは、同じ書き方で書く。\n" +
+    "- LINE に書いていない値（例：材質がない）は、いちばんありそうな値を vals に入れ、その名前を guess に入れる。書いてある値は guess に入れない。\n" +
+    "- qty は数（数字だけ）、unit は単位（本・枚・個 など）。書いていなければ null。";
+}
+
+// 答えの形（構造化出力）。vals は名前がいろいろなので、名前と値の組の並びにする
+const nullable = t => ({ anyOf: [{ type: t }, { type: "null" }] });
+const MATCH_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["rows", "notes"],
+  properties: {
+    rows: {
+      type: "array",
+      items: {
+        type: "object", additionalProperties: false, required: ["lines", "key", "vals", "guess", "qty", "unit"],
+        properties: {
+          lines: { type: "array", items: { type: "integer" } },
+          key: nullable("string"),
+          vals: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "value"], properties: { name: { type: "string" }, value: { type: "string" } } } },
+          guess: { type: "array", items: { type: "string" } },
+          qty: nullable("number"),
+          unit: nullable("string"),
+        },
+      },
+    },
+    notes: { type: "array", items: { type: "integer" } },
+  },
+};
+
+/** AI の答えを、品物一覧にある形だけにする（ない品物・ない名前は落とす。同じ行を2回使わない） */
+function cleanMatch(res, item, allowed) {
+  const rows = [], used = new Set();
+  for (const r of arr(res && res.rows)) {
+    const ls0 = arr(r.lines).map(Number).filter(i => allowed.has(i));
+    const ls = ls0.filter(i => !used.has(i));
+    if (!ls.length) continue;
+    ls.forEach(i => used.add(i));
+    const it = r.key && item.get(r.key) ? item.get(r.key) : null;
+    const vals = {};
+    if (it) {
+      for (const v of arr(r.vals)) {
+        const name = String(v.name || ""), val = String(v.value ?? "").trim().slice(0, 100);
+        if (val && it.opts.some(o => o[0] === name)) vals[name] = val;
+      }
+    }
+    const guess = it ? arr(r.guess).map(String).filter(k => it.opts.some(o => o[0] === k)) : [];
+    const q = r.qty == null || r.qty === "" ? null : Number(r.qty);
+    rows.push({
+      lines: ls.sort((a, b) => a - b), key: it ? r.key : null, vals, guess,
+      qty: Number.isFinite(q) && q > 0 && q < 100000 ? q : null, unit: r.unit ? String(r.unit).trim().slice(0, 10) : "",
+    });
+  }
+  const notes = arr(res && res.notes).map(Number).filter(i => allowed.has(i) && !used.has(i));
+  return { rows, notes: [...new Set(notes)] };
+}
+
+/** data.lines = [{i: 行の番号, text: LINE の行}] → { rows, notes } */
+async function matchItems(client, data) {
+  const list = arr(data.lines).slice(0, MATCH_MAX_LINES)
+    .map(x => ({ i: Number(x.i), text: String(x.text ?? "").replace(/\s+/g, " ").trim().slice(0, 300) }))
+    .filter(x => Number.isInteger(x.i) && x.i >= 0 && x.text);
+  if (!list.length) throw new HttpsError("invalid-argument", "当てる品名がありません");
+  const item = await catalogItems();
+  if (!item.size) throw new HttpsError("failed-precondition", "品物一覧が、まだ入っていません");
+  let res;
+  try {
+    res = await client.beta.messages.create({
+      model: MODEL,
+      max_tokens: 16000,
+      output_config: { effort: "medium", format: { type: "json_schema", schema: MATCH_SCHEMA } },
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default",
+      messages: [{ role: "user", content: matchPrompt(item, list) }],
+    });
+  } catch (err) {
+    throw aiError(err);
+  }
+  await addTokens(res.usage);
+  if (res.stop_reason === "refusal") throw new HttpsError("failed-precondition", "AI に断られました。品名は文のまま入れてください");
+  if (res.stop_reason === "max_tokens") throw new HttpsError("resource-exhausted", "品名が多すぎて、AI が答えきれませんでした。何回かに分けてください");
+  const text = res.content.filter(b => b.type === "text").map(b => b.text).join("");
+  let json;
+  try { json = JSON.parse(text); } catch (err) { throw new HttpsError("internal", "AI の答えを読めませんでした。もう一度ためしてください"); }
+  return cleanMatch(json, item, new Set(list.map(x => x.i)));
+}
+
+/** data = { task: "ping" | "usage" | "match", lines? } */
 export const zairyoAi = onCall({
   region: "asia-southeast1", invoker: "public", secrets: [ANTHROPIC_API_KEY],
   timeoutSeconds: 120, memory: "512MiB", maxInstances: 3,
@@ -76,11 +188,12 @@ export const zairyoAi = onCall({
   await requireOffice(request);
   const task = String((request.data || {}).task || "");
   if (task === "usage") return usageNow();
-  if (task !== "ping") throw new HttpsError("invalid-argument", "AI にたのむことが、わかりません");
+  if (task !== "ping" && task !== "match") throw new HttpsError("invalid-argument", "AI にたのむことが、わかりません");
 
   await countUp();
   // まえうしろの空白・改行はとる（クリップボードからわたすと、最後に改行がつくことがある）
-  const client = new Anthropic({ apiKey: String(ANTHROPIC_API_KEY.value() || "").trim(), maxRetries: 1, timeout: 60 * 1000 });
+  const client = new Anthropic({ apiKey: String(ANTHROPIC_API_KEY.value() || "").trim(), maxRetries: 1, timeout: 100 * 1000 });
+  if (task === "match") return { ...(await matchItems(client, request.data || {})), ...(await usageNow()) };
   const t0 = Date.now();
   let res;
   try {

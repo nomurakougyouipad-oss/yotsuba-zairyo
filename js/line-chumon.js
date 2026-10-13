@@ -6,7 +6,7 @@
 // - 7-2：LINE の書き込みをはりつけると、欄に入る（js/line-parse.js）。注文先の名前は登録の名前にそろえる。
 //   知らない名前は勝手に足さない（「○○ にする」＝その材料屋の読みかえに足して次から自動でそろう／「新しい材料屋として足す」）。
 //   はりつけた元の文は、電話番号を消してから注文の src にのこす（注文の中身の「LINE の元の文」）
-// - 品名を品物一覧に当てる（AI）のは 7-4
+// - 7-4：品名を品物一覧に当てる（AI・覚えた当て方）は js/line-match.js。はりつけたら自動で当てる。当てた行で入れて、当て方を覚える
 import { ref, get, push, set, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, auth } from "./firebase.js";
 import { esc, zenkana, toast, openSheet, closeSheet } from "./common.js";
@@ -16,6 +16,7 @@ import { watchJobs, CHUBAN_RE } from "./nippo.js";
 import { photoPicker, deletePhoto } from "./shashin.js";
 import { errorText } from "./touroku.js";
 import { parseLineText, parseKibou, findPlace, matchSupplier, aliasToLearn, maskTel } from "./line-parse.js";
+import { createMatcher } from "./line-match.js";
 
 const SRC_MAX = 5000;   // はりつけた元の文は、ここまでのこす
 
@@ -36,8 +37,8 @@ export function splitLine(raw) {
 const itemLines = text => String(text || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean).map(splitLine);
 
 /** LINE・電話の注文を入れる画面を開く
- *  opts = { sups: 材料屋 {id: {...}}, places: 届け先 {id: {...}}, me: {name}, onPlaced(注文の番号) } */
-export function openLineOrder({ sups, places, me, onPlaced }) {
+ *  opts = { sups: 材料屋 {id: {...}}, places: 届け先 {id: {...}}, catalog: 品物一覧（normCatalog）, me: {name}, onPlaced(注文の番号) } */
+export function openLineOrder({ sups, places, catalog, me, onPlaced }) {
   // この画面で足した材料屋・読みかえも入れるので、写しを持つ
   const supMap = Object.fromEntries(Object.entries(sups || {}).map(([id, s]) => [id, { ...s }]));
   const supList = Object.entries(supMap).filter(([, s]) => !s.hidden).sort(byOrder);
@@ -72,7 +73,11 @@ export function openLineOrder({ sups, places, me, onPlaced }) {
         </div>
         <div class="field"><label for="fItems">品名・数量<span class="req">必ず</span></label>
           <textarea id="fItems" class="inp ta" rows="5" placeholder="1行に1つ。行のおわりに数を書きます&#10;例　SUS304 六角ボルト M12×40　20本&#10;例　シールテープ　2箱"></textarea>
-          <ul class="li-prev" id="iPrev" hidden></ul><p class="err" id="eItems"></p></div>
+          <ul class="li-prev" id="iPrev" hidden></ul>
+          <div class="mt-go" id="mtGoRow" hidden><button type="button" class="btn" id="mtGo">品物一覧に当てる（AI）</button>
+            <span class="hint">AI が品名を読んで、品物一覧の書き方にそろえます。前にえらんだ書き方は、AI なしで当てます。</span></div>
+          <div class="mt" id="mtBox" hidden></div>
+          <p class="err" id="eItems"></p></div>
         <div class="field"><span class="lab">写真・スクショ（LINE で送られてきた写真など）</span><div class="photos" id="fPhotos"></div>
           <span class="hint">パソコンなら、写真をここにドラッグしてもつけられます。</span></div>
         <div class="field"><span class="lab">納入希望日</span>
@@ -132,15 +137,21 @@ export function openLineOrder({ sups, places, me, onPlaced }) {
       g("#staffList").innerHTML = staff.map(n => `<option value="${esc(n)}"></option>`).join("");
     }, () => { });
 
-    /* 品名・数量：こう入る、を下に出す。数が読めない行はオレンジ */
+    /* 品名・数量：こう入る、を下に出す。数が読めない行はオレンジ。
+       品物一覧に当てているとき・当てたあとは、当てた行（#mtBox）を出すので、こちらはかくす */
     const preview = () => {
-      const ls = itemLines(g("#fItems").value), ul = g("#iPrev");
-      ul.hidden = !ls.length;
-      ul.innerHTML = ls.length ? `<li class="lab">こう入ります</li>` + ls.map(l => l.qty
+      const text = g("#fItems").value, ls = itemLines(text), ul = g("#iPrev");
+      const mst = matcher ? matcher.state(text) : "none";
+      ul.hidden = !ls.length || mst === "busy" || mst === "done";
+      ul.innerHTML = ls.length ? `<li class="lab">こう入ります${matcher ? "（品物一覧に当てないとき）" : ""}</li>` + ls.map(l => l.qty
         ? `<li><span>${esc(l.spec)}</span><span class="num">×${esc(fmtQty(l.qty))}${esc(l.unit)}</span></li>`
         : `<li class="ask"><span>${esc(l.spec)}</span><span>数が書いてありません。行のおわりに「20本」のように書いてください（品物でない行は、メモへ）</span></li>`).join("") : "";
-      if (!ls.some(l => !l.qty)) g("#eItems").textContent = "";
+      g("#mtGoRow").hidden = !matcher || !ls.length || mst !== "none";
+      if (!ls.some(l => !l.qty) || mst === "done") g("#eItems").textContent = "";
     };
+    // 品物一覧に当てる（7-4）。品物一覧がまだ読めていないときは出さない
+    const matcher = catalog && catalog.item && catalog.item.size
+      ? createMatcher({ box: g("#mtBox"), catalog, splitLine, onState: () => preview() }) : null;
 
     picker = photoPicker(g("#fPhotos"), photos);
 
@@ -222,7 +233,10 @@ export function openLineOrder({ sups, places, me, onPlaced }) {
       if (r.tantou) g("#fTan").value = r.tantou.slice(0, 20);
       if (r.chumonsha) g("#fChu").value = r.chumonsha.slice(0, 20);
       // 品名・数量
-      if (r.items) { g("#fItems").value = r.items; preview(); }
+      if (r.items) {
+        g("#fItems").value = r.items;
+        if (matcher) matcher.run(g("#fItems").value); else preview();   // はりつけたら、品物一覧に当てる（AI）
+      }
       // 納入希望日
       const k = parseKibou(r.kibou);
       if (k) setKibou(k);
@@ -260,7 +274,11 @@ export function openLineOrder({ sups, places, me, onPlaced }) {
     });
     g("#fChuban").addEventListener("change", checkChuban);
     g("#fChuban").addEventListener("input", () => { if (CHUBAN_RE.test(normalizeChuban(g("#fChuban").value))) checkChuban(); });
-    g("#fItems").addEventListener("input", preview);
+    g("#fItems").addEventListener("input", () => {
+      // 品名を書きかえたら、当てたものはすてる（もう一度「品物一覧に当てる」を押す）
+      if (matcher && matcher.active() && matcher.state(g("#fItems").value) === "none") matcher.clear(); else preview();
+    });
+    g("#mtGo").addEventListener("click", () => { if (matcher) matcher.run(g("#fItems").value); });
     g("#fSup").addEventListener("change", () => {
       g("#eSup").textContent = "";
       // LINE の知らない名前のあとで、一覧からえらんだときも、その材料屋の読みかえに足す
@@ -277,11 +295,15 @@ export function openLineOrder({ sups, places, me, onPlaced }) {
       const bad = (sel, msg, focus) => { if (sel) g(sel).textContent = msg; errs.push(focus); };
       const supId = g("#fSup").value, sup = supMap[supId];
       const chuban = normalizeChuban(g("#fChuban").value), kenmei = g("#fKenmei").value.trim();
-      const ls = itemLines(g("#fItems").value);
+      const itemsText = g("#fItems").value, ls = itemLines(itemsText);
+      const mst = matcher ? matcher.state(itemsText) : "none";
+      const useRows = mst === "done";   // 品物一覧に当てた行で入れる（当てていない・当てられなかったときは、文の行のまま）
       if (!sup) bad("#eSup", "注文先をえらんでください", "#fSup");
       if (!CHUBAN_RE.test(chuban)) { const h = g("#hChuban"); h.textContent = chuban ? "形がちがいます（例 AB26123）" : "注番を入れてください"; h.className = "hint bad"; errs.push("#fChuban"); }
       if (!kenmei) bad("#eKenmei", "工事件名を入れてください", "#fKenmei");
       if (!ls.length) bad("#eItems", "品名・数量を入れてください", "#fItems");
+      else if (mst === "busy") bad("#eItems", "AI が品物一覧に当てているところです。少し待ってください", "#mtBox");
+      else if (useRows) { const pr = matcher.problem(); if (pr) bad("#eItems", pr, "#mtBox"); }
       else if (ls.some(l => !l.qty)) bad("#eItems", `数が書いてない行が ${ls.filter(l => !l.qty).length}行 あります（オレンジの行）`, "#fItems");
       else if (ls.some(l => !l.spec)) bad("#eItems", "品名のない行があります", "#fItems");
       if (!f.kibou) errs.push("#fDate");
@@ -296,15 +318,21 @@ export function openLineOrder({ sups, places, me, onPlaced }) {
 
       const place = (places || {})[f.basho] || {};
       const lines = {};
-      ls.forEach((l, i) => {
-        lines["l" + String(i + 1).padStart(2, "0")] = { spec: l.spec.slice(0, 300), qty: l.qty, unit: l.unit };
+      (useRows ? matcher.lines() : ls.map(l => ({ spec: l.spec.slice(0, 300), qty: l.qty, unit: l.unit }))).forEach((l, i) => {
+        lines["l" + String(i + 1).padStart(2, "0")] = l;
       });
       if (photos.length) lines.l01.photos = [...photos];
+      // 品物ではない行（当てたときにメモに分けた行）は、メモに足す
+      let memo = g("#fMemo").value.trim();
+      if (useRows) {
+        const add = matcher.noteTexts().filter(t => !memo.includes(t));
+        if (add.length) memo = [memo, ...add].filter(Boolean).join("\n");
+      }
       const order = {
         supplier: supId, supplierName: sup.name, to: sup.to || "御中",
         chuban, kenmei, tantou: g("#fTan").value.trim(), chumonsha: g("#fChu").value.trim(),
         kibou: f.kibou, basho: place.name || "", bashoText: place.text || "",
-        contacted: false, memo: g("#fMemo").value.trim(),
+        contacted: false, memo: memo.slice(0, 500),
         status: "wait", lines,
         orderedAt: serverTimestamp(), orderedBy: me.name, orderedByUid: auth.currentUser.uid,
       };
@@ -315,6 +343,8 @@ export function openLineOrder({ sups, places, me, onPlaced }) {
         const r = push(ref(db, "zairyo/orders"));
         await set(r, order);
         saved = true;
+        // たしかめて入れた当て方を覚える（次から同じ書き方は AI なしで当たる）。覚えられなくても注文は入っている
+        if (useRows) await matcher.remember().catch(() => { });
         closeSheet();
         toast(`${sup.name} への注文を入れました（「材料がまだ届いていない」に入ります）`);
         if (onPlaced) onPlaced(r.key);
