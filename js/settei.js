@@ -1,4 +1,4 @@
-// 事務所の「⚙ 設定」：材料屋／注番の会社／注文する人／届け先／品物一覧／登録した端末／バックアップ／AI
+// 事務所の「⚙ 設定」：材料屋／注番の会社／注文する人／届け先／品物一覧／登録した端末／覚えた当て方／バックアップ／AI
 // - 中身はぜんぶデータベース（/zairyo/master・/common）。ここで変えると、すぐにほかの端末にも出る
 // - 名前などの欄は、入れ終わったとき（ほかを押す・Enter）にしまう
 // - ほかの端末で変わったときは、入れている途中の欄をこわさないように、欄から出てから画面をかきなおす
@@ -8,8 +8,9 @@ import { $, esc, toast } from "./common.js";
 import { errorText } from "./touroku.js";
 import { watchJobs } from "./nippo.js";
 import { BACKUP_PATHS, countText, readAll, saveBackup, lastBackup } from "./backup.js";
+import { normCatalog, buildSpec } from "./tanomu.js";
 
-const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["backup", "バックアップ"], ["ai", "AI"]];
+const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["memo", "覚えた当て方"], ["backup", "バックアップ"], ["ai", "AI"]];
 const TAB_KEY = "yotsuba-zairyo-settab";
 const PATH = {
   sup: "zairyo/master/suppliers",
@@ -20,6 +21,7 @@ const PATH = {
   catalog: "zairyo/master/catalog",
   dev: "zairyo/devices",          // 登録した端末（事務所だけ読める。消す・合言葉を変えるのはサーバーのプログラム）
   blog: "zairyo/backupLog",       // 自動の保存の結果（サーバーのプログラム zairyoBackup が書く）
+  memo: "zairyo/master/itemMemo",  // LINE の品名の、覚えた当て方（7-4）
   year: "common/chubanYear",      // 注番の年（2けた）。12/20〜25 ごろに事務所が切りかえる（日付からは決めない）
 };
 const S = {};                 // データベースの中身（読みこむまでは undefined）
@@ -91,7 +93,7 @@ function draw(force = false) {
   if (focusId) { const f = document.getElementById(focusId); if (f) f.focus(); }
 }
 
-const VIEW = { sup: supHTML, kaisha: kaishaHTML, staff: staffHTML, place: placeHTML, catalog: catalogHTML, dev: devHTML, backup: backupHTML, ai: aiHTML };
+const VIEW = { sup: supHTML, kaisha: kaishaHTML, staff: staffHTML, place: placeHTML, catalog: catalogHTML, dev: devHTML, memo: memoHTML, backup: backupHTML, ai: aiHTML };
 
 /* ==================== 材料屋 ==================== */
 function supHTML() {
@@ -363,6 +365,46 @@ function codeHTML() {
     </div>`;
 }
 
+/* ==================== 覚えた当て方（11章 7-4） ==================== */
+// LINE・電話の注文で、品物一覧に当てて入れた品名の書き方。キーは書き方をそろえて URL の形にしたもの（line-parse.js の memoDbKey）
+let mQ = "";
+/** キー → 画面に出す書き方（そろえた形。大文字・空白なし・「×」は x） */
+function memoText(k) {
+  try { return decodeURIComponent(String(k).replace(/%2E/g, ".")); } catch (err) { return String(k); }
+}
+/** 覚えた答え → 画面に出す言葉 */
+function memoAnswer(m, cat) {
+  if (m.note) return "品物ではない行（メモに入れる）";
+  if (m.free) return "一覧にない品物（文のまま）";
+  const it = cat && cat.item.get(m.key);
+  return it ? buildSpec(it, m.vals || {}) || it.name : `品物一覧にない品物（${m.key}）`;
+}
+
+function memoHTML() {
+  return `
+    <p class="hint">LINE・電話の注文で、品物一覧に当てて入れた品名の書き方を覚えています。次から同じ書き方は、AI を使わずにこの品物に当てます。まちがって覚えたものは、ここで消してください（消すと、次は AI でもう一度当てます）。</p>
+    <input id="mQ" class="inp search" type="search" placeholder="書き方・品物でさがす" aria-label="書き方・品物でさがす" value="${esc(mQ)}">
+    <div id="mList" class="set-body">${memoListHTML()}</div>`;
+}
+
+function memoListHTML() {
+  if (!S.memo || !S.catalog) return LOADING;
+  const cat = S.catalog.cats ? normCatalog(S.catalog) : null;
+  const q = z2h(mQ).trim().toLowerCase();
+  const all = Object.entries(S.memo).map(([k, m]) => ({ k, m, text: memoText(k), ans: memoAnswer(m, cat) }))
+    .sort((a, b) => (b.m.at || 0) - (a.m.at || 0));
+  const list = all.filter(x => !q || [x.text, x.ans].some(v => z2h(v).toLowerCase().includes(q)));
+  if (!all.length) return '<p class="muted">まだ覚えていません。LINE・電話の注文で品物一覧に当てて入れると、ここにたまります。</p>';
+  return `
+    <p class="muted">${all.length}件${q ? `（「${esc(mQ)}」にあてはまるもの ${list.length}件）` : ""}</p>
+    <ul class="staff memos">${list.map(({ k, m, text, ans }) => `
+      <li><span class="memo-txt"><b>${esc(text)}</b><span class="muted">→ ${esc(ans)}${m.at ? `・${when(m.at)}` : ""}</span></span>
+        ${ask === "memo:" + k
+          ? `<span class="row"><button type="button" class="btn danger" data-memodelyes="${esc(k)}">消す</button><button type="button" class="btn" data-askno>やめる</button></span>`
+          : `<button type="button" class="btn danger" data-memodel="${esc(k)}">消す</button>`}
+      </li>`).join("")}</ul>`;
+}
+
 /* ==================== バックアップ（11章 8-2） ==================== */
 let bk = null, bkBusy = false;   // いまのデータ（中身の数を出すため）／保存しているところ
 
@@ -492,9 +534,14 @@ async function onClick(e) {
     const k = kPath(d.khide);
     await update(ref(db, k.path), { hidden: !k.x.hidden });
     toast(`${k.key}（${k.x.name}）を${k.x.hidden ? "出しました" : "かくしました"}`);
-  } else if (d.kdel || d.staffdel || d.devdel) {
-    ask = d.kdel || (d.staffdel ? "staff:" + d.staffdel : "dev:" + d.devdel);
+  } else if (d.kdel || d.staffdel || d.devdel || d.memodel) {
+    ask = d.kdel || (d.staffdel ? "staff:" + d.staffdel : d.devdel ? "dev:" + d.devdel : "memo:" + d.memodel);
     draw(true);
+  } else if (d.memodelyes) {
+    const k = d.memodelyes;
+    ask = "";
+    await remove(ref(db, `${PATH.memo}/${k}`));
+    toast(`「${memoText(k)}」の覚えた当て方を消しました。次は AI でもう一度当てます`);
   } else if (d.devdelyes) {
     const x = S.dev[d.devdelyes] || {};
     t.disabled = true;
@@ -663,6 +710,13 @@ async function onSubmit(form) {
 
 /* さがす欄は、打つたびに一覧だけかきなおす（欄から出ないように） */
 function onInput(e) {
+  if (e.target.id === "mQ") {
+    mQ = e.target.value;
+    ask = "";
+    const ml = $("#mList", body);
+    if (ml) ml.innerHTML = memoListHTML();
+    return;
+  }
   if (e.target.id !== "kQ") return;
   kQ = e.target.value;
   ask = "";

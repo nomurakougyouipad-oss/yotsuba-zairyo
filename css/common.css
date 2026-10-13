@@ -534,3 +534,5 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .mte-f .inp{font-size:16px;padding:7px 9px;color:var(--fg);font-weight:500}
 .mte-f.wide{grid-column:1 / -1}
 .mt-go{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.memo-txt{display:flex;flex-direction:column;gap:2px;min-width:0;overflow-wrap:anywhere}
+.memo-txt .muted{font-size:13px}
