@@ -6,7 +6,8 @@
 // - たしかめてほしい所：AI が読みにくかった所・明細の合計と納品書の合計のちがい・金額が読めない行・知らない頭文字
 // - 入れると、注文の「納品書の金額」に入る（5-4 の addSlip と同じ）。まだ届いていない注文は「届いた」になる。
 //   金額のない納品書は「届いた」にするだけ
-// - 同じ納品書を止める・取りこみの記録・まとめて取り消す・元のスキャンの保存は 7-5c、材料集計表（Excel・CSV）は 7-5b
+// - 7-5b：材料集計表（Excel・CSV・はりつけた表）も同じ画面で読む（js/hyou.js。AI は使わない）。注番＋材料屋＋納品書番号（なければ日付）ごとにまとめる
+// - 同じ納品書を止める・取りこみの記録・まとめて取り消す・元のスキャンの保存は 7-5c
 import { ref, get, push, set, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, auth, call } from "./firebase.js";
 import { esc, zenkana, toast, openSheet } from "./common.js";
@@ -15,6 +16,7 @@ import { addSlip, markArrived, yen, toPrice, ST } from "./chumon.js";
 import { watchJobs, CHUBAN_RE } from "./nippo.js";
 import { matchSupplier } from "./line-parse.js";
 import { errorText } from "./touroku.js";
+import { TABLE_OK, readTableFile, textToTable, tableToRows } from "./hyou.js";
 
 const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/";
 const FIRST_PAGES = 5;        // これより多いページは「読む」を押してから（お金がかかるので）
@@ -148,8 +150,11 @@ export function openImport({ sups, getOrders, me }) {
       <div class="panel-head"><div><span class="eyebrow">スキャンした納品書（PDF・写真）</span><h2 id="panelTitle">納品書の取りこみ</h2></div>
         <button type="button" class="x" data-close aria-label="閉じる">×</button></div>
       <p class="hint">納品書のスキャンをえらぶか、ここにドラッグしてください。AI が読んで表にします（1枚 10〜20秒）。読んだものとスキャンを見くらべて、注文に入れます。</p>
-      <label class="imp-drop" id="impDrop"><input type="file" id="impFile" accept=".pdf,image/*" multiple hidden>
-        <span class="btn">ファイルをえらぶ</span><span class="hint">PDF・写真（JPEG・PNG）。何枚でもいっしょに入れられます</span></label>
+      <label class="imp-drop" id="impDrop"><input type="file" id="impFile" accept=".pdf,image/*,.xlsx,.xls,.csv,.tsv,.txt" multiple hidden>
+        <span class="btn">ファイルをえらぶ</span><span class="hint">スキャンした PDF・写真（JPEG・PNG）／材料集計表の Excel・CSV。何枚でもいっしょに入れられます</span></label>
+      <details class="block hidbox" id="impPasteBox"><summary>表をはりつける（Excel からコピーした表）</summary>
+        <textarea id="impPaste" class="inp ta" rows="5" placeholder="見出しの行（注番・品名・金額 など）もいっしょにコピーして、ここにはりつけてください"></textarea>
+        <div class="row"><button type="button" class="btn" id="impPasteGo">読み取る</button></div></details>
       <div id="impList" class="stack"></div>
       <div class="sheet-foot" id="impFoot" hidden><p class="err" id="impErr"></p>
         <button type="button" class="btn primary big full" id="impGo"></button></div>
@@ -165,7 +170,15 @@ export function openImport({ sups, getOrders, me }) {
     /* ---------- 読む ---------- */
     async function addFiles(files) {
       for (const file of [...files]) {
-        if (!SCAN_OK.test(file.name)) { toast(`${file.name} は読めません（PDF・写真だけ）`); continue; }
+        if (TABLE_OK.test(file.name)) {
+          try {
+            const sheets = await readTableFile(file);
+            if (!sheets.length) toast(`${file.name} に、見出しの行（金額と、注番か品名）が見つかりませんでした`);
+            sheets.forEach(sh => addTable(`${file.name}${sh.sheet ? `（${sh.sheet}）` : ""}`, sh.rows));
+          } catch (ex) { toast(`${file.name} を読めませんでした`); }
+          continue;
+        }
+        if (!SCAN_OK.test(file.name)) { toast(`${file.name} は読めません（PDF・写真・Excel・CSV だけ）`); continue; }
         let scan;
         try { scan = await openScan(file); } catch (ex) { toast(`${file.name} を開けませんでした`); continue; }
         for (let k = 0; k < scan.count; k++) {
@@ -176,6 +189,33 @@ export function openImport({ sups, getOrders, me }) {
       render();
       for (const c of cards.filter(x => x.status === "reading" && !x.started)) await readCard(c);
     }
+    /** 材料集計表の行 → 注番＋材料屋＋納品書番号（なければ日付）ごとのまとまり */
+    function addTable(name, rows) {
+      const by = new Map();
+      rows.forEach(r => {
+        const k = [fixChuban(r.chuban), r.supRaw, r.no || r.date].join("|");
+        if (!by.has(k)) by.set(k, []);
+        by.get(k).push(r);
+      });
+      const groups = [...by.values()].map(rs => {
+        const r0 = rs[0], m = matchSupplier(r0.supRaw || "", supList), chuban = fixChuban(r0.chuban);
+        const gr = {
+          chuban, supId: m.id || "", supRaw: r0.supRaw, no: r0.no.slice(0, 40), date: rs.map(r => r.date).find(Boolean) || "",
+          rows: rs.map(r => ({ spec: r.spec.slice(0, 300), qty: r.qty, unit: r.unit.slice(0, 10), price: r.price, amount: r.amount })),
+          dest: "", saved: false, err: "", noPrice: false,
+          doubt: [`表の ${rs.map(r => r.at).join("・")} 行目`],
+        };
+        if (!m.id) gr.doubt.push(r0.supRaw ? `材料屋「${r0.supRaw}」が分かりません。えらんでください` : "材料屋の列がありません。えらんでください");
+        if (rs.some(r => REPAIR.test(r.spec))) gr.doubt.push("修理・工賃の行があります。材料費に入れないなら、その行を消してください（×）");
+        if (!CHUBAN_RE.test(chuban)) gr.doubt.push("注番が読めませんでした。入れてください");
+        else if (!prefixOk(chuban)) gr.doubt.push(`注番の頭文字「${chuban.slice(0, 2)}」が、注番の会社の表にありません`);
+        gr.dest = defaultDest(gr);
+        return gr;
+      });
+      cards.push({ name, table: true, status: "done", groups });
+      render();
+    }
+
     async function readCard(c, force = false) {
       c.started = true;
       c.status = "reading";
@@ -246,6 +286,12 @@ export function openImport({ sups, getOrders, me }) {
     }
     function cardHTML(c, ci) {
       const title = `${esc(c.name)}${c.page ? `（${c.page}ページ）` : ""}`;
+      if (c.table) {
+        return `
+        <section class="imp-card table">
+          <div class="imp-body"><span class="muted">材料集計表：${title}（${c.groups.length}件）</span>${c.groups.map((gr, gi) => groupHTML(gr, ci, gi)).join("")}</div>
+        </section>`;
+      }
       let body;
       if (c.status === "wait") body = `<p class="muted">まだ読んでいません。</p><button type="button" class="btn" data-read="${ci}">このページを読む</button>`;
       else if (c.status === "reading") body = '<p class="muted">AI が読んでいます…</p>';
@@ -282,6 +328,13 @@ export function openImport({ sups, getOrders, me }) {
         gr.rows.splice(Number(t.dataset.rdel), 1);
         if (!gr.rows.length) gr.dest = "skip";
         render();
+      }
+      else if (t.id === "impPasteGo") {
+        const rows = tableToRows(textToTable(g("#impPaste").value));
+        if (!rows || !rows.length) { toast("見出しの行（金額と、注番か品名）が見つかりませんでした"); return; }
+        addTable("はりつけた表", rows);
+        g("#impPaste").value = "";
+        g("#impPasteBox").open = false;
       }
       else if (t.id === "impGo") saveAll().catch(ex => { g("#impErr").textContent = errorText(ex); render(); });
     });
