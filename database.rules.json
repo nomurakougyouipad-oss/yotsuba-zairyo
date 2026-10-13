@@ -40,6 +40,9 @@
           }
         }
       },
+      "backupLog": {
+        ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'"
+      },
       "master": {
         ".read": "auth != null && (auth.token.zr_role == 'genba' || auth.token.zr_role == 'office') && root.child('zairyo/devices/' + auth.uid + '/role').val() == auth.token.zr_role",
         ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",

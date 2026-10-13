@@ -8,6 +8,8 @@ import { initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getDatabase, ServerValue } from "firebase-admin/database";
 import { verifyCode, hashCode, normalizeCode, MIN_LEN } from "./code.js";
+// 自動の保存（毎日の夜中3時・データは毎日・写真は週1回）は backup.js
+export { zairyoBackup } from "./backup.js";
 
 setGlobalOptions({ region: "asia-southeast1", maxInstances: 3, memory: "256MiB", timeoutSeconds: 30 });
 initializeApp();

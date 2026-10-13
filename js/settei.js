@@ -19,6 +19,7 @@ const PATH = {
   place: "zairyo/master/places",
   catalog: "zairyo/master/catalog",
   dev: "zairyo/devices",          // 登録した端末（事務所だけ読める。消す・合言葉を変えるのはサーバーのプログラム）
+  blog: "zairyo/backupLog",       // 自動の保存の結果（サーバーのプログラム zairyoBackup が書く）
   year: "common/chubanYear",      // 注番の年（2けた）。12/20〜25 ごろに事務所が切りかえる（日付からは決めない）
 };
 const S = {};                 // データベースの中身（読みこむまでは undefined）
@@ -376,15 +377,37 @@ function backupHTML() {
       <ul class="bk-list">${BACKUP_PATHS.map(([p, label]) => `
         <li><span>${esc(label)}</span><span class="muted">${bk ? esc(countText(p, bk[p])) : "読んでいます…"}</span></li>`).join("")}
       </ul>
-      <p class="hint">写真と合言葉は入りません。写真は、あとで作る「週に1回のまるごと保存」で守ります。</p>
+      <p class="hint">写真と合言葉は入りません。写真は、下の「自動の保存」で週に1回、別の置き場に保存しています。</p>
     </div>
     <div class="block"><h3>今すぐ保存</h3>
       <button type="button" class="btn primary big" data-backup${bkBusy ? " disabled" : ""}>${bkBusy ? "保存しています…" : "今すぐバックアップを保存"}</button>
       <p class="muted">${last ? `このパソコンで前に保存したのは ${when(last.at)}（${esc(last.name)}）` : "このパソコンでは、まだ保存していません"}</p>
       <p class="hint">ファイルは、パソコンの「ダウンロード」に入ります。人の名前や金額が入っているので、LINE やメールで外に送らないでください。</p>
     </div>
+    ${autoHTML()}
     <div class="block"><h3>元にもどすとき</h3>
       <p class="hint">もどすのは、持ち主のパソコンで行います（まちがえて今のデータを上書きしないように、この画面からはもどせません）。こまったときは、保存したファイルを持って持ち主に知らせてください。</p>
+    </div>`;
+}
+
+/** 自動の保存（夜中3時。データは毎日・写真は週1回）の、前の結果 */
+const kb = b => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(b / 1024))}KB`);
+function autoHTML() {
+  if (!S.blog) return "";
+  const { data: d, photos: p } = S.blog;
+  const late = !d || !d.ok || Date.now() - d.at > 2 * 86400000;   // 2日より前のまま
+  const row = (label, x, ok) => `
+    <li><span>${label}</span><span class="${!x ? "muted" : x.ok ? "muted" : "hint warn"}">${!x ? "まだ動いていません"
+      : x.ok ? `○ ${when(x.at)}　${ok(x)}` : `× ${when(x.at)}　うまくいきませんでした`}</span></li>`;
+  return `
+    <div class="block"><h3>自動の保存（毎日 夜中3時）</h3>
+      <ul class="bk-list">
+        ${row("データ（毎日）", d, x => `依頼 ${x.requests}件・注文 ${x.orders}件（${kb(x.bytes)}）`)}
+        ${row("写真（週1回・日曜）", p, x => (x.count ? `写真 ${x.count}枚（${kb(x.bytes)}）` : "写真 0枚（写真がまだありません）"))}
+      </ul>
+      ${d && late ? '<p class="hint warn">自動の保存が、2日以上うまくいっていません。持ち主に知らせてください。</p>' : ""}
+      ${p && !p.ok ? '<p class="hint warn">写真の保存がうまくいきませんでした。次の日の夜中に、もう一度ためします。</p>' : ""}
+      <p class="hint">保存先は、東京にある別の置き場です。12週（約3か月）たったものは、自動で消えます。</p>
     </div>`;
 }
 
