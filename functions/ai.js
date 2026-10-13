@@ -150,7 +150,14 @@ function cleanMatch(res, item, allowed) {
   return { rows, notes: [...new Set(notes)] };
 }
 
-/** data.lines = [{i: 行の番号, text: LINE の行}] → { rows, notes } */
+// モデルをくらべるページ（ai-kurabe.html）だけが、えらべるモデル。fallbacks（断られたときのやりなおし）は Haiku にはない
+const COMPARE_MODELS = {
+  "claude-haiku-5-5": { fallback: false },
+  "claude-sonnet-5-5": { fallback: true },
+  "claude-opus-5-5": { fallback: true },
+};
+
+/** data.lines = [{i: 行の番号, text: LINE の行}]、data.model（くらべるときだけ）→ { rows, notes, run: {model, ms, in, out} } */
 async function matchItems(client, data) {
   const list = arr(data.lines).slice(0, MATCH_MAX_LINES)
     .map(x => ({ i: Number(x.i), text: String(x.text ?? "").replace(/\s+/g, " ").trim().slice(0, 300) }))
@@ -158,32 +165,34 @@ async function matchItems(client, data) {
   if (!list.length) throw new HttpsError("invalid-argument", "当てる品名がありません");
   const item = await catalogItems();
   if (!item.size) throw new HttpsError("failed-precondition", "品物一覧が、まだ入っていません");
+  const model = COMPARE_MODELS[data.model] ? data.model : MODEL;
+  const t0 = Date.now();
   let res;
   try {
     res = await client.beta.messages.create({
-      model: MODEL,
+      model,
       max_tokens: 16000,
       output_config: { effort: "medium", format: { type: "json_schema", schema: MATCH_SCHEMA } },
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
+      ...(COMPARE_MODELS[model] && !COMPARE_MODELS[model].fallback ? {} : { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" }),
       messages: [{ role: "user", content: matchPrompt(item, list) }],
     });
   } catch (err) {
     throw aiError(err);
   }
   await addTokens(res.usage);
+  const run = { model: res.model, ms: Date.now() - t0, in: (res.usage && res.usage.input_tokens) || 0, out: (res.usage && res.usage.output_tokens) || 0 };
   if (res.stop_reason === "refusal") throw new HttpsError("failed-precondition", "AI に断られました。品名は文のまま入れてください");
   if (res.stop_reason === "max_tokens") throw new HttpsError("resource-exhausted", "品名が多すぎて、AI が答えきれませんでした。何回かに分けてください");
   const text = res.content.filter(b => b.type === "text").map(b => b.text).join("");
   let json;
   try { json = JSON.parse(text); } catch (err) { throw new HttpsError("internal", "AI の答えを読めませんでした。もう一度ためしてください"); }
-  return cleanMatch(json, item, new Set(list.map(x => x.i)));
+  return { ...cleanMatch(json, item, new Set(list.map(x => x.i))), run };
 }
 
-/** data = { task: "ping" | "usage" | "match", lines? } */
+/** data = { task: "ping" | "usage" | "match", lines?, model?（くらべるページだけ） } */
 export const zairyoAi = onCall({
   region: "asia-southeast1", invoker: "public", secrets: [ANTHROPIC_API_KEY],
-  timeoutSeconds: 120, memory: "512MiB", maxInstances: 3,
+  timeoutSeconds: 300, memory: "512MiB", maxInstances: 3,   // AI は60行で1分ほどかかることがある
 }, async request => {
   await requireOffice(request);
   const task = String((request.data || {}).task || "");
@@ -192,7 +201,7 @@ export const zairyoAi = onCall({
 
   await countUp();
   // まえうしろの空白・改行はとる（クリップボードからわたすと、最後に改行がつくことがある）
-  const client = new Anthropic({ apiKey: String(ANTHROPIC_API_KEY.value() || "").trim(), maxRetries: 1, timeout: 100 * 1000 });
+  const client = new Anthropic({ apiKey: String(ANTHROPIC_API_KEY.value() || "").trim(), maxRetries: 1, timeout: 280 * 1000 });
   if (task === "match") return { ...(await matchItems(client, request.data || {})), ...(await usageNow()) };
   const t0 = Date.now();
   let res;

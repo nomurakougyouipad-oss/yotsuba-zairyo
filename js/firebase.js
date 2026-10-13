@@ -28,7 +28,7 @@ const functions = getFunctions(app, "asia-southeast1");   // サーバーのプ�
 export const storage = getStorage(app);                   // 写真の置き場（東京 asia-northeast1。10/12 持ち主）
 
 /** サーバーのプログラムを呼ぶ。call("zairyoRegisterDevice")({ … }) */
-export const call = name => httpsCallable(functions, name);
+export const call = (name, opts) => httpsCallable(functions, name, opts);   // opts 例 { timeout: 180000 }（AI は時間がかかる）
 
 /** データベースにつながっているかを見張ります。cb(true / false) */
 export function watchConnected(cb) {

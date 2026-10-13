@@ -53,7 +53,7 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
     render();
     if (!todo.length) return;
     try {
-      const r = (await call("zairyoAi")({ task: "match", lines: todo.map(i => ({ i, text: raws[i] })) })).data;
+      const r = (await call("zairyoAi", { timeout: 180000 })({ task: "match", lines: todo.map(i => ({ i, text: raws[i] })) })).data;
       if (my !== seq) return;
       const covered = new Set(r.notes);
       r.notes.forEach(i => match.notes.push(i));
