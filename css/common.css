@@ -493,3 +493,9 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .bk-list li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 12px;padding:8px 0;border-bottom:1px solid var(--line)}
 .bk-list li:last-child{border-bottom:0}
 .bk-list .muted{font-size:13px}
+/* LINE・電話の注文：品名・数量の「こう入ります」 */
+.li-prev{list-style:none;margin:4px 0 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface2);display:flex;flex-direction:column;gap:4px;font-size:14px}
+.li-prev li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 12px}
+.li-prev li.lab{font-size:12px;font-weight:700;color:var(--muted)}
+.li-prev li.ask{color:var(--amber);font-weight:700}
+.li-prev li.ask span:last-child{font-size:12px}

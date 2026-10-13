@@ -4,6 +4,7 @@
 //   材料屋ごとに「注文の文をコピー」→「注文した」。注文を取り消して依頼にもどすこともできる（js/chumon.js）
 // - 11章 5-3：注文ごと（ようすでしぼる＝上の箱を押す）・工事（注番）ごと・注文の中身（届いた・もどす・コピー・取り消して依頼にもどす）
 // - 納品書の金額・請求は 5-4
+// - 11章 7-1：「＋ LINE・電話の注文を入れる」（js/line-chumon.js）。依頼なしの注文（reqId なし）
 import { ref, onValue } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet } from "./common.js";
@@ -12,6 +13,7 @@ import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
 import { orderText, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, markBilled, backToArrived, billMany } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel } from "./shashin.js";
+import { openLineOrder } from "./line-chumon.js";
 
 const pad = n => String(n).padStart(2, "0");
 const md = ts => { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()}`; };
@@ -41,6 +43,7 @@ export function startOfficeApp(main, me) {
           <button type="button" role="tab" data-view="kouji">工事（注番）<wbr>ごと</button>
         </div>
         <input id="q" class="inp search" type="search" placeholder="注番・件名・品名・人でさがす" aria-label="さがす" autocomplete="off">
+        <button type="button" class="btn" id="lineBtn">＋ LINE・電話の注文を入れる</button>
         <button type="button" class="btn" id="billBtn">まとめて請求</button>
         <button type="button" class="btn" id="setBtn">⚙ 設定</button>
       </div>
@@ -495,7 +498,7 @@ export function startOfficeApp(main, me) {
           <p>材料費 <span class="money">${yen(cost(o))}</span> 円 が、注番 ${esc(o.chuban)} の材料費に入ります。</p>
           <button type="button" class="linkbtn" data-unbill="${esc(o.id)}">「請求まだ」にもどす</button></div>`;
     } else if (cx) {
-      act = `<div class="block"><p class="warn">この注文は取り消しました${o.cancelledAt ? `（${md(o.cancelledAt)} ${hm(o.cancelledAt)}・${esc(o.cancelledBy || "")}）` : ""}。品物は依頼にもどしました。</p></div>`;
+      act = `<div class="block"><p class="warn">この注文は取り消しました${o.cancelledAt ? `（${md(o.cancelledAt)} ${hm(o.cancelledAt)}・${esc(o.cancelledBy || "")}）` : ""}。${o.reqId ? "品物は依頼にもどしました。" : ""}</p></div>`;
     }
     return `
       <div class="pw" id="orderWrap">
@@ -527,7 +530,7 @@ export function startOfficeApp(main, me) {
           <textarea class="inp ta copybox" rows="12" readonly></textarea></div>
         ${o.status === "wait" ? `
           <div class="cx-start" id="ocx-${esc(o.id)}">
-            <button type="button" class="btn danger" data-ocancel="${esc(o.id)}">注文を取り消して依頼にもどす</button>
+            <button type="button" class="btn danger" data-ocancel="${esc(o.id)}">${o.reqId ? "注文を取り消して依頼にもどす" : "注文を取り消す"}</button>
             <span class="hint">押しまちがえたときや、材料屋を変えたいときに。材料屋に連絡したあとなら、材料屋にも取り消しを伝えてください。</span>
           </div>` : ""}
       </div>`;
@@ -625,15 +628,15 @@ export function startOfficeApp(main, me) {
     } else if (d.ocancel) {
       const box = w.querySelector(`#ocx-${CSS.escape(d.ocancel)}`);
       box.className = "confirm";
-      box.innerHTML = `<p class="confirm-q">この注文を取り消して、品物を依頼にもどしますか？</p>
+      box.innerHTML = `<p class="confirm-q">${o.reqId ? "この注文を取り消して、品物を依頼にもどしますか？" : "この注文を取り消しますか？（消さずに「取り消した」の印で残します）"}</p>
         <div class="confirm-btns"><button type="button" class="btn danger" data-ocyes="${esc(d.ocancel)}">取り消す</button><button type="button" class="btn" data-ocno>やめる</button></div>`;
       box.scrollIntoView({ block: "nearest" });
     } else if ("ocno" in d) {
       openOrder(o.id, true);
     } else if (d.ocyes) {
-      const r = (st.reqs || []).find(x => x.id === o.reqId);
+      const r = o.reqId ? (st.reqs || []).find(x => x.id === o.reqId) : null;
       await busy("取り消しています…", () => cancelOrder(o, r, me));
-      toast(`${o.supplierName} への注文を取り消しました。品物は依頼にもどりました`);
+      toast(`${o.supplierName} への注文を取り消しました${o.reqId ? "。品物は依頼にもどりました" : ""}`);
       afterSave(w);
     }
   }
@@ -796,7 +799,7 @@ export function startOfficeApp(main, me) {
 
   /* ---------- 押したとき（一覧） ---------- */
   main.addEventListener("click", e => {
-    const t = e.target.closest("[data-newbox],[data-filter],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],#billBtn,#setBtn,#setBack,#clearQ");
+    const t = e.target.closest("[data-newbox],[data-filter],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],#billBtn,#lineBtn,#setBtn,#setBack,#clearQ");
     if (!t || t.disabled) return;
     const d = t.dataset;
     if ("newbox" in d) { st.view = "irai"; st.filter = "all"; draw(); }
@@ -819,6 +822,9 @@ export function startOfficeApp(main, me) {
     else if (d.req) openReq(d.req);
     else if (d.open) openOrder(d.open);
     else if (t.id === "billBtn") { bulk.done = ""; openBulk(); }
+    else if (t.id === "lineBtn") {
+      openLineOrder({ sups: st.sups, places: st.places, me, onPlaced: id => { st.view = "orders"; st.filter = "all"; draw(); openOrder(id); } });
+    }
     else if (t.id === "setBtn") showSettings(true);
     else if (t.id === "setBack") showSettings(false);
     else if (t.id === "clearQ") { st.q = ""; st.filter = "all"; $("#q", main).value = ""; draw(); }
