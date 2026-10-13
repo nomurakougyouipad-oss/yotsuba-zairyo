@@ -6,16 +6,16 @@ import { setGlobalOptions } from "firebase-functions/v2";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { getDatabase, ServerValue } from "firebase-admin/database";
+import { ServerValue } from "firebase-admin/database";
 import { verifyCode, hashCode, normalizeCode, MIN_LEN } from "./code.js";
+import { db, requireOffice } from "./lib.js";
 // 自動の保存（毎日の夜中3時・データは毎日・写真は週1回）は backup.js
 export { zairyoBackup } from "./backup.js";
+// AI（Claude）の入口は ai.js（11章 7-3）
+export { zairyoAi } from "./ai.js";
 
 setGlobalOptions({ region: "asia-southeast1", maxInstances: 3, memory: "256MiB", timeoutSeconds: 30 });
 initializeApp();
-// データベースは使うときにつなぐ（読みこみのときにつなぐと、Firebase に入れるときの下しらべで止まる）
-let database;
-const db = () => (database ||= getDatabase());
 
 const KINDS = { genba: "genba", office: "office" };
 const NAME_MAX = 20;
@@ -104,16 +104,7 @@ export const zairyoRegisterDevice = onCall({ invoker: "public" }, async request 
   return { role: kind, name };
 });
 
-/* ---------- 事務所だけ：登録した端末を消す・合言葉を変える（11章 8） ---------- */
-
-/** 呼んだのが事務所の端末で、登録が消されていないこと。{uid, name} を返す */
-async function requireOffice(request) {
-  const uid = request.auth && request.auth.uid;
-  if (!uid || request.auth.token.zr_role !== "office") throw new HttpsError("permission-denied", "事務所のパソコンだけができます");
-  const d = (await db().ref(`zairyo/devices/${uid}`).get()).val();
-  if (!d || d.role !== "office") throw new HttpsError("permission-denied", "このパソコンの登録が消されています");
-  return { uid, name: d.name || "" };
-}
+/* ---------- 事務所だけ：登録した端末を消す・合言葉を変える（11章 8。事務所かのたしかめは lib.js の requireOffice） ---------- */
 
 /** 登録した端末を消す。data = { uid }
  *  - データベースの登録（/zairyo/devices/{uid}）を消すので、ルールですぐ読めなくなる

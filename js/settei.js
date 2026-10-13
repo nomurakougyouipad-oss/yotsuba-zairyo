@@ -1,4 +1,4 @@
-// 事務所の「⚙ 設定」：材料屋／注番の会社／注文する人／届け先／品物一覧／登録した端末／バックアップ
+// 事務所の「⚙ 設定」：材料屋／注番の会社／注文する人／届け先／品物一覧／登録した端末／バックアップ／AI
 // - 中身はぜんぶデータベース（/zairyo/master・/common）。ここで変えると、すぐにほかの端末にも出る
 // - 名前などの欄は、入れ終わったとき（ほかを押す・Enter）にしまう
 // - ほかの端末で変わったときは、入れている途中の欄をこわさないように、欄から出てから画面をかきなおす
@@ -9,7 +9,7 @@ import { errorText } from "./touroku.js";
 import { watchJobs } from "./nippo.js";
 import { BACKUP_PATHS, countText, readAll, saveBackup, lastBackup } from "./backup.js";
 
-const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["backup", "バックアップ"]];
+const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["backup", "バックアップ"], ["ai", "AI"]];
 const TAB_KEY = "yotsuba-zairyo-settab";
 const PATH = {
   sup: "zairyo/master/suppliers",
@@ -57,6 +57,7 @@ export function renderSettings(el) {
     el.querySelectorAll("[data-tab]").forEach(x => x.setAttribute("aria-selected", x === b));
     draw(true);
     if (tab === "backup") readBk();
+    if (tab === "ai") readAi();
   });
   body.addEventListener("click", e => onClick(e).catch(showErr));
   body.addEventListener("change", e => onChange(e).catch(showErr));
@@ -71,6 +72,7 @@ export function renderSettings(el) {
   watchJobs(d => { S.nippo = d; draw(); }, showErr);
   draw(true);
   if (tab === "backup") readBk();
+  if (tab === "ai") readAi();
 }
 
 /** 画面をかきなおす。入れている途中の欄（data-edit）があるときは、欄から出るまで待つ */
@@ -89,7 +91,7 @@ function draw(force = false) {
   if (focusId) { const f = document.getElementById(focusId); if (f) f.focus(); }
 }
 
-const VIEW = { sup: supHTML, kaisha: kaishaHTML, staff: staffHTML, place: placeHTML, catalog: catalogHTML, dev: devHTML, backup: backupHTML };
+const VIEW = { sup: supHTML, kaisha: kaishaHTML, staff: staffHTML, place: placeHTML, catalog: catalogHTML, dev: devHTML, backup: backupHTML, ai: aiHTML };
 
 /* ==================== 材料屋 ==================== */
 function supHTML() {
@@ -426,6 +428,43 @@ async function doBackup() {
   }
 }
 
+/* ==================== AI（11章 7-3） ==================== */
+// AI はサーバーのプログラム zairyoAi を通して使う（APIキーはサーバーにだけある）
+const ai = { usage: null, err: "", test: null, busy: false };
+
+function readAi() {
+  call("zairyoAi")({ task: "usage" }).then(r => { ai.usage = r.data; ai.err = ""; draw(); }, ex => { ai.err = errorText(ex); draw(); });
+}
+
+function aiHTML() {
+  const u = ai.usage, t = ai.test;
+  return `
+    <p class="hint">AI（Claude）は、LINE の品名を品物一覧に当てるときと、納品書を読むときに使います（これから作ります）。使えるのは事務所の端末だけです。</p>
+    <div class="block"><h3>今日つかった回数</h3>
+      ${u ? `<p><span class="money">${u.used}</span> / ${u.limit} 回</p>` : ai.err ? `<p class="warn">${esc(ai.err)}</p>` : '<p class="muted">読んでいます…</p>'}
+      <p class="hint">1日 ${u ? u.limit : "100"} 回までにしています。Claude Console でも、月のお金の上限を決めてあります。</p></div>
+    <div class="block"><h3>AI につながるかためす</h3>
+      <button type="button" class="btn" data-aiping${ai.busy ? " disabled" : ""}>${ai.busy ? "ためしています…" : "ためす"}</button>
+      ${t ? (t.ok ? `<p class="okmsg">○ つながりました（${(t.ms / 1000).toFixed(1)}秒・AI の答え「${esc(t.reply)}」）</p>` : `<p class="warn">× ${esc(t.msg)}</p>`) : ""}
+      <p class="hint">押すと AI を1回呼びます（1回 1円もかかりません）。いまのモデル：Claude Opus 5.5（納品書の読み取りを作るときに、本物の納品書でくらべて決めなおします）。</p></div>`;
+}
+
+async function pingAi() {
+  if (ai.busy) return;
+  ai.busy = true;
+  draw(true);
+  try {
+    const r = (await call("zairyoAi")({ task: "ping" })).data;
+    ai.usage = r;
+    ai.test = r.ok ? { ok: true, ms: r.ms, reply: r.reply } : { ok: false, msg: "AI に断られました" };
+  } catch (ex) {
+    ai.test = { ok: false, msg: errorText(ex) };
+  } finally {
+    ai.busy = false;
+    draw(true);
+  }
+}
+
 /* ==================== 押したとき ==================== */
 async function onClick(e) {
   const t = e.target.closest("button");
@@ -433,6 +472,7 @@ async function onClick(e) {
   const d = t.dataset;
 
   if ("backup" in d) return doBackup();
+  if ("aiping" in d) return pingAi();
 
   if (d.swaz) {
     const s = S.sup[d.swaz];
