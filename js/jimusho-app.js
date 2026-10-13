@@ -5,6 +5,7 @@
 // - 11章 5-3：注文ごと（ようすでしぼる＝上の箱を押す）・工事（注番）ごと・注文の中身（届いた・もどす・コピー・取り消して依頼にもどす）
 // - 納品書の金額・請求は 5-4
 // - 11章 7-1：「＋ LINE・電話の注文を入れる」（js/line-chumon.js）。依頼なしの注文（reqId なし）
+// - 11章 7-5a：「納品書の取りこみ」（js/nouhin.js）。スキャンを AI で読んで、注文の納品書の金額に入れる
 import { ref, onValue } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet } from "./common.js";
@@ -14,6 +15,7 @@ import { orderText, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived
 import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
+import { openImport } from "./nouhin.js";
 
 const pad = n => String(n).padStart(2, "0");
 const md = ts => { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()}`; };
@@ -44,6 +46,7 @@ export function startOfficeApp(main, me) {
         </div>
         <input id="q" class="inp search" type="search" placeholder="注番・件名・品名・人でさがす" aria-label="さがす" autocomplete="off">
         <button type="button" class="btn" id="lineBtn">＋ LINE・電話の注文を入れる</button>
+        <button type="button" class="btn" id="impBtn">納品書の取りこみ</button>
         <button type="button" class="btn" id="billBtn">まとめて請求</button>
         <button type="button" class="btn" id="setBtn">⚙ 設定</button>
       </div>
@@ -800,7 +803,7 @@ export function startOfficeApp(main, me) {
 
   /* ---------- 押したとき（一覧） ---------- */
   main.addEventListener("click", e => {
-    const t = e.target.closest("[data-newbox],[data-filter],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],#billBtn,#lineBtn,#setBtn,#setBack,#clearQ");
+    const t = e.target.closest("[data-newbox],[data-filter],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],#billBtn,#lineBtn,#impBtn,#setBtn,#setBack,#clearQ");
     if (!t || t.disabled) return;
     const d = t.dataset;
     if ("newbox" in d) { st.view = "irai"; st.filter = "all"; draw(); }
@@ -823,6 +826,7 @@ export function startOfficeApp(main, me) {
     else if (d.req) openReq(d.req);
     else if (d.open) openOrder(d.open);
     else if (t.id === "billBtn") { bulk.done = ""; openBulk(); }
+    else if (t.id === "impBtn") openImport({ sups: st.sups, getOrders: () => st.orders, me });
     else if (t.id === "lineBtn") {
       openLineOrder({ sups: st.sups, places: st.places, catalog: st.catalog, me, onPlaced: id => { st.view = "orders"; st.filter = "all"; draw(); openOrder(id); } });
     }

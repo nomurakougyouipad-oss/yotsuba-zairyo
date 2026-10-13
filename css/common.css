@@ -552,3 +552,23 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .kguess{font-size:12px;font-weight:700;color:var(--amber)}
 .kshake{font-size:12px;color:var(--danger)}
 .chk{display:inline-flex;align-items:center;gap:6px;font-weight:700;min-height:44px}
+/* 納品書の取りこみ（7-5a） */
+.imp-drop{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:14px;border:2px dashed var(--line);border-radius:10px;background:var(--surface);cursor:pointer}
+.imp-drop.on{border-color:var(--amber);background:var(--surface2)}
+.imp-card{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:12px;border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--bg)}
+.imp-img{display:flex;flex-direction:column;gap:4px;min-width:0}
+.imp-img img{width:100%;height:auto;border-radius:6px;background:#fff;display:block}
+.imp-zoom{border:0;padding:0;background:none;cursor:zoom-in}
+.imp-noimg{aspect-ratio:1.4;border-radius:6px;background:var(--surface2)}
+.imp-body{display:flex;flex-direction:column;gap:10px;min-width:0}
+.imp-g{display:flex;flex-direction:column;gap:8px;border-top:1px dashed var(--line);padding-top:8px}
+.imp-g:first-child{border-top:0;padding-top:0}
+.imp-doubt{margin:0;padding:8px 10px 8px 26px;border-radius:8px;background:var(--surface2);color:var(--amber);font-size:13px;font-weight:700}
+.imp-f{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.imp-rows{width:100%;border-collapse:collapse;font-size:13px}
+.imp-rows th{text-align:left;color:var(--muted);font-weight:700;padding:2px 4px}
+.imp-rows td{padding:2px 2px;vertical-align:top}
+.imp-rows .inp{padding:5px 6px;min-width:0;width:100%}
+.imp-rows td:first-child{width:46%}
+.imp-sum{margin:0;font-size:14px}
+@media (max-width:700px){.imp-card{grid-template-columns:1fr}}
