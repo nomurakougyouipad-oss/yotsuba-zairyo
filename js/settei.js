@@ -310,11 +310,11 @@ function devHTML() {
     return `
       <div class="block"><h3>${title}（${xs.length}台）</h3>
         ${xs.length ? `<ul class="devs">${xs.map(([uid, d]) => devRow(uid, d, uid === meUid)).join("")}</ul>` : '<p class="muted">まだありません。</p>'}
-        ${twice ? `<p class="hint">同じ名前が2つ以上あるときは、登録した日時で見分けてください。使わなくなった${role === "genba" ? "スマホ" : "端末"}は消します。${role === "genba" ? "iPhone では、Safari とホーム画面の「材料注文」が、別々の端末として登録されます。" : ""}</p>` : ""}
+        ${twice ? `<p class="hint">同じ名前が2つ以上あるときは、登録した日時で見分けてください。使わなくなった${role === "genba" ? "スマホ" : "端末"}は消します。${role === "genba" ? "iPhone では、Safari とホーム画面の「よつば資材便」が、別々の端末として登録されます。" : ""}</p>` : ""}
       </div>`;
   };
   return `
-    <p class="hint">合言葉で登録した端末です。なくしたスマホや、やめた人のスマホは、ここで消してください。消すと、その端末では材料注文がすぐに使えなくなります（写真だけは、最大1時間見られることがあります）。</p>
+    <p class="hint">合言葉で登録した端末です。なくしたスマホや、やめた人のスマホは、ここで消してください。消すと、その端末ではよつば資材便がすぐに使えなくなります（写真だけは、最大1時間見られることがあります）。</p>
     <p class="hint">機種（例 iPhone・ホーム画面）と最後に開いた日は、その端末でアプリを開いたときに入ります（前から登録してある端末は、次に開いたときから）。</p>
     ${group("genba", "現場のスマホ")}
     ${group("office", "事務所のパソコン")}
@@ -341,7 +341,7 @@ function devRow(uid, d, me) {
         <span class="muted">登録 ${d.registeredAt ? when(d.registeredAt) : "—"}</span>
         <span class="${old ? "hint warn" : "muted"}">最後に開いた ${d.seenAt ? lastOpen(d.seenAt) : "（まだ記録なし）"}${old ? `・${OLD_DAYS}日以上使っていません` : ""}</span></span>
       ${me ? '<span class="muted">ここからは消せません</span>'
-        : ask === k ? `<span class="kask">本当に消しますか？ この端末では、材料注文が使えなくなります。もう一度使うときは、合言葉で登録しなおします。
+        : ask === k ? `<span class="kask">本当に消しますか？ この端末では、よつば資材便が使えなくなります。もう一度使うときは、合言葉で登録しなおします。
           <span class="row"><button type="button" class="btn danger" data-devdelyes="${esc(uid)}">消す</button><button type="button" class="btn" data-askno>やめる</button></span></span>`
         : `<button type="button" class="btn danger" data-devdel="${esc(uid)}">消す</button>`}
     </li>`;

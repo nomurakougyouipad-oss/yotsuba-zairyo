@@ -80,7 +80,7 @@ async function main() {
     stop("ファイルを読めませんでした：" + err.message);
   }
   if (!file || file.app !== "yotsuba-zairyo" || file.kind !== "backup" || !file.data || typeof file.data !== "object") {
-    stop("材料注文のバックアップのファイルではないようです");
+    stop("よつば資材便（材料注文）のバックアップのファイルではないようです");
   }
   if (file.project && file.project !== PROJECT) stop(`ちがう Firebase（${file.project}）のバックアップです`);
   const unknown = Object.keys(file.data).filter(p => !PATHS.some(([q]) => q === p));

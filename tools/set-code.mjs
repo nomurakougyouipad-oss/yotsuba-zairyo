@@ -52,7 +52,7 @@ function askHidden(question) {
   });
 }
 
-console.log("よつば材料注文：合言葉を決める・変える\n");
+console.log("よつば資材便（材料注文）：合言葉を決める・変える\n");
 const pick = KINDS[await ask("どちらの合言葉ですか？  1＝会社の合言葉（現場）  2＝事務所の合言葉 ：")];
 if (!pick) { console.log("1 か 2 を入れてください。やめました"); process.exit(1); }
 
