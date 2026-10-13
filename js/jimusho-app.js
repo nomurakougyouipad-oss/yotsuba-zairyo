@@ -525,6 +525,7 @@ export function startOfficeApp(main, me) {
           ${o.contacted ? `<dt>連絡ずみ</dt><dd>${esc(o.chumonsha)}さんが ${esc(o.supplierName)} に連絡ずみ</dd>` : ""}
           ${o.memo ? `<dt>メモ</dt><dd>${esc(o.memo)}</dd>` : ""}
         </dl></div>
+        ${o.src ? `<details class="block hidbox"><summary>LINE の元の文</summary><pre class="src-text">${esc(o.src)}</pre></details>` : ""}
         <div class="row"><button type="button" class="btn" data-ocopy="${esc(o.id)}">注文の文をコピー（メール・LINE用）</button></div>
         <div class="field" id="oCopyFb" hidden><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
           <textarea class="inp ta copybox" rows="12" readonly></textarea></div>

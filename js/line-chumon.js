@@ -3,14 +3,21 @@
 // - 品名・数量は1行に1つ。行のおわりの「20本」「3kg」のような所を数と単位にする。数が読めない行は、入れる前に直してもらう
 // - 注番は日報の注番から件名・担当を入れる（日報は読むだけ）。日報にない・終わった注番は「たしかめて」と出す
 // - 写真は1つめの品物につける（注文の写真・リンクの欄に出る）。入れずに閉じたら、つけた写真は置き場から消す
-// - LINE の書き込みをはりつけて欄に入れる・注文先の名前をそろえるのは 7-2、品名を品物一覧に当てる（AI）のは 7-4
+// - 7-2：LINE の書き込みをはりつけると、欄に入る（js/line-parse.js）。注文先の名前は登録の名前にそろえる。
+//   知らない名前は勝手に足さない（「○○ にする」＝その材料屋の読みかえに足して次から自動でそろう／「新しい材料屋として足す」）。
+//   はりつけた元の文は、電話番号を消してから注文の src にのこす（注文の中身の「LINE の元の文」）
+// - 品名を品物一覧に当てる（AI）のは 7-4
 import { ref, get, push, set, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, auth } from "./firebase.js";
 import { esc, zenkana, toast, openSheet, closeSheet } from "./common.js";
-import { fmtQty, ymd } from "./tanomu.js";
+import { fmtQty, ymd, kibouText } from "./tanomu.js";
 import { normalizeChuban } from "./kouji.js";
 import { watchJobs, CHUBAN_RE } from "./nippo.js";
 import { photoPicker, deletePhoto } from "./shashin.js";
+import { errorText } from "./touroku.js";
+import { parseLineText, parseKibou, findPlace, matchSupplier, aliasToLearn, maskTel } from "./line-parse.js";
+
+const SRC_MAX = 5000;   // はりつけた元の文は、ここまでのこす
 
 const byOrder = ([, a], [, b]) => (a.order ?? 999) - (b.order ?? 999);
 
@@ -31,9 +38,11 @@ const itemLines = text => String(text || "").split(/\r?\n/).map(s => s.trim()).f
 /** LINE・電話の注文を入れる画面を開く
  *  opts = { sups: 材料屋 {id: {...}}, places: 届け先 {id: {...}}, me: {name}, onPlaced(注文の番号) } */
 export function openLineOrder({ sups, places, me, onPlaced }) {
-  const supList = Object.entries(sups || {}).filter(([, s]) => !s.hidden).sort(byOrder);
+  // この画面で足した材料屋・読みかえも入れるので、写しを持つ
+  const supMap = Object.fromEntries(Object.entries(sups || {}).map(([id, s]) => [id, { ...s }]));
+  const supList = Object.entries(supMap).filter(([, s]) => !s.hidden).sort(byOrder);
   const placeList = Object.entries(places || {}).filter(([, p]) => !p.hidden).sort(byOrder);
-  const f = { basho: placeList.length ? placeList[0][0] : "", kibou: "最短" };
+  const f = { basho: placeList.length ? placeList[0][0] : "", kibou: "最短", src: "", supRaw: "" };
   const photos = [];
   let jobs = null, stopJobs = null, staff = [], saved = false, autoKenmei = "", autoTantou = "", picker = null;
 
@@ -42,13 +51,18 @@ export function openLineOrder({ sups, places, me, onPlaced }) {
       <div class="panel-head"><div><span class="eyebrow">移行のあいだ用</span><h2 id="panelTitle">LINE・電話の注文を入れる</h2></div>
         <button type="button" class="x" data-close aria-label="閉じる">×</button></div>
       <p class="hint">LINE や電話で来た注文を、そのまま注文として入れます（「材料がまだ届いていない」に入ります）。</p>
+      <div class="field paste"><label for="pasteBox">LINE の書き込みをはりつける</label>
+        <textarea id="pasteBox" class="inp ta" rows="5" placeholder="グループ LINE の注文の書き込みをコピーして、ここにはりつけてください。下の欄に自動で入ります。" data-autofocus></textarea>
+        <div class="row"><button type="button" class="btn" id="doParse">読み取る</button>
+          <span class="hint" id="parseHint">電話の注文や、手で入れるときは、そのまま下の欄へ。</span></div></div>
       <form id="lineForm" class="stack" novalidate>
         <div class="field"><label for="fSup">注文先<span class="req">必ず</span></label>
           <select id="fSup" class="inp">
             <option value="">えらんでください</option>
             ${supList.map(([id, s]) => `<option value="${esc(id)}">${esc(s.name)}</option>`).join("")}
           </select>
-          <span class="hint">一覧にない材料屋は、⚙ 設定 →「材料屋」で足してください。</span><p class="err" id="eSup"></p></div>
+          <span class="hint" id="hSup">一覧にない材料屋は、⚙ 設定 →「材料屋」で足してください。</span>
+          <div class="row" id="supPick" hidden></div><p class="err" id="eSup"></p></div>
         <div class="two">
           <div class="field"><label for="fChuban">注文番号（注番）<span class="req">必ず</span></label>
             <input id="fChuban" class="inp" list="jobList" placeholder="例 AB26123" autocomplete="off" autocapitalize="characters" maxlength="12">
@@ -82,7 +96,10 @@ export function openLineOrder({ sups, places, me, onPlaced }) {
       </form>
     </div>`;
 
-  openSheet(html, p => {
+  openSheet(html, panel => {
+    // 動きは、毎回新しく作る中身（#lineWrap）につける。下から出る画面の入れ物（#panel）は使いまわしなので、
+    // そこにつけると、開くたびに動きが積み重なる（2回目に開くと、材料屋が2つ足されていた）
+    const p = panel.querySelector("#lineWrap");
     const g = s => p.querySelector(s);
 
     /* 日報の注番：件名・担当を入れる。えらべる注番を一覧に出す */
@@ -127,9 +144,110 @@ export function openLineOrder({ sups, places, me, onPlaced }) {
 
     picker = photoPicker(g("#fPhotos"), photos);
 
+    /* ---------- 7-2：LINE の書き込みを読む・注文先をそろえる ---------- */
+    const supHint = (msg, cls = "") => { const h = g("#hSup"); h.textContent = msg; h.className = "hint" + (cls ? " " + cls : ""); };
+    const setKibou = v => {
+      const date = v !== "最短";
+      p.querySelectorAll("[data-kibou]").forEach(x => x.setAttribute("aria-pressed", (x.dataset.kibou === "__date") === date));
+      g("#fDate").hidden = !date;
+      g("#fDate").value = date ? v : "";
+      f.kibou = v;
+    };
+    const setPlace = id => {
+      f.basho = id;
+      p.querySelectorAll("[data-basho]").forEach(x => x.setAttribute("aria-pressed", x.dataset.basho === id));
+    };
+    /** 知らない注文先のとき：近い材料屋の「○○ にする」と「新しい材料屋として足す」 */
+    const showSupPick = m => {
+      const pk = g("#supPick");
+      f.supRaw = m ? m.raw : "";
+      pk.hidden = !m;
+      pk.innerHTML = m ? m.near.map(id => `<button type="button" class="btn" data-supset="${esc(id)}">${esc(supMap[id].name)} にする</button>`).join("") +
+        `<button type="button" class="linkbtn" data-supnew="${esc(m.clean)}">「${esc(m.clean)}」を新しい材料屋として足す</button>` : "";
+    };
+    /** えらんだ材料屋の読みかえに、LINE の書き方を足す（次から自動でそろう） */
+    const learn = async id => {
+      const raw = f.supRaw, s = supMap[id];
+      showSupPick(null);
+      g("#fSup").value = id;
+      const k = aliasToLearn(raw, s, Object.entries(supMap));
+      if (!k) { supHint(""); return; }
+      const list = [...(Array.isArray(s.alias) ? s.alias : Object.values(s.alias || {})), k];
+      await set(ref(db, `zairyo/master/suppliers/${id}/alias`), list);
+      s.alias = list;
+      supHint(`「${raw}」は、次から「${s.name}」にそろえます`, "ok");
+    };
+    const addSup = async name => {
+      const n = name.trim().slice(0, 40);
+      if (!n) return;
+      const order = Math.max(-1, ...Object.values(supMap).map(x => x.order ?? -1)) + 1;
+      const r = push(ref(db, "zairyo/master/suppliers"));
+      const s = { name: n, to: "御中", app: false, azukari: false, alias: [n], order };
+      await set(r, s);
+      supMap[r.key] = s;
+      const opt = document.createElement("option");
+      opt.value = r.key;
+      opt.textContent = n;
+      g("#fSup").append(opt);
+      g("#fSup").value = r.key;
+      showSupPick(null);
+      supHint(`「${n}」を新しい材料屋として足しました（宛名・読みかえは ⚙ 設定 →「材料屋」で直せます）`, "ok");
+    };
+
+    const doParse = () => {
+      const text = g("#pasteBox").value, hint = g("#parseHint");
+      if (!text.trim()) { hint.textContent = "先に LINE の書き込みをはりつけてください。"; hint.className = "hint bad"; return; }
+      const r = parseLineText(text);
+      f.src = maskTel(text.trim()).slice(0, SRC_MAX);   // 電話番号は消してからのこす（持ち主 10/13）
+      const notes = [];
+      // 注文先
+      showSupPick(null);
+      g("#eSup").textContent = "";
+      const m = matchSupplier(r.supplier, Object.entries(supMap));
+      if (m.id) {
+        g("#fSup").value = m.id;
+        supHint(m.how === "fixed" ? `LINE の「${m.raw}」を「${supMap[m.id].name}」にそろえました` : "", m.how === "fixed" ? "ok" : "");
+      } else if (m.how === "omakase") {
+        g("#fSup").value = "";
+        supHint(`LINE に「${m.raw}」とあります。注文先をえらんでください`, "bad");
+      } else if (m.how === "unknown") {
+        g("#fSup").value = "";
+        supHint(`LINE の「${m.raw}」は、登録にない材料屋です。下のボタンか、上の一覧でえらんでください`, "bad");
+        showSupPick(m);
+      }
+      // 注番・件名（日報にある注番なら、日報の件名に入れかわる）・担当（LINE に書いてあれば LINE の名前）
+      if (r.chuban) g("#fChuban").value = normalizeChuban(r.chuban);
+      if (r.kenmei) g("#fKenmei").value = autoKenmei = r.kenmei;
+      checkChuban();
+      if (r.tantou) g("#fTan").value = r.tantou.slice(0, 20);
+      if (r.chumonsha) g("#fChu").value = r.chumonsha.slice(0, 20);
+      // 品名・数量
+      if (r.items) { g("#fItems").value = r.items; preview(); }
+      // 納入希望日
+      const k = parseKibou(r.kibou);
+      if (k) setKibou(k);
+      else if (r.kibou) { setKibou(""); notes.push(`納入希望日「${r.kibou}」を読めませんでした。日付をえらんでください`); }
+      // 届け先（書いていなければ、いちばん上の届け先のまま）
+      const pl = findPlace([r.basho, r.kibou, r.memo, r.items], placeList);
+      if (pl) setPlace(pl);
+      else if (r.basho) notes.push(`届け先「${r.basho}」を読めませんでした。えらんでください`);
+      g("#fMemo").value = r.memo;
+      const got = [g("#fSup").value, r.chuban, r.items].filter(Boolean).length;
+      hint.innerHTML = esc(got === 3 ? "読み取りました。下の欄をたしかめてください。" : "一部だけ読み取れました。足りない欄を入れてください。") +
+        (k && k !== "最短" ? esc(`（希望日 ${kibouText(k)}）`) : "") + notes.map(n => `<br>${esc(n)}`).join("");
+      hint.className = "hint " + (got === 3 && !notes.length ? "ok" : "warn");
+    };
+    g("#doParse").addEventListener("click", doParse);
+    g("#pasteBox").addEventListener("paste", () => setTimeout(doParse, 0));
+
     p.addEventListener("click", e => {
       const k = e.target.closest("[data-kibou]"), b = e.target.closest("[data-basho]");
-      if (k) {
+      const ss = e.target.closest("[data-supset]"), sn = e.target.closest("[data-supnew]");
+      if (ss || sn) {
+        e.preventDefault();
+        (ss ? learn(ss.dataset.supset) : addSup(sn.dataset.supnew)).catch(ex => toast(errorText(ex)));
+        g("#eSup").textContent = "";
+      } else if (k) {
         const date = k.dataset.kibou === "__date";
         p.querySelectorAll("[data-kibou]").forEach(x => x.setAttribute("aria-pressed", x === k));
         g("#fDate").hidden = !date;
@@ -143,7 +261,11 @@ export function openLineOrder({ sups, places, me, onPlaced }) {
     g("#fChuban").addEventListener("change", checkChuban);
     g("#fChuban").addEventListener("input", () => { if (CHUBAN_RE.test(normalizeChuban(g("#fChuban").value))) checkChuban(); });
     g("#fItems").addEventListener("input", preview);
-    g("#fSup").addEventListener("change", () => { g("#eSup").textContent = ""; });
+    g("#fSup").addEventListener("change", () => {
+      g("#eSup").textContent = "";
+      // LINE の知らない名前のあとで、一覧からえらんだときも、その材料屋の読みかえに足す
+      if (f.supRaw && g("#fSup").value) learn(g("#fSup").value).catch(ex => toast(errorText(ex)));
+    });
     g("#fKenmei").addEventListener("input", () => { g("#eKenmei").textContent = ""; });
     g("#fDate").addEventListener("change", e => { f.kibou = e.target.value; });
 
@@ -153,7 +275,7 @@ export function openLineOrder({ sups, places, me, onPlaced }) {
       if (go.disabled) return;
       const errs = [];
       const bad = (sel, msg, focus) => { if (sel) g(sel).textContent = msg; errs.push(focus); };
-      const supId = g("#fSup").value, sup = (sups || {})[supId];
+      const supId = g("#fSup").value, sup = supMap[supId];
       const chuban = normalizeChuban(g("#fChuban").value), kenmei = g("#fKenmei").value.trim();
       const ls = itemLines(g("#fItems").value);
       if (!sup) bad("#eSup", "注文先をえらんでください", "#fSup");
@@ -186,6 +308,7 @@ export function openLineOrder({ sups, places, me, onPlaced }) {
         status: "wait", lines,
         orderedAt: serverTimestamp(), orderedBy: me.name, orderedByUid: auth.currentUser.uid,
       };
+      if (f.src) order.src = f.src;   // はりつけた LINE の元の文
       go.disabled = true;
       go.textContent = "入れています…";
       try {
@@ -202,7 +325,6 @@ export function openLineOrder({ sups, places, me, onPlaced }) {
       }
     });
     preview();
-    g("#fSup").focus();
   }, {
     side: true,
     onClose: () => {

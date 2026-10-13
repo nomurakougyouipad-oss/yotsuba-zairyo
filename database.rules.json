@@ -189,6 +189,7 @@
           "bashoText": { ".validate": "newData.isString() && newData.val().length <= 200" },
           "contacted": { ".validate": "newData.isBoolean()" },
           "memo": { ".validate": "newData.isString() && newData.val().length <= 500" },
+          "src": { ".validate": "newData.isString() && newData.val().length <= 5000" },
           "status": { ".validate": "newData.isString() && newData.val().matches(/^(wait|arrived|billed|cancelled)$/)" },
           "orderedAt": { ".validate": "newData.isNumber() && (data.exists() || newData.val() == now)" },
           "orderedBy": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" },

@@ -499,3 +499,5 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .li-prev li.lab{font-size:12px;font-weight:700;color:var(--muted)}
 .li-prev li.ask{color:var(--amber);font-weight:700}
 .li-prev li.ask span:last-child{font-size:12px}
+.src-text{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:13px;color:var(--fg);background:var(--surface2);border-radius:8px;padding:8px 10px}
+.paste{padding:10px 12px;border:1px dashed var(--line);border-radius:10px;background:var(--surface)}
