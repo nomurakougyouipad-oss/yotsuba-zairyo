@@ -38,7 +38,7 @@ function headHTML(x, places, staff) {
   return `
     <div class="ef-grid">
       <label class="mini">注番<input id="eChuban" class="inp" maxlength="12" autocomplete="off" autocapitalize="characters" value="${esc(x.chuban || "")}"></label>
-      <label class="mini">件名<input id="eKenmei" class="inp" maxlength="100" autocomplete="off" value="${esc(x.kenmei || "")}"></label>
+      <label class="mini wide">件名<textarea id="eKenmei" class="inp oneline" rows="1" maxlength="100" data-oneline>${esc(x.kenmei || "")}</textarea></label>
       <p class="hint" id="eJob"></p>
       <div class="mini">希望日
         <div class="row"><select id="eKibou" class="inp" style="width:auto"><option value="最短"${date ? "" : " selected"}>最短</option><option value="date"${date ? " selected" : ""}>日付をえらぶ</option></select>
@@ -49,7 +49,7 @@ function headHTML(x, places, staff) {
         ${plist.map(([id, p]) => `<option value="${esc(id)}"${p.name === x.basho ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
       <label class="mini">注文者<select id="eChumon" class="inp">${staff.map(n => `<option${n === x.chumonsha ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
       <label class="mini">担当者<input id="eTantou" class="inp" maxlength="20" autocomplete="off" value="${esc(x.tantou || "")}"></label>
-      <label class="mini">メモ<textarea id="eMemo" class="inp ta" rows="2" maxlength="500">${esc(x.memo || "")}</textarea></label>
+      <label class="mini wide">メモ<textarea id="eMemo" class="inp oneline" rows="2" maxlength="500">${esc(x.memo || "")}</textarea></label>
     </div>`;
 }
 
@@ -59,9 +59,9 @@ function lineHTML(lid, l, units, canDel) {
   return `
     <div class="erow" data-lid="${esc(lid)}">
       <div class="erow-head"><span>品名</span>${canDel ? '<button type="button" class="linkbtn muted" data-edel>この品物を消す ×</button>' : ""}</div>
-      <textarea class="inp imp-spec" data-ef="spec" rows="1" maxlength="300">${esc(l.spec || "")}</textarea>
+      <textarea class="inp imp-spec" data-ef="spec" rows="1" maxlength="300" data-oneline>${esc(l.spec || "")}</textarea>
+      <label class="mini">メモ<textarea class="inp oneline" data-ef="note" rows="1" maxlength="200" data-oneline>${esc(l.note || "")}</textarea></label>
       <div class="imp-nums">
-        <label class="mini n-amount">メモ<input class="inp" data-ef="note" maxlength="200" value="${esc(l.note || "")}"></label>
         <label class="mini n-qty">数<input class="inp num" data-ef="qty" inputmode="decimal" value="${esc(fmtQty(l.qty))}"></label>
         <label class="mini n-unit">単位<select class="inp" data-ef="unit">${us.map(u => `<option${u === l.unit ? " selected" : ""}>${esc(u)}</option>`).join("")}</select></label>
       </div>
@@ -73,7 +73,7 @@ function readHead(w, places) {
   const g = s => w.querySelector(s);
   const chuban = normChuban(g("#eChuban").value);
   if (!CHUBAN.test(chuban)) return "注番の形がちがいます（例 AB26123）";
-  const kenmei = g("#eKenmei").value.trim();
+  const kenmei = g("#eKenmei").value.replace(/\s*\n\s*/g, " ").trim();
   if (!kenmei) return "件名を入れてください";
   let kibou = "最短";
   if (g("#eKibou").value === "date") {
@@ -97,7 +97,7 @@ function readLine(row) {
   if (!spec) return "品名が空の品物があります";
   const qty = toPrice(v("qty"));
   if (!(qty > 0 && qty < 100000)) return `「${short(spec)}」の数を入れてください`;
-  return { spec, note: v("note").trim(), qty, unit: v("unit") };
+  return { spec, note: v("note").replace(/\s*\n\s*/g, " ").trim(), qty, unit: v("unit") };
 }
 
 /** 品物の変わったところ → [文…] と、書きこむ欄 { spec?, note?, qty?, unit?, key?, vals? } */
@@ -143,8 +143,14 @@ function wireJob(w, x) {
   };
   g("#eChuban").addEventListener("change", check);
   g("#eKibou").addEventListener("change", () => { g("#eDate").hidden = g("#eKibou").value !== "date"; });
-  // 品名で Enter を押しても改行しない
-  w.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches && e.target.matches('[data-ef="spec"]')) e.preventDefault(); });
+  // 件名・品名・品物のメモは1行（長いときは折りかえして見せるだけ）。Enter を押しても改行しない
+  w.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches && e.target.matches("[data-oneline]")) e.preventDefault(); });
+  // 字の量に合わせて高くするしくみ（field-sizing）が無いブラウザ（古い iPhone・iPad など）は、ここで高さを合わせる
+  if (!(window.CSS && CSS.supports && CSS.supports("field-sizing", "content"))) {
+    const fit = ta => { ta.style.height = "auto"; ta.style.height = (ta.scrollHeight + 2) + "px"; };
+    w.querySelectorAll("textarea").forEach(fit);
+    w.addEventListener("input", e => { if (e.target.tagName === "TEXTAREA") fit(e.target); });
+  }
 }
 
 const logKey = path => push(ref(db, path)).key;

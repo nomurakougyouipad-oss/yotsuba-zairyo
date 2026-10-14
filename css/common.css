@@ -449,7 +449,10 @@ ul.plain{margin:0;padding-left:1.2em}
 .ef-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
 .ef-grid #eJob{grid-column:1/-1;margin:0}
 .ef-grid #eJob:empty{display:none}
-.ef-grid .mini:has(#eMemo){grid-column:1/-1}
+.ef-grid .wide{grid-column:1/-1}
+/* 長い字が切れないように、折りかえして全部見せる欄（件名・メモ・品物のメモ）。10/14 */
+.oneline{field-sizing:content;min-height:40px;resize:vertical;line-height:1.5;white-space:pre-wrap;word-break:break-all}
+.ef-grid .inp,.erow .inp{width:100%;min-width:0}
 .erows{display:flex;flex-direction:column;gap:8px;margin-bottom:8px}
 .erow{display:flex;flex-direction:column;gap:6px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--surface)}
 .erow-head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--muted)}
