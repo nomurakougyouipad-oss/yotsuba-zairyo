@@ -105,7 +105,8 @@
             "to": { ".validate": "newData.isString() && newData.val().length <= 20" },
             "app": { ".validate": "newData.isBoolean()" },
             "azukari": { ".validate": "newData.isBoolean()" },
-            "send": { ".validate": "newData.val() == 'mail' || newData.val() == 'line' || newData.val() == 'fax'" },
+            "send": { ".validate": "newData.val() == 'mail' || newData.val() == 'line' || newData.val() == 'fax' || newData.val() == 'net'" },
+            "shop": { ".validate": "newData.val() == 'monotaro' || newData.val() == 'misumi' || newData.val() == 'amazon'" },
             "fax": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 20 && newData.val().matches(/^[0-9()+\\- ]+$/)" },
             "email": { ".validate": "newData.isString() && newData.val().length <= 100 && newData.val().matches(/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z][A-Za-z]+$/)" },
             "cc": {

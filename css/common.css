@@ -197,7 +197,7 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .kyo summary{cursor:pointer;font-weight:700;color:var(--muted);min-height:44px;display:flex;align-items:center}
 .kyo .owners{margin-top:4px}
 .ok-note{color:var(--blue);font-weight:700;margin:8px 0 0}
-.sendby button{flex:1}
+.sendby button{flex:1 1 auto;white-space:nowrap}   /* せまいときは字を切らずに2段にする（10/15 送り方が5つになった） */
 .send-note{margin:0 0 6px;padding:8px 12px;border-radius:8px;background:var(--surface2);color:var(--fg);font-weight:700;border-left:4px solid var(--amber)}
 .send-note[hidden]{display:none}
 ul.plain{margin:0;padding-left:1.2em}
@@ -354,6 +354,12 @@ ul.plain{margin:0;padding-left:1.2em}
 .g-tag{font-size:12px;font-weight:700;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 6px;white-space:nowrap}
 .g-n{margin-left:auto}
 .g-lines{margin:0;padding-left:1.2em;font-size:14px;display:flex;flex-direction:column;gap:2px;overflow-wrap:anywhere}
+/* ネットで買う：品物ごとに「ページを開く」「○○でさがす」（10/15） */
+.net-lines{padding-left:0;list-style:none;gap:0}
+.net-lines li{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--line)}
+.net-lines li:last-child{border-bottom:0}
+.net-lines li>span{flex:1 1 12em;min-width:0}
+.net-lines .btn{flex:0 0 auto;margin-left:auto}
 .copybox{font-family:var(--f-ja);font-size:14px;line-height:1.6}
 .olist{display:flex;flex-direction:column;gap:10px}
 .oitem{border:1px solid var(--line);border-left:4px solid var(--amber-btn);border-radius:10px;padding:10px 12px;background:var(--surface);display:flex;flex-direction:column;gap:6px}

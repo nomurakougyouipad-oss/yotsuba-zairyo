@@ -32,6 +32,11 @@ export function linkLabel(h) {
   const host = linkHost(h);
   return SHOP_NAME[host] ? `${SHOP_NAME[host]}（${host}）` : host;
 }
+/** リンクが、どのネットのお店のページか（SHOPS の id。ほかのページは ""）。材料屋を最初からそのお店にするのに使う（10/15） */
+export function shopOf(h) {
+  const host = linkHost(h), on = d => host === d || host.endsWith("." + d);
+  return on("monotaro.com") ? "monotaro" : on("misumi-ec.com") ? "misumi" : on("amazon.co.jp") || on("amzn.asia") || on("amzn.to") ? "amazon" : "";
+}
 
 /* ---------- 写真 ---------- */
 /** 写真を長い辺 max px の JPEG にする（1枚 200〜300KB くらい） */

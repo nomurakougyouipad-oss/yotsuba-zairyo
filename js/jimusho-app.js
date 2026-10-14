@@ -13,7 +13,7 @@ import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
 import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, markBilled, backToArrived, billMany } from "./chumon.js";
 import { renderSettings } from "./settei.js";
-import { photosHTML, fillPhotos, attachHTML, linkLabel } from "./shashin.js";
+import { photosHTML, fillPhotos, attachHTML, linkLabel, shopOf, SHOPS } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
 import { openImport } from "./nouhin.js";
 import { openReqEdit, openOrderEdit } from "./naosu.js";
@@ -77,6 +77,28 @@ async function copyOrSend(o, sup, fb, info = {}) {
   if (lineCopyOnly) toast(copied ? `文をコピーしました。LINE で${who}をえらんでください` : "コピーできませんでした。下の文を選んでコピーしてください");
   else if (!url) toast(copied ? "注文の文をコピーしました。LINE やメールにはりつけられます" : "コピーできませんでした。下の文を選んでコピーしてください");
   else toast(sup.send === "mail" ? "Gmail を開きました" : sup.lineTo ? `LINE で「${sup.lineTo}」をえらんでください` : "LINE を開きました");
+}
+
+/** 注番をコピーする（ネットのお店で買うとき、お店の備考などの欄にはりつける。10/15） */
+async function copyChuban(ch) {
+  try {
+    await navigator.clipboard.writeText(ch);
+    toast(`注番 ${ch} をコピーしました。お店の備考などの欄にはりつけられます`);
+  } catch (ex) {
+    toast(`コピーできませんでした。注番は ${ch} です`);
+  }
+}
+
+/** 「ネットで買う」材料屋の品物：品物ごとに、現場がつけたそのお店のリンクなら「ページを開く」、
+ *  なければ「○○でさがす」（品名でさがしたページ）。1回押して開けるページは1つだけ（ブラウザの決まり）なので、品物ごとのボタンにする（10/15） */
+function netLinesHTML(sup, lines) {
+  const shop = SHOPS.find(x => x.id === sup.shop);
+  return `<ul class="g-lines net-lines">${lines.map(l => {
+    const own = !!l.link && (!shop || shopOf(l.link) === shop.id);
+    const href = own ? l.link : shop ? shop.url(l.spec || "") : "";
+    return `<li><span>${esc(lineText(l))}</span>${href ? `<a class="btn" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${own ? "ページを開く" : `${esc(shop.name)}でさがす`}</a>` : ""}</li>`;
+  }).join("")}</ul>
+    ${shop ? "" : '<p class="hint">⚙ 設定 → 材料屋 で、お店（モノタロウ・ミスミ・アマゾン）をえらぶと、品名でさがすボタンが出ます。</p>'}`;
 }
 
 export function startOfficeApp(main, me) {
@@ -319,12 +341,19 @@ export function startOfficeApp(main, me) {
     const cat = st.catalog.cats.find(c => c.id === l.cat);
     return (it && it.sup) || (cat && cat.sup) || "";
   }
-  /** まだ注文していない品物に、えらんでいる材料屋（はじめは：現場が連絡した材料屋 → いつもの材料屋） */
+  /** 現場がつけたリンクがネットのお店（モノタロウ・ミスミ・アマゾン）のページなら、そのお店の材料屋
+   *  （⚙ 設定で送り方「ネットで買う」とお店をえらんだもの。なければ ""）（10/15） */
+  function linkSup(l) {
+    const shop = l.link ? shopOf(l.link) : "";
+    const hit = shop && supList().find(([, s]) => s.send === "net" && s.shop === shop);
+    return hit ? hit[0] : "";
+  }
+  /** まだ注文していない品物に、えらんでいる材料屋（はじめは：リンクのお店 → 現場が連絡した材料屋 → いつもの材料屋） */
   function picksOf(r) {
     const p = st.pick[r.id] || (st.pick[r.id] = {});
     for (const [id, l] of Object.entries(r.lines || {})) {
       if (l.orderId) { delete p[id]; continue; }
-      if (!(id in p)) p[id] = (r.contacted && st.sups && st.sups[r.contacted] ? r.contacted : usualSup(l)) || "";
+      if (!(id in p)) p[id] = linkSup(l) || (r.contacted && st.sups && st.sups[r.contacted] ? r.contacted : usualSup(l)) || "";
     }
     return p;
   }
@@ -391,7 +420,7 @@ export function startOfficeApp(main, me) {
         </dl>${cx ? "" : `<div class="row"><button type="button" class="btn" data-redit>依頼を直す</button></div>`}</div>
         ${logHTML(r)}
         <div class="block"><h3>${cx ? "品物" : "1. 品物ごとに材料屋を決める"}</h3>
-          ${cx ? "" : `<p class="hint">${r.contactedName ? `現場が連絡した ${esc(r.contactedName)} を入れています。` : "品物一覧の「いつもの材料屋」が最初から入っています。"}ちがえば、えらびなおしてください。</p>`}
+          ${cx ? "" : `<p class="hint">${r.contactedName ? `現場が連絡した ${esc(r.contactedName)} を入れています。` : "品物一覧の「いつもの材料屋」が最初から入っています。"}${ls.some(([, l]) => !l.orderId && linkSup(l)) ? "ネットのお店のリンクがある品物は、そのお店にしています。" : ""}ちがえば、えらびなおしてください。</p>`}
           <div class="lrows">${rows}</div>
         </div>
         ${cx ? "" : `<div class="block" id="groupsBox">${groupsHTML(r)}</div>`}
@@ -405,6 +434,14 @@ export function startOfficeApp(main, me) {
     if (groups.length) {
       h += `<div class="groups">${groups.map(([sid, ids]) => {
         const s = st.sups[sid];
+        if (s.send === "net") return `
+          <div class="group">
+            <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">ネットで買う</span><span class="hint g-n">${ids.length}点</span></div>
+            ${netLinesHTML(s, ids.map(id => r.lines[id]))}
+            <div class="row"><button type="button" class="btn" data-chuban="${esc(r.chuban)}">注番をコピー</button>
+              <button type="button" class="btn primary" data-gorder="${esc(sid)}">注文した</button></div>
+            <p class="hint">お店のページで買ってから、「注文した」を押してください。注番は、お店の備考などの欄にはりつけておくと、あとで納品書と合わせやすくなります。</p>
+          </div>`;
         return `
           <div class="group">
             <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">${esc(s.to || "御中")}</span><span class="hint g-n">${ids.length}点</span></div>
@@ -417,7 +454,7 @@ export function startOfficeApp(main, me) {
               <textarea class="inp ta copybox" rows="12" readonly></textarea></div>
           </div>`;
       }).join("")}</div>
-      <p class="hint">「注文の文をコピー」（または「メールで送る」「LINE で送る」）で材料屋に送ってから、「注文した」を押してください。</p>`;
+      ${groups.some(([sid]) => st.sups[sid].send !== "net") ? '<p class="hint">「注文の文をコピー」（または「メールで送る」「LINE で送る」）で材料屋に送ってから、「注文した」を押してください。</p>' : ""}`;
     }
     if (none.length) h += `<p class="err">材料屋が決まっていない品物が ${none.length}点 あります（上の 1. でえらんでください）</p>`;
     if (!groups.length && !none.length) h += "<p>この依頼は、すべて注文しました。</p>";
@@ -464,11 +501,12 @@ export function startOfficeApp(main, me) {
 
   /** 中身の画面で押したとき */
   async function onPanelClick(e, w) {
-    const t = e.target.closest("[data-redit],[data-gcopy],[data-gsend],[data-gorder],[data-ocancel],[data-ocyes],[data-ocno]");
+    const t = e.target.closest("[data-redit],[data-gcopy],[data-gsend],[data-gorder],[data-ocancel],[data-ocyes],[data-ocno],[data-chuban]");
     if (!t || t.disabled) return;
     const r = (st.reqs || []).find(x => x.id === st.openId);
     if (!r) return;
     const d = t.dataset;
+    if (d.chuban) return copyChuban(d.chuban);   // ネットで買う（10/15）
     if ("redit" in d) {   // 依頼を直す（10/14）
       return openReqEdit({ r, orders: ordersOf(r.id), places: st.places, units: unitsList(), me, onDone: () => openReq(r.id) });
     }
@@ -583,6 +621,7 @@ export function startOfficeApp(main, me) {
   /* ---------- 注文の中身（右から出る）：届いた・もどす・コピー・取り消して依頼にもどす ---------- */
   function orderHTML(o) {
     const s = ST[o.status] || ST.wait, late = isLate(o, ymd(0)), cx = o.status === "cancelled";
+    const osup = st.sups && st.sups[o.supplier];
     const steps = [["注文した", o.orderedAt, true], ["届いた", o.arrivedAt, o.status === "arrived" || o.status === "billed"], ["請求が来た", o.billedAt, o.status === "billed"]];
     let act = "";
     if (o.status === "wait") {
@@ -633,10 +672,13 @@ export function startOfficeApp(main, me) {
           ${o.memo ? `<dt>メモ</dt><dd>${esc(o.memo)}</dd>` : ""}
         </dl></div>
         ${o.src ? `<details class="block hidbox"><summary>LINE の元の文</summary><pre class="src-text">${esc(o.src)}</pre></details>` : ""}
+        ${osup && osup.send === "net" ? `
+        <div class="block"><h3>お店のページ（ネットで買う）</h3>${netLinesHTML(osup, Object.values(o.lines || {}))}
+          <div class="row"><button type="button" class="btn" data-chuban="${esc(o.chuban)}">注番をコピー</button></div></div>` : `
         <div class="row"><button type="button" class="btn" data-ocopy="${esc(o.id)}">注文の文をコピー（メール・LINE用）</button>
-          ${sendLabel(st.sups && st.sups[o.supplier]) ? `<button type="button" class="btn" data-osend="${esc(o.id)}">${sendLabel(st.sups[o.supplier])}</button>` : ""}</div>
+          ${sendLabel(osup) ? `<button type="button" class="btn" data-osend="${esc(o.id)}">${sendLabel(osup)}</button>` : ""}</div>
         <div class="field" id="oCopyFb" hidden><p class="send-note" role="status" hidden></p><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
-          <textarea class="inp ta copybox" rows="12" readonly></textarea></div>
+          <textarea class="inp ta copybox" rows="12" readonly></textarea></div>`}
         ${o.status === "wait" ? `
           <div class="cx-start" id="ocx-${esc(o.id)}">
             <button type="button" class="btn danger" data-ocancel="${esc(o.id)}">${o.reqId ? "注文を取り消して依頼にもどす" : "注文を取り消す"}</button>
@@ -671,10 +713,11 @@ export function startOfficeApp(main, me) {
   }
 
   async function onOrderClick(e, w) {
-    const t = e.target.closest("[data-oedit],[data-arrive],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-slipmore],[data-billgo],[data-unbill]");
+    const t = e.target.closest("[data-oedit],[data-arrive],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-slipmore],[data-billgo],[data-unbill],[data-chuban]");
     if (!t || t.disabled) return;
     const d = t.dataset, o = (st.orders || []).find(x => x.id === st.openOrderId);
     if (!o) return;
+    if (d.chuban) return copyChuban(d.chuban);   // ネットで買う（10/15）
     if ("oedit" in d) {   // 注文を直す（10/14）
       const r = o.reqId ? (st.reqs || []).find(x => x.id === o.reqId) || null : null;
       return openOrderEdit({ o, r, places: st.places, units: unitsList(), me, onDone: () => openOrder(o.id) });

@@ -10,6 +10,7 @@ import { watchJobs, watchWorkers } from "./nippo.js";
 import { BACKUP_PATHS, countText, readAll, saveBackup, lastBackup } from "./backup.js";
 import { pushState, enablePush, disablePush, testPush } from "./tsuuchi.js";
 import { printFax } from "./fax.js";
+import { SHOPS } from "./shashin.js";
 import { normCatalog, buildSpec } from "./tanomu.js";
 
 const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["memo", "覚えた当て方"], ["notify", "通知"], ["company", "会社・注文書"], ["backup", "バックアップ"], ["ai", "AI"]];
@@ -121,6 +122,9 @@ function supHTML() {
     ${hid.length ? `<details class="block hidbox" id="hidSup"><summary>かくしている材料屋（${hid.length}）</summary><div class="sups">${hid.map(supCard).join("")}</div></details>` : ""}`;
 }
 
+/** 材料屋の送り方（「ネットで買う」は 10/15。モノタロウなどのお店のページを開いて買う） */
+const SEND_BY = [["mail", "メール"], ["line", "LINE"], ["fax", "FAX"], ["net", "ネットで買う"], ["", "決めない"]];
+
 function supCard([id, s]) {
   const alias = entries(s.alias).map(([, a]) => a);
   return `
@@ -129,11 +133,16 @@ function supCard([id, s]) {
         <button type="button" class="linkbtn muted" data-suphide="${id}">${s.hidden ? "出す" : "かくす"}</button></div>
       <label class="mini">宛名
         <input class="inp" data-edit="to" data-id="${id}" value="${esc(s.to || "御中")}" maxlength="20"></label>
-      <div class="mini">送り方（注文のところに「メールで送る」か「LINE で送る」のボタンが出ます）
+      <div class="mini">送り方（注文のところに、送り方に合わせたボタンが出ます）
         <div class="seg sendby" role="radiogroup" aria-label="${esc(s.name)} の送り方">
-          ${[["mail", "メール"], ["line", "LINE"], ["fax", "FAX"], ["", "決めない"]].map(([v, l]) => `<button type="button" role="radio" data-supsend="${id}" data-v="${v}" aria-checked="${(s.send || "") === v}">${l}</button>`).join("")}
+          ${SEND_BY.map(([v, l]) => `<button type="button" role="radio" data-supsend="${id}" data-v="${v}" aria-checked="${(s.send || "") === v}">${l}</button>`).join("")}
         </div>
       </div>
+      ${s.send === "net" ? `<div class="mini">お店（現場のリンクがこのお店のページなら、最初からこの材料屋になります。リンクがない品物は、このお店で品名をさがします）
+        <div class="seg sendby" role="radiogroup" aria-label="${esc(s.name)} のお店">
+          ${SHOPS.map(sh => `<button type="button" role="radio" data-supshop="${id}" data-v="${sh.id}" aria-checked="${s.shop === sh.id}">${esc(sh.name)}</button>`).join("")}
+        </div>
+      </div>` : ""}
       ${s.send === "mail" ? `<label class="mini">メールアドレス（宛先。消すときは空にする）
         <input class="inp" type="email" data-edit="email" data-id="${id}" value="${esc(s.email || "")}" maxlength="100" autocomplete="off" placeholder="例 order@example.co.jp"></label>
       <div class="mini">CC（なくてもよい。いくつでも）
@@ -751,7 +760,14 @@ async function onClick(e) {
   if (d.supsend) {
     const s = S.sup[d.supsend], v = d.v || null;
     await update(ref(db, `${PATH.sup}/${d.supsend}`), { send: v });
-    toast(`${s.name} の送り方を「${v === "mail" ? "メール" : v === "line" ? "LINE" : v === "fax" ? "FAX" : "決めない"}」にしました`);
+    toast(`${s.name} の送り方を「${(SEND_BY.find(([x]) => x === (v || "")) || [, "決めない"])[1]}」にしました`);
+    return;
+  }
+  if (d.supshop) {
+    const s = S.sup[d.supshop], sh = SHOPS.find(x => x.id === d.v);
+    if (!sh) return;
+    await update(ref(db, `${PATH.sup}/${d.supshop}`), { shop: sh.id });
+    toast(`${s.name} のお店を「${sh.name}」にしました`);
     return;
   }
   if (d.swaz) {
