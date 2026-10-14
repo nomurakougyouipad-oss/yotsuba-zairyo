@@ -74,13 +74,13 @@ function aiError(err) {
 const arr = v => (Array.isArray(v) ? v : Object.values(v || {})).filter(x => x != null);
 const MATCH_MAX_LINES = 60;
 
-/** データベースの品物一覧 → Map(キー → {name, tpl, opts:[[名前, [値]]], unit})（「自由に書く」はのぞく） */
+/** データベースの品物一覧 → Map(キー → {name, tpl, opts:[[名前, [値]]], unit})（「自由に書く」と、⚙ 設定でかくした品物はのぞく） */
 async function catalogItems() {
   const raw = (await db().ref("zairyo/master/catalog").get()).val() || {};
   const item = new Map();
   for (const c of arr(raw.cats)) {
     for (const it of arr(c.items)) {
-      if (it.free) continue;
+      if (it.free || it.hidden) continue;
       item.set(`${c.id}:${it.id}`, { name: it.name, tpl: it.tpl || "", unit: it.unit || "", opts: arr(it.opts).map(o => [o[0], arr(o[1])]) });
     }
   }

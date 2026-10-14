@@ -24,6 +24,7 @@ const PATH = {
   blog: "zairyo/backupLog",       // 自動の保存の結果（サーバーのプログラム zairyoBackup が書く）
   memo: "zairyo/master/itemMemo",  // LINE の品名の、覚えた当て方（7-4）
   notify: "zairyo/notify/tokens",  // 通知がオンのパソコン（10/14。js/tsuuchi.js）
+  reqs: "zairyo/requests",        // 依頼（品物一覧の「手で書いた品物」を数えるため。10/14）
   year: "common/chubanYear",      // 注番の年（2けた）。12/20〜25 ごろに事務所が切りかえる（日付からは決めない）
 };
 const S = {};                 // データベースの中身（読みこむまでは undefined）
@@ -315,18 +316,119 @@ function catalogHTML() {
   const supName = id => (S.sup[id] && S.sup[id].name) || "決めない";
   const options = (cur, blank) => `<option value=""${cur ? "" : " selected"}>${blank}</option>` +
     sups.filter(([id, s]) => !s.hidden || id === cur).map(([id, s]) => `<option value="${id}"${id === cur ? " selected" : ""}>${esc(s.name)}</option>`).join("");
+  const units = entries(S.catalog.units).map(([, u]) => u);
   return `
-    <p class="hint">品物一覧は、試作から入れました（グループLINEの注文 6/25〜10/5 をもとに作ったもの）。いまは「いつもの材料屋」だけ、ここで変えられます。事務所が注文するとき、この材料屋が最初から入ります。</p>
+    ${freeBlock(cats, units)}
+    <p class="hint">スマホの「たのむ」の種類（タブ）と品物です。種類を開くと、いつもの材料屋（事務所が注文するとき最初から入る材料屋）と、品物ごとの「ボタンを直す」（スマホに出るボタンを足す・外す、行を足す、かくす）があります。直しても、前の依頼・注文の品名は変わりません。</p>
     ${cats.map(([ci, c]) => `
       <details class="block cat" id="cat-${ci}">
-        <summary><b>${esc(c.name)}</b><span class="muted">品物 ${entries(c.items).length}・いつも：${esc(supName(c.sup))}</span></summary>
+        <summary><b>${esc(c.name)}</b><span class="muted">品物 ${entries(c.items).filter(([, it]) => !it.hidden).length}・いつも：${esc(supName(c.sup))}</span></summary>
         <label class="mini">この種類のいつもの材料屋
           <select class="inp" data-edit="catsup" data-ci="${ci}">${options(c.sup, "決めない")}</select></label>
         <ul class="ilist">${entries(c.items).map(([ii, it]) => `
-          <li><span class="iname"><b>${esc(it.name)}</b>${it.sub ? ` <span class="muted">${esc(it.sub)}</span>` : ""} <span class="muted">（${esc(it.unit || "")}）</span></span>
-            <select class="inp" data-edit="itemsup" data-ci="${ci}" data-ii="${ii}" aria-label="${esc(it.name)} のいつもの材料屋">${options(it.sup, "種類と同じ")}</select></li>`).join("")}
+          <li class="${it.hidden ? "hid" : ""}"><span class="iname"><b>${esc(it.name)}</b>${it.sub ? ` <span class="muted">${esc(it.sub)}</span>` : ""} <span class="muted">（${esc(it.unit || "")}）</span>${it.hidden ? ' <span class="tag">かくしている</span>' : ""}</span>
+            <select class="inp" data-edit="itemsup" data-ci="${ci}" data-ii="${ii}" aria-label="${esc(it.name)} のいつもの材料屋">${options(it.sup, "種類と同じ")}</select>
+            ${it.free ? "" : btnEditor(ci, ii, it)}</li>`).join("")}
         </ul>
+        <form class="kadd" data-form="itemadd" data-ci="${ci}">
+          <input id="ia-${ci}" class="inp" maxlength="30" autocomplete="off" placeholder="足す品物の名前" aria-label="${esc(c.name)} に足す品物の名前">
+          <select id="iu-${ci}" class="inp" aria-label="単位">${units.map(u => `<option>${esc(u)}</option>`).join("")}</select>
+          <button class="btn">品物を足す</button>
+        </form>
       </details>`).join("")}`;
+}
+
+/* ---------- 手で書いた品物（スマホの「自由に書く」。10/14） ----------
+   依頼の行のうち「自由に書く」の品物を、書いた名前ごとに数える（取り消した依頼は数えない）。
+   空白・全角半角のちがいは同じものにする。書き方のちがうもの（キャスター／キャスタ）は別に数える。
+   「タブに足す」で、えらんだ種類に、その名前のボタンなしの品物を足す */
+let freePick = "";   // 「タブに足す」を開いている名前
+const normName = s => String(s ?? "").normalize("NFKC").replace(/\s+/g, " ").trim();
+
+function freeList(cats) {
+  const freeKeys = new Set(), have = new Set();
+  for (const [, c] of cats) for (const [, it] of entries(c.items)) {
+    if (it.free) freeKeys.add(`${c.id}:${it.id}`);
+    else have.add(normName(it.name));
+  }
+  const m = new Map();
+  for (const r of Object.values(S.reqs || {})) {
+    if (!r || r.status === "cancelled") continue;
+    for (const l of Object.values(r.lines || {})) {
+      if (!l || !freeKeys.has(l.key)) continue;
+      const name = normName(l.spec);
+      if (!name) continue;
+      const x = m.get(name) || { name, n: 0, at: 0, unit: "", cat: "" };
+      x.n++;
+      if ((r.sentAt || 0) >= x.at) Object.assign(x, { at: r.sentAt || 0, unit: l.unit || x.unit, cat: String(l.key).split(":")[0] });
+      m.set(name, x);
+    }
+  }
+  return [...m.values()].map(x => ({ ...x, have: have.has(x.name) })).sort((a, b) => b.n - a.n || b.at - a.at).slice(0, 30);
+}
+
+function freeBlock(cats, units) {
+  if (!S.reqs) return '<div class="block"><h3>手で書いた品物</h3><p class="muted">読んでいます…</p></div>';
+  const list = freeList(cats);
+  const md = ms => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()}`; };
+  const row = x => {
+    const open = freePick === x.name;
+    const ciOf = (cats.find(([, c]) => c.id === x.cat) || cats[cats.length - 1])[0];
+    return `
+      <li><span class="iname"><b>${esc(x.name)}</b> <span class="muted">${x.n}回・最後 ${md(x.at)}</span></span>
+        ${x.have ? '<span class="tag">タブにあります</span>'
+          : open ? `<form class="row" data-form="freeadd">
+              <select id="fcat" class="inp" aria-label="足す種類（タブ）">${cats.map(([ci, c]) => `<option value="${ci}"${ci === ciOf ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
+              <select id="funit" class="inp" aria-label="単位">${units.map(u => `<option${u === (x.unit || "個") ? " selected" : ""}>${esc(u)}</option>`).join("")}</select>
+              <button class="btn primary">足す</button><button type="button" class="btn" data-freeno>やめる</button></form>`
+          : `<button type="button" class="btn" data-freepick="${esc(x.name)}">タブに足す</button>`}</li>`;
+  };
+  return `
+    <div class="block"><h3>手で書いた品物（スマホの「自由に書く」）</h3>${list.length ? `
+      <p class="hint">現場がスマホの「自由に書く」に書いて送った品物です（多い順）。よく使うものは「タブに足す」で、えらんだ種類のタブに足せます。</p>
+      <ul class="ilist">${list.map(row).join("")}</ul>`
+      : '<p class="muted">まだありません。現場がスマホの「自由に書く」に書いて送ると、ここに出ます。</p>'}
+    </div>`;
+}
+
+/** 品物一覧の品物 → { it, base（データベースの場所） }（ci・ii はデータベースの番号） */
+function itemOf(ci, ii) {
+  return { it: S.catalog.cats[ci].items[ii], base: `${PATH.catalog}/cats/${ci}/items/${ii}` };
+}
+/** 品物の行 → [[行の名前, [ボタン…]], …]（データベースの形のちがいをならす） */
+const optRows = it => entries(it.opts).map(([, o]) => [o[0], entries(o[1]).map(([, v]) => v)]);
+
+/** 種類 ci に、ボタンなしの品物を足す（品名は名前そのまま）。番号は、いまのいちばん大きい番号の次 */
+async function addItem(ci, name, unit) {
+  const c = S.catalog.cats[ci];
+  const next = entries(c.items).reduce((m, [k]) => Math.max(m, Number(k)), -1) + 1;
+  await set(ref(db, `${PATH.catalog}/cats/${ci}/items/${next}`), { id: "u" + Date.now().toString(36), name, tpl: name, unit: unit || "個" });
+}
+
+/** 品物の「ボタンを直す」：行（材質・サイズなど）ごとにボタンを足す・外す、行を足す、品物の下の小さい字、かくす（10/14） */
+function btnEditor(ci, ii, it) {
+  const opts = entries(it.opts).map(([oi, o]) => [oi, o[0], entries(o[1]).map(([, v]) => v)]);
+  return `
+    <details class="ibtns" id="ib-${ci}-${ii}"><summary>ボタンを直す</summary>
+      <label class="mini">品物の下の小さい字
+        <input class="inp" data-edit="isub" data-ci="${ci}" data-ii="${ii}" value="${esc(it.sub || "")}" maxlength="30" placeholder="（書かない）"></label>
+      ${opts.map(([oi, label, vals]) => `
+        <div class="mini">${esc(label)}
+          <div class="chips">
+            ${vals.map((v, k) => `<span class="chip">${esc(v)}<button type="button" data-optdel="${ci}" data-ii="${ii}" data-oi="${oi}" data-k="${k}" aria-label="${esc(label)} の ${esc(v)} を外す">×</button></span>`).join("")}
+            <form class="chip-add" data-form="optadd" data-ci="${ci}" data-ii="${ii}" data-oi="${oi}">
+              <input id="oa-${ci}-${ii}-${oi}" class="inp" maxlength="30" autocomplete="off" placeholder="足すボタン" aria-label="${esc(it.name)} の ${esc(label)} に足す">
+              <button class="btn">足す</button>
+            </form>
+          </div>
+          ${vals.length ? "" : `<button type="button" class="linkbtn" data-rowdel="${ci}" data-ii="${ii}" data-oi="${oi}">「${esc(label)}」の行を外す</button>`}
+        </div>`).join("")}
+      <form class="chip-add" data-form="rowadd" data-ci="${ci}" data-ii="${ii}">
+        <input id="ra-${ci}-${ii}" class="inp" maxlength="12" autocomplete="off" placeholder="足す行の名前（例 種類）" aria-label="${esc(it.name)} に足す行の名前">
+        <button class="btn">行を足す</button>
+      </form>
+      <button type="button" class="linkbtn" data-ihide="${ci}" data-ii="${ii}">${it.hidden ? "スマホに出す" : "この品物をかくす（スマホに出さない）"}</button>
+    </details>`;
 }
 
 /* ==================== 登録した端末・合言葉（11章 8） ==================== */
@@ -623,6 +725,27 @@ async function onClick(e) {
     const gone = list.splice(Number(d.i), 1)[0];
     await set(ref(db, `${PATH.sup}/${d.aliasdel}/alias`), list.length ? list : null);
     toast(`${s.name} の読みかえから「${gone}」を外しました`);
+  } else if (d.freepick) {
+    freePick = d.freepick;
+    draw(true);
+  } else if ("freeno" in d) {
+    freePick = "";
+    draw(true);
+  } else if (d.optdel) {
+    const { it, base } = itemOf(d.optdel, d.ii), [label, vals] = optRows(it)[Number(d.oi)];
+    const gone = vals.splice(Number(d.k), 1)[0];
+    await set(ref(db, `${base}/opts/${d.oi}/1`), vals.length ? vals : null);
+    toast(`${it.name} の「${label}」から「${gone}」を外しました`);
+  } else if (d.rowdel) {
+    const { it, base } = itemOf(d.rowdel, d.ii), rows = optRows(it);
+    const [label] = rows.splice(Number(d.oi), 1)[0];
+    const tpl = String(it.tpl || "").replace(`{${label}}`, "").replace(/\s{2,}/g, " ").trim();
+    await update(ref(db, base), { opts: rows.length ? rows : null, tpl });
+    toast(`${it.name} の「${label}」の行を外しました`);
+  } else if (d.ihide) {
+    const { it, base } = itemOf(d.ihide, d.ii);
+    await update(ref(db, base), { hidden: it.hidden ? null : true });
+    toast(it.hidden ? `${it.name} をスマホに出しました` : `${it.name} をかくしました（スマホに出ません）`);
   } else if (d.ccdel) {
     const s = S.sup[d.ccdel];
     const list = entries(s.cc).map(([, a]) => a);
@@ -704,6 +827,10 @@ async function onChange(e) {
     if (v && !EMAIL_RE.test(v)) { toast("メールアドレスの形がちがいます（例 order@example.co.jp）"); return; }
     await update(ref(db, `${PATH.sup}/${d.id}`), { email: v || null });
     toast(v ? `${s.name} のメールアドレスを入れました` : `${s.name} のメールアドレスを消しました`);
+  } else if (d.edit === "isub") {
+    const { it, base } = itemOf(d.ci, d.ii);
+    await set(ref(db, `${base}/sub`), v || null);
+    toast(`${it.name} の下の小さい字を直しました`);
   } else if (d.edit === "lineto") {
     const s = S.sup[d.id];
     await update(ref(db, `${PATH.sup}/${d.id}`), { lineTo: v || null });
@@ -752,6 +879,42 @@ async function onSubmit(form) {
     clear(`al-${id}`);
     await set(ref(db, `${PATH.sup}/${id}/alias`), [...list, word]);
     toast(`${s.name} の読みかえに「${word}」を足しました`);
+  } else if (kind === "freeadd") {
+    const name = freePick, ci = $("#fcat", form).value, unit = $("#funit", form).value, c = S.catalog.cats[ci];
+    if (!name || !c) return;
+    if (entries(c.items).some(([, it]) => normName(it.name) === name)) return toast(`${name} は「${c.name}」にもうあります`);
+    freePick = "";
+    await addItem(ci, name.replace(/[{}]/g, "").slice(0, 60), unit);
+    toast(`「${name}」を ${c.name} のタブに足しました（ボタンなし。「ボタンを直す」で足せます）`);
+  } else if (kind === "optadd") {
+    const { ci, ii, oi } = form.dataset, { it, base } = itemOf(ci, ii), [label, vals] = optRows(it)[Number(oi)];
+    const v = val(`oa-${ci}-${ii}-${oi}`);
+    if (!v) return toast("足すボタンの字を入れてください");
+    if (/[{}]/.test(v)) return toast("{ } は使えません");
+    if (vals.includes(v)) return toast(`「${v}」はもうあります`);
+    clear(`oa-${ci}-${ii}-${oi}`);
+    await set(ref(db, `${base}/opts/${oi}/1`), [...vals, v]);
+    toast(`${it.name} の「${label}」に「${v}」を足しました`);
+  } else if (kind === "rowadd") {
+    const { ci, ii } = form.dataset, { it, base } = itemOf(ci, ii), rows = optRows(it);
+    const label = val(`ra-${ci}-${ii}`);
+    if (!label) return toast("足す行の名前を入れてください（例 種類）");
+    if (/[{}.#$\[\]\/]/.test(label)) return toast("{ } . # $ [ ] / は使えません");
+    if (rows.some(([l]) => l === label)) return toast(`「${label}」の行はもうあります`);
+    clear(`ra-${ci}-${ii}`);
+    // 品名のひな形（tpl）の、いちばん後ろに {行の名前} を足す（えらんだボタンが品名に入るように）
+    const tpl = String(it.tpl || it.name).includes(`{${label}}`) ? it.tpl : `${it.tpl || it.name} {${label}}`.trim();
+    await update(ref(db, base), { opts: [...rows, [label, []]], tpl });
+    toast(`${it.name} に「${label}」の行を足しました。ボタンを足してください`);
+  } else if (kind === "itemadd") {
+    const ci = form.dataset.ci, c = S.catalog.cats[ci];
+    const name = val(`ia-${ci}`), unit = $(`#iu-${ci}`, form).value;
+    if (!name) return toast("足す品物の名前を入れてください");
+    if (/[{}]/.test(name)) return toast("{ } は使えません");
+    if (entries(c.items).some(([, it]) => it.name === name)) return toast(`${name} は「${c.name}」にもうあります`);
+    clear(`ia-${ci}`);
+    await addItem(ci, name, unit);
+    toast(`${c.name} に「${name}」を足しました（ボタンなし。「ボタンを直す」で足せます）`);
   } else if (kind === "cc") {
     const id = form.dataset.id, s = S.sup[id];
     const addr = val(`cc-${id}`);

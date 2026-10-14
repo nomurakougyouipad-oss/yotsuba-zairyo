@@ -9,14 +9,15 @@ import { SHOPS, MAX_PHOTOS, safeLink, linkLabel, photoPicker, deletePhoto } from
 const arr = v => (Array.isArray(v) ? v : Object.values(v || {})).filter(x => x != null);
 
 /** データベースの品物一覧を使いやすい形にする → { units, cats, item: Map(キー → 品物) }（キーは "種類:品物" 例 "bolt:hex"） */
+//   ⚙ 設定で「かくす」にした品物（hidden）は、種類のタブには出さない。前のカート・★いつもの で使えるように、item には入れておく（10/14）
 export function normCatalog(raw) {
   const units = arr(raw && raw.units);
-  const cats = arr(raw && raw.cats).map(c => ({
-    ...c,
-    items: arr(c.items).map(it => ({ ...it, opts: arr(it.opts).map(o => [o[0], arr(o[1])]) })),
-  }));
+  const cats = arr(raw && raw.cats).map(c => {
+    const all = arr(c.items).map(it => ({ ...it, opts: arr(it.opts).map(o => [o[0], arr(o[1])]) }));
+    return { ...c, items: all.filter(it => !it.hidden), all };
+  });
   const item = new Map();
-  cats.forEach(c => c.items.forEach(it => item.set(`${c.id}:${it.id}`, { ...it, cat: c.id, catName: c.name, key: `${c.id}:${it.id}` })));
+  cats.forEach(c => c.all.forEach(it => item.set(`${c.id}:${it.id}`, { ...it, cat: c.id, catName: c.name, key: `${c.id}:${it.id}` })));
   return { units, cats, item };
 }
 
@@ -210,7 +211,8 @@ export function openItem(catalog, key, src, onSave, draft = null) {
         if (it.free) vals.__free = g("#iFree").value;
         const spec = buildSpec(it, vals), n = g("#iNote").value.trim(), q = readQty(), err = g("#iErr");
         if (it.free && !spec) { err.textContent = "品名・寸法を書いてください"; g("#iFree").focus(); return; }
-        if (!it.free && !Object.keys(vals).length && !n) { err.textContent = "材質や大きさを1つ以上えらぶか、寸法・メモを書いてください"; return; }
+        // ボタンのない品物（⚙ 設定の「タブに足す」「品物を足す」で足したもの）は、数だけでよい
+        if (!it.free && it.opts.length && !Object.keys(vals).length && !n) { err.textContent = "材質や大きさを1つ以上えらぶか、寸法・メモを書いてください"; return; }
         if (!q) { err.textContent = "数を入れてください"; g("#iQty").focus(); return; }
         if (picker && picker.isBusy()) { err.textContent = "写真を上げています。少し待ってください"; return; }
         const lk = web ? g("#iLink").value.trim() : "";

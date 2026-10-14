@@ -169,6 +169,11 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .ilist li:last-child{border-bottom:0}
 .ilist select{width:auto;max-width:13em}
 .iname{min-width:0}
+.ilist li{flex-wrap:wrap}
+.ilist li.hid .iname{color:var(--muted)}
+.ibtns{flex:1 1 100%;display:flex;flex-direction:column;gap:10px}
+.ibtns summary{cursor:pointer;font-weight:700;color:var(--blue);min-height:36px;display:flex;align-items:center}
+.ibtns[open]{padding:8px 10px 10px;border:1px dashed var(--line);border-radius:10px}
 @media (max-width:640px){
   .krow{grid-template-columns:5.8em minmax(0,1fr)}
   .kname-wrap{flex-wrap:wrap}
