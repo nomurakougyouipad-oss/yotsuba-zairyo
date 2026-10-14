@@ -3,7 +3,7 @@
 // - カートは、この端末にしまう（iPhone はほかのアプリから戻ると、開きなおすことがあるため）
 // - 「自由に書く」と「金物」には、お店で探すボタン・写真（4枚まで）・お店のページのリンク（11章 6。js/shashin.js）
 import { esc, toast, openSheet, closeSheet, saveDraft, clearDraft } from "./common.js";
-import { SHOPS, MAX_PHOTOS, safeLink, linkLabel, photoPicker, deletePhoto } from "./shashin.js";
+import { SHOPS, MAX_PHOTOS, safeLink, linkLabel, pageLink, isImageLink, photoPicker, deletePhoto } from "./shashin.js";
 
 /* ---------- 品物一覧 ---------- */
 const arr = v => (Array.isArray(v) ? v : Object.values(v || {})).filter(x => x != null);
@@ -123,6 +123,7 @@ export function openItem(catalog, key, src, onSave, draft = null) {
           <div class="field"><span class="lab">写真・スクショ（${MAX_PHOTOS}枚まで）</span><div class="photos" id="iPhotos"></div></div>
           <div class="field"><label for="iLink">お店のページのリンク（あれば）</label>
             <input id="iLink" class="inp" inputmode="url" autocomplete="off" placeholder="https:// ではじまるリンクをはりつける" value="${esc(link0)}">
+            <span class="hint">お店の品物のページで、Safari の「共有」→「コピー」でコピーして、ここにはります。</span>
             <span class="hint" id="iLinkHint"></span></div>
         </div>` : ""}
       <div class="sheet-foot">
@@ -176,8 +177,13 @@ export function openItem(catalog, key, src, onSave, draft = null) {
     const upLink = () => {
       if (!web) return;
       const v = g("#iLink").value.trim(), h = g("#iLinkHint"), ok = safeLink(v);
-      h.className = "hint" + (v ? (ok ? " ok" : " bad") : "");
-      h.textContent = !v ? "" : ok ? `${linkLabel(ok)} のページ` : "https:// ではじまるリンクをはりつけてください";
+      // 写真のリンク（商品の写真を長押ししてコピーしたもの）は知らせる。モノタロウの写真は、商品のページに直して送る（10/15）
+      const page = ok ? pageLink(ok) : "", img = !!page && isImageLink(page);
+      h.className = "hint" + (v ? (ok && !img ? " ok" : " bad") : "");
+      h.textContent = !v ? "" : !ok ? "https:// ではじまるリンクをはりつけてください"
+        : img ? "これは写真のリンクです。お店のページのリンクをはってください（Safari の「共有」→「コピー」）"
+        : page !== ok ? `${linkLabel(page)} の品物のページにして送ります（写真のリンクから直しました）`
+        : `${linkLabel(ok)} のページ`;
     };
     let picker = null;
     if (web) { picker = photoPicker(g("#iPhotos"), photos, preview); upShops(); upLink(); }
@@ -245,7 +251,7 @@ export function openItem(catalog, key, src, onSave, draft = null) {
         const lk = web ? g("#iLink").value.trim() : "";
         if (lk && !safeLink(lk)) { err.textContent = "リンクの形がちがいます（https:// ではじまるもの）"; g("#iLink").focus(); return; }
         const line = { uid: (src && src.uid) || newUid(), key, cat: it.cat, name: it.name, vals: { ...vals }, spec, note: n, qty: q, unit: g("#iUnit").value };
-        if (web) { line.photos = [...photos]; line.link = safeLink(lk); }
+        if (web) { line.photos = [...photos]; line.link = pageLink(safeLink(lk)); }   // モノタロウの写真のリンクは、商品のページにしてしまう
         saved = true;
         // 外した写真（はじめについていて、いまはない）は、置き場から消す
         photos0.filter(p => !photos.includes(p)).forEach(deletePhoto);

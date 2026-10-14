@@ -13,7 +13,7 @@ import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
 import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, markBilled, backToArrived, billMany } from "./chumon.js";
 import { renderSettings } from "./settei.js";
-import { photosHTML, fillPhotos, attachHTML, linkLabel, shopOf, SHOPS } from "./shashin.js";
+import { photosHTML, fillPhotos, attachHTML, linkLabel, shopOf, pageLink, SHOPS } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
 import { openImport } from "./nouhin.js";
 import { openReqEdit, openOrderEdit } from "./naosu.js";
@@ -95,7 +95,7 @@ function netLinesHTML(sup, lines) {
   const shop = SHOPS.find(x => x.id === sup.shop);
   return `<ul class="g-lines net-lines">${lines.map(l => {
     const own = !!l.link && (!shop || shopOf(l.link) === shop.id);
-    const href = own ? l.link : shop ? shop.url(l.spec || "") : "";
+    const href = own ? pageLink(l.link) : shop ? shop.url(l.spec || "") : "";   // モノタロウの写真のリンクは、商品のページにする
     return `<li><span>${esc(lineText(l))}</span>${href ? `<a class="btn" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${own ? "ページを開く" : `${esc(shop.name)}でさがす`}</a>` : ""}</li>`;
   }).join("")}</ul>
     ${shop ? "" : '<p class="hint">⚙ 設定 → 材料屋 で、お店（モノタロウ・ミスミ・アマゾン）をえらぶと、品名でさがすボタンが出ます。</p>'}`;
@@ -361,7 +361,7 @@ export function startOfficeApp(main, me) {
   function lineAttach(l) {
     const ps = Object.values(l.photos || {});
     return (ps.length ? `<div class="photos sm">${photosHTML(ps)}</div>` : "") +
-      (l.link ? `<a class="shoplink" href="${esc(l.link)}" target="_blank" rel="noopener noreferrer">${esc(linkLabel(l.link))} のページを開く</a>` : "");
+      (l.link ? `<a class="shoplink" href="${esc(pageLink(l.link))}" target="_blank" rel="noopener noreferrer">${esc(linkLabel(pageLink(l.link)))} のページを開く</a>` : "");
   }
 
   /** 材料屋ごとのまとまり（まだ注文していない品物だけ） */

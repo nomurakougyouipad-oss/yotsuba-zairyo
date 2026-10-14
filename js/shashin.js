@@ -32,9 +32,25 @@ export function linkLabel(h) {
   const host = linkHost(h);
   return SHOP_NAME[host] ? `${SHOP_NAME[host]}（${host}）` : host;
 }
+/** お店のページのリンクにする（10/15）：スマホで商品の写真を長押しすると、写真のリンク（jp.images-monotaro.com/…/mono19265925-…jpg）が
+ *  コピーされることがある。モノタロウの写真は、名前の番号（8けた）から商品のページ（www.monotaro.com/p/1926/5925/）にする。ほかはそのまま */
+export function pageLink(h) {
+  try {
+    const u = new URL(h), host = u.hostname;
+    if (host === "images-monotaro.com" || host.endsWith(".images-monotaro.com")) {
+      const m = u.pathname.match(/mono(\d{4})(\d{4})(?!\d)/);
+      if (m) return `https://www.monotaro.com/p/${m[1]}/${m[2]}/`;
+    }
+  } catch (err) { }
+  return h;
+}
+/** 写真のリンクか（.jpg などで終わる。お店のページではない）（10/15） */
+export function isImageLink(h) {
+  try { return /\.(jpe?g|png|webp|gif|avif|heic|bmp)$/i.test(new URL(h).pathname); } catch (err) { return false; }
+}
 /** リンクが、どのネットのお店のページか（SHOPS の id。ほかのページは ""）。材料屋を最初からそのお店にするのに使う（10/15） */
 export function shopOf(h) {
-  const host = linkHost(h), on = d => host === d || host.endsWith("." + d);
+  const host = linkHost(pageLink(h)), on = d => host === d || host.endsWith("." + d);
   return on("monotaro.com") ? "monotaro" : on("misumi-ec.com") ? "misumi" : on("amazon.co.jp") || on("amzn.asia") || on("amzn.to") ? "amazon" : "";
 }
 
@@ -163,12 +179,12 @@ document.addEventListener("click", e => {
   if (b) openPhoto(b.dataset.phview);
 });
 
-/** 品物の行・注文についている写真とリンク */
+/** 品物の行・注文についている写真とリンク（リンクは pageLink でお店のページにする。注文の文の「参考：」もこれ） */
 export function attachOf(lines) {
   const ls = Object.values(lines || {});
   return {
     photos: ls.flatMap(l => Object.values(l.photos || {})),
-    links: [...new Set(ls.map(l => l.link).filter(Boolean))],
+    links: [...new Set(ls.map(l => l.link).filter(Boolean).map(pageLink))],
   };
 }
 /** 写真とリンクの欄（なければ ""）。出したあと fillPhotos(el) を呼ぶ */
