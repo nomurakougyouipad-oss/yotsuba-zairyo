@@ -6,7 +6,7 @@
 //   日報の送信画面と同じく「active が false でなく、closed にない」注番を出す
 // - 日報の注番を正しいものとして出す（10/12 持ち主）。常設の注番も、日報の名前で出す
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
-import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+import { getDatabase, ref, onValue, get } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 
 const nippoConfig = {
   apiKey: "AIzaSyDRTF3YW0oTbMcN3cwsmMDJWoLX4HpVtPk",
@@ -47,6 +47,15 @@ export function watchJobs(cb, onErr) {
   const off1 = onValue(ref(db, "master/jobs"), s => { jobs = s.val() || {}; emit(); }, onErr);
   const off2 = onValue(ref(db, "master/closed"), s => { closed = new Set(Object.values(s.val() || {})); emit(); }, onErr);
   return () => { off1(); off2(); };
+}
+
+/** 日報の注番を1つだけ読む（読むだけ）→ { chuban, kenmei, tantou, closed } か null（事務所の「依頼を直す」で使う。10/14） */
+export async function getJob(chuban) {
+  if (!CHUBAN_RE.test(String(chuban || ""))) return null;
+  const [j, closed] = await Promise.all([get(ref(db, `master/jobs/${chuban}`)), get(ref(db, "master/closed"))]);
+  const x = j.val();
+  if (!x) return null;
+  return { chuban, kenmei: x.name || "", tantou: x.owner || "", closed: x.active === false || Object.values(closed.val() || {}).includes(chuban) };
 }
 
 /** 日報の作業者の名簿（master/workers = {w001: {name, kubun:"自社"|"協力", shozoku:会社, active}}）を見張る

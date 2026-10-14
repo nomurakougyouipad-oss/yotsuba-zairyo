@@ -148,13 +148,24 @@
           "sentAt": { ".validate": "newData.isNumber() && (data.exists() || newData.val() == now)" },
           "status": {
             ".write": "auth != null && auth.token.zr_role == 'genba' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'genba' && data.parent().child('chumonsha').val() == auth.token.zr_name && data.val() == 'sent' && newData.val() == 'cancelled' && data.parent().child('ordered').val() != true",
-            ".validate": "newData.isString() && newData.val().matches(/^(sent|ordered|cancelled)$/) && (!data.exists() || data.val() != 'cancelled' || newData.val() == 'cancelled')"
+            ".validate": "newData.isString() && newData.val().matches(/^(sent|ordered|cancelled)$/) && (!data.exists() || data.val() != 'cancelled' || newData.val() == 'cancelled' || (auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'))"
           },
           "cancelledAt": {
             ".write": "auth != null && auth.token.zr_role == 'genba' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'genba' && data.parent().child('chumonsha').val() == auth.token.zr_name && !data.exists() && newData.parent().child('status').val() == 'cancelled' && data.parent().child('ordered').val() != true",
             ".validate": "newData.isNumber() && newData.val() == now"
           },
           "ordered": { ".validate": "newData.isBoolean() && (newData.val() == false || data.parent().child('status').val() != 'cancelled')" },
+          "cancelledBy": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" },
+          "cancelReason": { ".validate": "newData.isString() && newData.val().length <= 100" },
+          "log": {
+            "$k": {
+              ".validate": "$k.length <= 40 && newData.hasChildren(['at', 'by', 'what'])",
+              "at": { ".validate": "newData.isNumber()" },
+              "by": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "what": { ".validate": "newData.isString() && newData.val().length <= 2000" },
+              "$other": { ".validate": false }
+            }
+          },
           "lines": {
             "$line": {
               ".validate": "$line.length <= 40 && newData.hasChildren(['spec', 'qty', 'unit'])",
@@ -306,6 +317,15 @@
           "billedAt": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
           "billedBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "invoiceId": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "log": {
+            "$k": {
+              ".validate": "$k.length <= 40 && newData.hasChildren(['at', 'by', 'what'])",
+              "at": { ".validate": "newData.isNumber()" },
+              "by": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "what": { ".validate": "newData.isString() && newData.val().length <= 2000" },
+              "$other": { ".validate": false }
+            }
+          },
           "lines": {
             "$line": {
               ".validate": "$line.length <= 40 && newData.hasChildren(['spec', 'qty', 'unit'])",

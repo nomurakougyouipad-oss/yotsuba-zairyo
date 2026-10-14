@@ -10,10 +10,11 @@ const arr = v => (Array.isArray(v) ? v : Object.values(v || {})).filter(x => x !
 
 /** データベースの品物一覧を使いやすい形にする → { units, cats, item: Map(キー → 品物) }（キーは "種類:品物" 例 "bolt:hex"） */
 //   ⚙ 設定で「かくす」にした品物（hidden）は、種類のタブには出さない。前のカート・★いつもの で使えるように、item には入れておく（10/14）
+//   行は [行の名前, [ボタン…], えらばなくてもよいか]。3つめが true の行は、えらばなくてもカートに入れられる（10/14。ほかの行は必ずえらぶ）
 export function normCatalog(raw) {
   const units = arr(raw && raw.units);
   const cats = arr(raw && raw.cats).map(c => {
-    const all = arr(c.items).map(it => ({ ...it, opts: arr(it.opts).map(o => [o[0], arr(o[1])]) }));
+    const all = arr(c.items).map(it => ({ ...it, opts: arr(it.opts).map(o => [o[0], arr(o[1]), o[2] === true]) }));
     return { ...c, items: all.filter(it => !it.hidden), all };
   });
   const item = new Map();
@@ -88,10 +89,11 @@ export function openItem(catalog, key, src, onSave, draft = null) {
   const editUid = (src && src.uid) || "";
   let saved = false;
 
-  const optHTML = it.opts.map(([k, choices]) => {
+  const optHTML = it.opts.map(([k, choices, optional]) => {
     const v = vals[k] || "", other = !!v && !choices.includes(v);
     return `
-      <div class="opt" data-opt="${esc(k)}"><span class="lab">${esc(k)}</span>
+      <div class="opt" data-opt="${esc(k)}"><span class="lab">${esc(k)}${optional ? '<small class="opt-free">（えらばなくてもよい）</small>' : ""}</span>
+        <p class="opt-need" hidden>${esc(k)}をえらんでください</p>
         <div class="opt-chips">
           ${choices.map(c => `<button type="button" data-v="${esc(c)}" aria-pressed="${v === c}">${esc(c)}</button>`).join("")}
           <button type="button" class="oth" data-oth aria-pressed="${other}">ほか…</button>
@@ -134,6 +136,19 @@ export function openItem(catalog, key, src, onSave, draft = null) {
   openSheet(html, p => {
     const w = p.querySelector("#itemWrap");
     const g = s => w.querySelector(s);
+    // えらんでいない行をオレンジにする／えらんだら、もとにもどす
+    const markNeed = keys => w.querySelectorAll("[data-opt]").forEach(grp => {
+      const on = keys.includes(grp.dataset.opt);
+      grp.classList.toggle("need", on);
+      grp.querySelector(".opt-need").hidden = !on;
+    });
+    const clearNeed = grp => {
+      if (!grp.classList.contains("need")) return;
+      grp.classList.remove("need");
+      grp.querySelector(".opt-need").hidden = true;
+      const left = [...w.querySelectorAll(".opt.need")].map(x => x.dataset.opt);
+      g("#iErr").textContent = left.length ? `えらんでいない行があります（${left.join("・")}）` : "";
+    };
     const readQty = () => { const n = parseFloat(String(g("#iQty").value).normalize("NFKC")); return Number.isFinite(n) && n > 0 ? n : 0; };
     const preview = () => {
       const spec = buildSpec(it, vals), n = g("#iNote").value.trim(), q = readQty();
@@ -201,6 +216,7 @@ export function openItem(catalog, key, src, onSave, draft = null) {
         }
         grp.querySelectorAll("[data-v]").forEach(b => b.setAttribute("aria-pressed", vals[k] === b.dataset.v));
         grp.querySelector("[data-oth]").setAttribute("aria-pressed", !inp.hidden);
+        if (vals[k]) clearNeed(grp);
         preview();
         return;
       }
@@ -211,7 +227,18 @@ export function openItem(catalog, key, src, onSave, draft = null) {
         if (it.free) vals.__free = g("#iFree").value;
         const spec = buildSpec(it, vals), n = g("#iNote").value.trim(), q = readQty(), err = g("#iErr");
         if (it.free && !spec) { err.textContent = "品名・寸法を書いてください"; g("#iFree").focus(); return; }
-        // ボタンのない品物（⚙ 設定の「タブに足す」「品物を足す」で足したもの）は、数だけでよい
+        // えらんでいない行（「えらばなくてもよい」でない行）があれば入れない。その行をオレンジにして「○○をえらんでください」（10/14）
+        if (!it.free) {
+          const need = it.opts.filter(([k, , optional]) => !optional && !vals[k]).map(([k]) => k);
+          if (need.length) {
+            markNeed(need);
+            err.textContent = `えらんでいない行があります（${need.join("・")}）`;
+            const first = w.querySelector(".opt.need");
+            if (first) first.scrollIntoView({ block: "center", behavior: "smooth" });
+            return;
+          }
+        }
+        // 行が全部「えらばなくてもよい」の品物は、何かえらぶか、寸法・メモを書く。ボタンのない品物（「タブに足す」「品物を足す」で足したもの）は、数だけでよい
         if (!it.free && it.opts.length && !Object.keys(vals).length && !n) { err.textContent = "材質や大きさを1つ以上えらぶか、寸法・メモを書いてください"; return; }
         if (!q) { err.textContent = "数を入れてください"; g("#iQty").focus(); return; }
         if (picker && picker.isBusy()) { err.textContent = "写真を上げています。少し待ってください"; return; }
@@ -230,7 +257,7 @@ export function openItem(catalog, key, src, onSave, draft = null) {
       const inp = e.target.closest("[data-othin]");
       if (inp) {
         const k = inp.closest("[data-opt]").dataset.opt, v = inp.value.trim();
-        if (v) vals[k] = v; else delete vals[k];
+        if (v) { vals[k] = v; clearNeed(inp.closest("[data-opt]")); } else delete vals[k];
       }
       if (e.target.id === "iFree") vals.__free = e.target.value;
       if (e.target.id === "iLink") upLink();

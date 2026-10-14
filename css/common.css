@@ -441,6 +441,28 @@ ul.plain{margin:0;padding-left:1.2em}
 .opt-chips button{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 13px;font-weight:700;font-size:15px;min-height:44px;min-width:44px}
 .opt-chips button[aria-pressed="true"]{background:var(--surface2);border-color:var(--amber);color:var(--amber);box-shadow:inset 0 -2px 0 var(--amber)}
 .opt-chips .oth{border-style:dashed;color:var(--muted)}
+/* 事務所が依頼を取り消す・もどす（10/14） */
+.rcx-box{margin-top:10px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface2);display:flex;flex-direction:column;gap:8px;cursor:default}
+.rcx-box .confirm-q{margin:0}
+.loglist{margin:6px 0 0;padding-left:1.2em;font-size:13px;line-height:1.7}
+/* 依頼を直す・注文を直す（10/14） */
+.ef-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.ef-grid #eJob{grid-column:1/-1;margin:0}
+.ef-grid #eJob:empty{display:none}
+.ef-grid .mini:has(#eMemo){grid-column:1/-1}
+.erows{display:flex;flex-direction:column;gap:8px;margin-bottom:8px}
+.erow{display:flex;flex-direction:column;gap:6px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--surface)}
+.erow-head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--muted)}
+.erow .inp{padding:6px 8px;min-width:0;width:100%}
+.erow.done{background:var(--bg);font-size:14px}
+.erow.done .hint{display:block}
+.erow.gone{opacity:.45}
+.erow.gone .inp{text-decoration:line-through}
+/* えらんでいない行（10/14）：オレンジのわくと「○○をえらんでください」 */
+.opt.need{padding:8px 10px;margin:-8px -10px;border:2px solid var(--amber-btn);border-radius:10px;background:var(--surface2)}
+.opt-need{margin:0;color:var(--amber);font-weight:800;font-size:14px}
+.opt-need[hidden]{display:none}
+.opt .lab .opt-free{font-weight:700;margin-left:4px}
 .qtyrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .stepper{display:flex;align-items:center;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface)}
 .stepper button{width:48px;height:48px;border:0;background:transparent;font-size:24px;font-weight:700}

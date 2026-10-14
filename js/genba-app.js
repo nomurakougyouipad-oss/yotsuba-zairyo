@@ -26,7 +26,7 @@ const isCancelled = r => r.status === "cancelled";
 
 /** 依頼の進み具合。os = この依頼から事務所が作った注文（取り消した注文は数えない） */
 function progress(r, os = []) {
-  if (isCancelled(r)) return { step: 0, label: "取り消した" };
+  if (isCancelled(r)) return { step: 0, label: r.cancelledBy ? "事務所が取り消した" : "取り消した" };   // 事務所が取り消したときは cancelledBy がある（10/14）
   const act = os.filter(o => o.status !== "cancelled");
   if (!act.length) return { step: 1, label: "事務所で確認中" };
   const names = [...new Set(act.map(o => o.supplierName))].join("・");
@@ -385,11 +385,12 @@ export function startGenbaApp(main, me) {
           <h2 id="panelTitle"><span class="chuban big">${esc(r.chuban)}</span></h2><span class="kenmei">${esc(zenkana(r.kenmei))}</span></div>
           <button type="button" class="x" data-close aria-label="閉じる">×</button></div>
         ${isCancelled(r)
-          ? `<div class="block"><p class="warn">${r.cancelledAt ? `${md(r.cancelledAt)} ${hm(r.cancelledAt)} に` : ""}取り消しました</p></div>`
+          ? `<div class="block"><p class="warn">${r.cancelledAt ? `${md(r.cancelledAt)} ${hm(r.cancelledAt)} に` : ""}${r.cancelledBy ? "事務所が" : ""}取り消しました${r.cancelReason ? `（理由：${esc(r.cancelReason)}）` : ""}</p></div>`
           : `<div class="block">
               <ol class="steps" style="--c:${pg.step >= 3 ? "var(--blue)" : "var(--amber)"}">${steps.map(([l, d, done]) => `<li class="${done ? "done" : ""}">${l}<span class="d">${done && d ? md(d) : ""}</span></li>`).join("")}</ol>
               <p class="center"><b>${esc(pg.label)}</b></p>
             </div>`}
+        ${Object.keys(r.log || {}).length ? `<div class="block"><h3>事務所の記録</h3><ul class="loglist">${Object.values(r.log).filter(Boolean).sort((a, b) => (a.at || 0) - (b.at || 0)).map(x => `<li><span class="num">${x.at ? `${md(x.at)} ${hm(x.at)}` : ""}</span> ${esc(x.what || "")}</li>`).join("")}</ul></div>` : ""}
         <div class="block"><h3>品物</h3>
           <ul class="slines">${Object.entries(r.lines || {}).map(([lid, l]) => {
             const s = lineStatus(l, os, r), lp = linePrice(l, lid, os);

@@ -396,7 +396,9 @@ function itemOf(ci, ii) {
   return { it: S.catalog.cats[ci].items[ii], base: `${PATH.catalog}/cats/${ci}/items/${ii}` };
 }
 /** 品物の行 → [[行の名前, [ボタン…]], …]（データベースの形のちがいをならす） */
-const optRows = it => entries(it.opts).map(([, o]) => [o[0], entries(o[1]).map(([, v]) => v)]);
+const optRows = it => entries(it.opts).map(([, o]) => [o[0], entries(o[1]).map(([, v]) => v), o[2] === true]);
+/** 行をデータベースの形にする（「えらばなくてもよい」の行だけ3つめに true） */
+const rowsForDb = rows => rows.map(([l, v, free]) => (free ? [l, v, true] : [l, v]));
 
 /** 種類 ci に、ボタンなしの品物を足す（品名は名前そのまま）。番号は、いまのいちばん大きい番号の次 */
 async function addItem(ci, name, unit) {
@@ -407,13 +409,14 @@ async function addItem(ci, name, unit) {
 
 /** 品物の「ボタンを直す」：行（材質・サイズなど）ごとにボタンを足す・外す、行を足す、品物の下の小さい字、かくす（10/14） */
 function btnEditor(ci, ii, it) {
-  const opts = entries(it.opts).map(([oi, o]) => [oi, o[0], entries(o[1]).map(([, v]) => v)]);
+  const opts = entries(it.opts).map(([oi, o]) => [oi, o[0], entries(o[1]).map(([, v]) => v), o[2] === true]);
   return `
     <details class="ibtns" id="ib-${ci}-${ii}"><summary>ボタンを直す</summary>
       <label class="mini">品物の下の小さい字
         <input class="inp" data-edit="isub" data-ci="${ci}" data-ii="${ii}" value="${esc(it.sub || "")}" maxlength="30" placeholder="（書かない）"></label>
-      ${opts.map(([oi, label, vals]) => `
+      ${opts.map(([oi, label, vals, free]) => `
         <div class="mini">${esc(label)}
+          <button type="button" class="sw sm" data-optfree="${ci}" data-ii="${ii}" data-oi="${oi}" aria-pressed="${free}"><span class="knob" aria-hidden="true"></span>えらばなくてもよい</button>
           <div class="chips">
             ${vals.map((v, k) => `<span class="chip">${esc(v)}<button type="button" data-optdel="${ci}" data-ii="${ii}" data-oi="${oi}" data-k="${k}" aria-label="${esc(label)} の ${esc(v)} を外す">×</button></span>`).join("")}
             <form class="chip-add" data-form="optadd" data-ci="${ci}" data-ii="${ii}" data-oi="${oi}">
@@ -731,6 +734,11 @@ async function onClick(e) {
   } else if ("freeno" in d) {
     freePick = "";
     draw(true);
+  } else if (d.optfree) {
+    // 行ごとの「えらばなくてもよい」（10/14）。オフの行は、現場がえらばないとカートに入れられない
+    const { it, base } = itemOf(d.optfree, d.ii), [label, , free] = optRows(it)[Number(d.oi)];
+    await set(ref(db, `${base}/opts/${d.oi}/2`), free ? null : true);
+    toast(free ? `${it.name} の「${label}」を、必ずえらぶ行にしました` : `${it.name} の「${label}」を、えらばなくてもよい行にしました`);
   } else if (d.optdel) {
     const { it, base } = itemOf(d.optdel, d.ii), [label, vals] = optRows(it)[Number(d.oi)];
     const gone = vals.splice(Number(d.k), 1)[0];
@@ -740,7 +748,7 @@ async function onClick(e) {
     const { it, base } = itemOf(d.rowdel, d.ii), rows = optRows(it);
     const [label] = rows.splice(Number(d.oi), 1)[0];
     const tpl = String(it.tpl || "").replace(`{${label}}`, "").replace(/\s{2,}/g, " ").trim();
-    await update(ref(db, base), { opts: rows.length ? rows : null, tpl });
+    await update(ref(db, base), { opts: rows.length ? rowsForDb(rows) : null, tpl });
     toast(`${it.name} の「${label}」の行を外しました`);
   } else if (d.ihide) {
     const { it, base } = itemOf(d.ihide, d.ii);
@@ -904,7 +912,7 @@ async function onSubmit(form) {
     clear(`ra-${ci}-${ii}`);
     // 品名のひな形（tpl）の、いちばん後ろに {行の名前} を足す（えらんだボタンが品名に入るように）
     const tpl = String(it.tpl || it.name).includes(`{${label}}`) ? it.tpl : `${it.tpl || it.name} {${label}}`.trim();
-    await update(ref(db, base), { opts: [...rows, [label, []]], tpl });
+    await update(ref(db, base), { opts: rowsForDb([...rows, [label, [], false]]), tpl });
     toast(`${it.name} に「${label}」の行を足しました。ボタンを足してください`);
   } else if (kind === "itemadd") {
     const ci = form.dataset.ci, c = S.catalog.cats[ci];

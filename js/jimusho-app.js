@@ -6,7 +6,7 @@
 // - 納品書の金額・請求は 5-4
 // - 11章 7-1：「＋ LINE・電話の注文を入れる」（js/line-chumon.js）。依頼なしの注文（reqId なし）
 // - 11章 7-5a：「納品書の取りこみ」（js/nouhin.js）。スキャンを AI で読んで、注文の納品書の金額に入れる
-import { ref, onValue } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+import { ref, onValue, update, push, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet } from "./common.js";
 import { errorText } from "./touroku.js";
@@ -16,10 +16,18 @@ import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
 import { openImport } from "./nouhin.js";
+import { openReqEdit, openOrderEdit } from "./naosu.js";
 
 const pad = n => String(n).padStart(2, "0");
 const md = ts => { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()}`; };
 const hm = ts => { const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+/** 依頼・注文の記録（事務所が取り消した・もどした・直した。10/14）。古い順 */
+function logHTML(r) {
+  const ls = Object.values(r.log || {}).filter(Boolean).sort((a, b) => (a.at || 0) - (b.at || 0));
+  if (!ls.length) return "";
+  return `<details class="block hidbox" id="reqLog"><summary>記録（${ls.length}）</summary>
+    <ul class="loglist">${ls.map(x => `<li><span class="num">${x.at ? `${md(x.at)} ${hm(x.at)}` : ""}</span> <b>${esc(x.by || "")}</b> ${esc(x.what || "")}</li>`).join("")}</ul></details>`;
+}
 const byOrder = ([, a], [, b]) => (a.order ?? 999) - (b.order ?? 999);
 const linesOf = r => Object.values(r.lines || {});
 const isCancelled = r => r.status === "cancelled";
@@ -65,6 +73,8 @@ export function startOfficeApp(main, me) {
     settingsOpen: false,
     pick: {},        // 依頼ごとの、品物にえらんだ材料屋 {依頼id: {品物id: 材料屋id}}（「注文した」までは、この画面だけ）
     openId: "",      // いま中身を出している依頼
+    cxAsk: "", cxReason: "",   // 「取り消し」をたしかめている依頼と、書いている理由（10/14）
+    rsAsk: "",                 // 「取り消しをもどす」をたしかめている依頼
   };
 
   main.innerHTML = `
@@ -134,6 +144,53 @@ export function startOfficeApp(main, me) {
     note.innerHTML = parts.length ? `<span>${parts.join("・")}</span><button type="button" class="linkbtn" id="clearQ">ぜんぶ表示にもどす</button>` : "";
   }
 
+  /* ---------- 事務所が依頼を取り消す・もどす（10/14） ----------
+     消さずに status を "cancelled" にして、いつ（cancelledAt）・だれ（cancelledBy＝このパソコンの名前）・理由（cancelReason）を残す。
+     記録（log）にも1行ずつ残す。もう注文した品物があるときは取り消せない（先に「注文を取り消して依頼にもどす」。持ち主 A）。
+     「取り消しをもどす」は、取り消した依頼の一覧の中だけに出す（持ち主）。もどすと新しい依頼にもどる */
+  const activeOrdersOf = r => ordersOf(r.id).filter(o => o.status !== "cancelled");
+  function cxBoxHTML(r) {
+    const act = activeOrdersOf(r);
+    if (act.length) {
+      return `<div class="rcx-box"><p class="warn">この依頼から、もう注文した品物があります（${esc([...new Set(act.map(o => o.supplierName))].join("・"))}）。
+        先に「注文ごと」でその注文を開いて「注文を取り消して依頼にもどす」をしてから、取り消してください。</p>
+        <div class="confirm-btns"><button type="button" class="btn" data-rcxno>とじる</button></div></div>`;
+    }
+    return `<div class="rcx-box"><p class="confirm-q">この依頼を取り消しますか？</p>
+      <label class="mini">理由（なくてもよい）<input id="rcxReason" class="inp" maxlength="100" autocomplete="off" value="${esc(st.cxReason)}" placeholder="例 二重に来た"></label>
+      <div class="confirm-btns"><button type="button" class="btn danger" data-rcxyes="${esc(r.id)}">取り消す</button><button type="button" class="btn" data-rcxno>やめる</button></div></div>`;
+  }
+  function rsBoxHTML(r) {
+    return `<div class="rcx-box"><p class="confirm-q">この依頼を、もとにもどしますか？（「現場からの新しい依頼」にもどります）</p>
+      <div class="confirm-btns"><button type="button" class="btn primary" data-rrsyes="${esc(r.id)}">もどす</button><button type="button" class="btn" data-rcxno>やめる</button></div></div>`;
+  }
+  /** 記録に1行足す形（update にまぜる） */
+  const logEntry = (reqId, what) => ({ [`log/${push(ref(db, `zairyo/requests/${reqId}/log`)).key}`]: { at: serverTimestamp(), by: me.name || "事務所", what } });
+  async function cancelReq(id, btn) {
+    const r = (st.reqs || []).find(x => x.id === id);
+    if (!r || isCancelled(r)) return;
+    if (activeOrdersOf(r).length) { draw(); return; }
+    const why = String(st.cxReason || "").trim().slice(0, 100);
+    btn.disabled = true;
+    await update(ref(db, `zairyo/requests/${id}`), {
+      status: "cancelled", cancelledAt: serverTimestamp(), cancelledBy: me.name || "事務所", cancelReason: why || null,
+      ...logEntry(id, "取り消し" + (why ? `（理由：${why}）` : "")),
+    });
+    st.cxAsk = ""; st.cxReason = "";
+    toast(`${r.chumonsha}さんの依頼（${r.chuban}）を取り消しました。下の「取り消した依頼」に入りました`);
+  }
+  async function restoreReq(id, btn) {
+    const r = (st.reqs || []).find(x => x.id === id);
+    if (!r || !isCancelled(r)) return;
+    btn.disabled = true;
+    await update(ref(db, `zairyo/requests/${id}`), {
+      status: "sent", cancelledAt: null, cancelledBy: null, cancelReason: null,
+      ...logEntry(id, `取り消しをもどした（${r.cancelledBy ? "事務所" : "現場"}が取り消していた）`),
+    });
+    st.rsAsk = "";
+    toast(`${r.chumonsha}さんの依頼（${r.chuban}）を、新しい依頼にもどしました`);
+  }
+
   /* ---------- 一覧 ---------- */
   function reqCard(r) {
     const ls = linesOf(r), cx = isCancelled(r);
@@ -149,10 +206,12 @@ export function startOfficeApp(main, me) {
           <div><dt>届け先</dt><dd>${esc(r.basho || "—")}</dd></div>
           <div><dt>送った</dt><dd>${md(r.sentAt)} ${hm(r.sentAt)}</dd></div>
           ${r.contactedName ? `<div><dt>連絡ずみ</dt><dd class="hl">${esc(r.contactedName)}</dd></div>` : ""}
-          ${cx && r.cancelledAt ? `<div><dt>取り消し</dt><dd>${md(r.cancelledAt)} ${hm(r.cancelledAt)}</dd></div>` : ""}
+          ${cx ? `<div><dt>取り消し</dt><dd>${r.cancelledAt ? `${md(r.cancelledAt)} ${hm(r.cancelledAt)}・` : ""}${r.cancelledBy ? `事務所（${esc(r.cancelledBy)}）` : "現場"}${r.cancelReason ? `・${esc(r.cancelReason)}` : ""}</dd></div>` : ""}
         </dl>
         <div class="card-foot"><span class="amt"><span class="num">${ls.length}</span><span>点</span></span>
-          <button type="button" class="btn${cx ? "" : " primary"}" data-reqopen="${esc(r.id)}">${cx ? "中身を見る" : "材料屋を決める"}</button></div>
+          <span class="row">${cx ? `<button type="button" class="btn" data-rrs="${esc(r.id)}">取り消しをもどす</button>` : `<button type="button" class="btn danger" data-rcx="${esc(r.id)}">取り消し</button>`}
+          <button type="button" class="btn${cx ? "" : " primary"}" data-reqopen="${esc(r.id)}">${cx ? "中身を見る" : "材料屋を決める"}</button></span></div>
+        ${st.cxAsk === r.id && !cx ? cxBoxHTML(r) : ""}${st.rsAsk === r.id && cx ? rsBoxHTML(r) : ""}
       </article>`;
   }
 
@@ -228,7 +287,7 @@ export function startOfficeApp(main, me) {
       (news.length
         ? `<div class="ocards">${news.map(reqCard).join("")}</div>`
         : `<p class="empty">${st.q.trim() ? "あてはまる依頼はありません。" : "新しい依頼はありません。<br>現場のスマホから送られた注文が、ここに来ます。"}</p>`) +
-      (cxs.length ? `<details class="block hidbox" id="cxBox"><summary>現場が取り消した依頼（${cxs.length}）</summary><div class="ocards">${cxs.map(reqCard).join("")}</div></details>` : "");
+      (cxs.length ? `<details class="block hidbox" id="cxBox"><summary>取り消した依頼（${cxs.length}）</summary><div class="ocards">${cxs.map(reqCard).join("")}</div></details>` : "");
   }
 
   function draw() {
@@ -276,6 +335,8 @@ export function startOfficeApp(main, me) {
     return { groups: [...m.entries()], none };
   }
   const bashoText = r => ((st.places || {})[r.bashoId] || {}).text || "";
+  /** 単位の一覧（品物一覧の units。まだ読めていなければ、よく使うもの） */
+  const unitsList = () => (st.catalog && st.catalog.units && st.catalog.units.length ? st.catalog.units : ["個", "本", "組", "枚", "m", "kg", "式", "セット"]);
 
   function reqHTML(r) {
     const ls = Object.entries(r.lines || {}), cx = isCancelled(r);
@@ -305,7 +366,7 @@ export function startOfficeApp(main, me) {
           <h2 id="panelTitle">${esc(r.chumonsha)}さんから ${ls.length}点</h2>
           <div class="kouji"><span class="chuban">${esc(r.chuban)}</span><span class="kenmei">${esc(zenkana(r.kenmei))}</span></div>
         </div><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
-        ${cx ? `<p class="warn">現場が取り消しました${r.cancelledAt ? `（${md(r.cancelledAt)} ${hm(r.cancelledAt)}）` : ""}。注文しないでください。</p>` : ""}
+        ${cx ? `<p class="warn">${r.cancelledBy ? `事務所（${esc(r.cancelledBy)}）` : "現場"}が取り消しました${r.cancelledAt ? `（${md(r.cancelledAt)} ${hm(r.cancelledAt)}）` : ""}${r.cancelReason ? `。理由：${esc(r.cancelReason)}` : ""}。注文しないでください。</p>` : ""}
         <div class="block"><dl class="dl">
           <dt>希望日</dt><dd>${esc(kibouText(r.kibou))}</dd>
           <dt>届け先</dt><dd>${esc(r.basho || "—")}</dd>
@@ -314,7 +375,8 @@ export function startOfficeApp(main, me) {
           ${r.typed ? "<dt>工事</dt><dd>日報の一覧にない工事（現場が注番を手で書いた）</dd>" : ""}
           ${r.contactedName ? `<dt>連絡ずみ</dt><dd class="hl">${esc(r.chumonsha)}さんが ${esc(r.contactedName)} に連絡ずみ</dd>` : ""}
           ${r.memo ? `<dt>メモ</dt><dd>${esc(r.memo)}</dd>` : ""}
-        </dl></div>
+        </dl>${cx ? "" : `<div class="row"><button type="button" class="btn" data-redit>依頼を直す</button></div>`}</div>
+        ${logHTML(r)}
         <div class="block"><h3>${cx ? "品物" : "1. 品物ごとに材料屋を決める"}</h3>
           ${cx ? "" : `<p class="hint">${r.contactedName ? `現場が連絡した ${esc(r.contactedName)} を入れています。` : "品物一覧の「いつもの材料屋」が最初から入っています。"}ちがえば、えらびなおしてください。</p>`}
           <div class="lrows">${rows}</div>
@@ -389,11 +451,14 @@ export function startOfficeApp(main, me) {
 
   /** 中身の画面で押したとき */
   async function onPanelClick(e, w) {
-    const t = e.target.closest("[data-gcopy],[data-gsend],[data-gorder],[data-ocancel],[data-ocyes],[data-ocno]");
+    const t = e.target.closest("[data-redit],[data-gcopy],[data-gsend],[data-gorder],[data-ocancel],[data-ocyes],[data-ocno]");
     if (!t || t.disabled) return;
     const r = (st.reqs || []).find(x => x.id === st.openId);
     if (!r) return;
     const d = t.dataset;
+    if ("redit" in d) {   // 依頼を直す（10/14）
+      return openReqEdit({ r, orders: ordersOf(r.id), places: st.places, units: unitsList(), me, onDone: () => openReq(r.id) });
+    }
     const draftFor = sid => {
       const g = groupsOf(r).groups.find(([s]) => s === sid);
       return g ? draftOrder(r, sid, st.sups[sid], g[1], bashoText(r)) : null;
@@ -537,7 +602,9 @@ export function startOfficeApp(main, me) {
         ${cx ? "" : `<div class="block"><ol class="steps" style="--c:${s.color}">${steps.map(([l, d, done]) => `<li class="${done ? "done" : ""}">${l}<span class="d">${done && d ? md(d) : ""}</span></li>`).join("")}</ol></div>`}
         ${act}
         ${cx ? "" : slipBlockHTML(o)}
-        <div class="block"><h3>品名・数量</h3><ul class="g-lines">${Object.values(o.lines || {}).map(l => `<li>${esc(lineText(l))}</li>`).join("")}</ul></div>
+        <div class="block"><h3>品名・数量</h3><ul class="g-lines">${Object.values(o.lines || {}).map(l => `<li>${esc(lineText(l))}</li>`).join("")}</ul>
+          ${cx ? "" : `<div class="row"><button type="button" class="btn" data-oedit>注文を直す</button></div>`}</div>
+        ${logHTML(o)}
         ${attachHTML(o.lines, "写真・リンク（材料屋に写真を送るときは、写真を開いて保存してください）")}
         <div class="block"><dl class="dl">
           <dt>希望日</dt><dd${late ? ' class="late"' : ""}>${esc(kibouText(o.kibou))}${late ? "（すぎています）" : ""}</dd>
@@ -591,10 +658,14 @@ export function startOfficeApp(main, me) {
   }
 
   async function onOrderClick(e, w) {
-    const t = e.target.closest("[data-arrive],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-slipmore],[data-billgo],[data-unbill]");
+    const t = e.target.closest("[data-oedit],[data-arrive],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-slipmore],[data-billgo],[data-unbill]");
     if (!t || t.disabled) return;
     const d = t.dataset, o = (st.orders || []).find(x => x.id === st.openOrderId);
     if (!o) return;
+    if ("oedit" in d) {   // 注文を直す（10/14）
+      const r = o.reqId ? (st.reqs || []).find(x => x.id === o.reqId) || null : null;
+      return openOrderEdit({ o, r, places: st.places, units: unitsList(), me, onDone: () => openOrder(o.id) });
+    }
     const busy = async (label, fn) => {
       const old = t.textContent;
       t.disabled = true;
@@ -819,10 +890,20 @@ export function startOfficeApp(main, me) {
 
   /* ---------- 押したとき（一覧） ---------- */
   main.addEventListener("click", e => {
-    const t = e.target.closest("[data-newbox],[data-filter],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],#billBtn,#lineBtn,#impBtn,#setBtn,#setBack,#clearQ");
+    // カードの中の「取り消し」のたしかめの所（理由の欄など）は、押してもカードを開かない
+    if (e.target.closest(".rcx-box") && !e.target.closest("[data-rcxyes],[data-rcxno],[data-rrsyes]")) return;
+    const t = e.target.closest("[data-rcx],[data-rcxyes],[data-rcxno],[data-rrs],[data-rrsyes],[data-newbox],[data-filter],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],#billBtn,#lineBtn,#impBtn,#setBtn,#setBack,#clearQ");
     if (!t || t.disabled) return;
     const d = t.dataset;
-    if ("newbox" in d) { st.view = "irai"; st.filter = "all"; draw(); }
+    if (d.rcx || d.rrs || "rcxno" in d) {
+      st.cxAsk = d.rcx || ""; st.cxReason = ""; st.rsAsk = d.rrs || "";
+      draw();
+      const r = main.querySelector("#rcxReason");
+      if (r) r.focus({ preventScroll: true });
+    }
+    else if (d.rcxyes) cancelReq(d.rcxyes, t).catch(ex => { t.disabled = false; toast(errorText(ex)); });
+    else if (d.rrsyes) restoreReq(d.rrsyes, t).catch(ex => { t.disabled = false; toast(errorText(ex)); });
+    else if ("newbox" in d) { st.view = "irai"; st.filter = "all"; draw(); }
     else if (d.filter) {
       // ようすの箱：その注文だけの一覧。もう一度押すと、しぼりこみをやめる
       st.filter = st.view !== "irai" && st.filter === d.filter ? "all" : d.filter;
@@ -859,6 +940,7 @@ export function startOfficeApp(main, me) {
   });
   main.addEventListener("input", e => {
     if (e.target.id === "q") { st.q = e.target.value; draw(); }
+    if (e.target.id === "rcxReason") st.cxReason = e.target.value;
   });
 
   /** ⚙ 設定：はじめて開くときに作る（そのあとは見せる・かくすだけ） */
