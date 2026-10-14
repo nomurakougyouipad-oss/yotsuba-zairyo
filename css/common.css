@@ -568,7 +568,7 @@ ul.plain{margin:0;padding-left:1.2em}
 /* 納品書の取りこみ（7-5a） */
 .imp-drop{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:14px;border:2px dashed var(--line);border-radius:10px;background:var(--surface);cursor:pointer}
 .imp-drop.on{border-color:var(--amber);background:var(--surface2)}
-.imp-card{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:12px;border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--bg)}
+.imp-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:12px;border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--bg)}
 .imp-img{display:flex;flex-direction:column;gap:4px;min-width:0}
 .imp-img img{width:100%;height:auto;border-radius:6px;background:#fff;display:block}
 .imp-zoom{border:0;padding:0;background:none;cursor:zoom-in}
@@ -577,14 +577,22 @@ ul.plain{margin:0;padding-left:1.2em}
 .imp-g{display:flex;flex-direction:column;gap:8px;border-top:1px dashed var(--line);padding-top:8px}
 .imp-g:first-child{border-top:0;padding-top:0}
 .imp-doubt{margin:0;padding:8px 10px 8px 26px;border-radius:8px;background:var(--surface2);color:var(--amber);font-size:13px;font-weight:700}
-.imp-f{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
-.imp-rows{width:100%;border-collapse:collapse;font-size:13px}
-.imp-rows th{text-align:left;color:var(--muted);font-weight:700;padding:2px 4px}
-.imp-rows td{padding:2px 2px;vertical-align:top}
-.imp-rows .inp{padding:5px 6px;min-width:0;width:100%}
-.imp-rows td:first-child{width:46%}
+.imp-f{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+/* 明細：1つずつ枠に入れて、1段目に品名（折りかえす）、2段目に 数・単位・単価・金額（せまいときは折りかえす）。字が切れないように（10/14） */
+.imp-rows{display:flex;flex-direction:column;gap:8px}
+.imp-row{display:flex;flex-direction:column;gap:6px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--surface)}
+.imp-rhead{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--muted)}
+.imp-row .inp{padding:6px 8px;min-width:0;width:100%}
+.imp-spec{resize:vertical;field-sizing:content;min-height:40px;line-height:1.5;white-space:pre-wrap;word-break:break-all}
+.imp-nums{display:flex;flex-wrap:wrap;gap:8px}
+.imp-nums .mini{min-width:0}
+.imp-nums .n-qty{flex:1 1 80px}
+.imp-nums .n-unit{flex:1 1 64px}
+.imp-nums .n-price{flex:1 1 100px}
+.imp-nums .n-amount{flex:1.2 1 110px}
+.imp-nums .num{text-align:right;font-variant-numeric:tabular-nums}
 .imp-sum{margin:0;font-size:14px}
-@media (max-width:700px){.imp-card{grid-template-columns:1fr}}
+@media (max-width:900px){.imp-card{grid-template-columns:1fr}}
 .imp-card.table{grid-template-columns:1fr}
 .imp-log{display:flex;flex-direction:column;gap:6px;padding:8px 0;border-bottom:1px solid var(--line)}
 .imp-log:last-child{border-bottom:0}

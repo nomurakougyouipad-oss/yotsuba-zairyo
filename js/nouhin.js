@@ -89,6 +89,8 @@ function thumbOf(c) {
 
 /* ---------- 読んだものを、注番ごとのまとまりにする（試作の scanToGroups） ---------- */
 const num = v => (typeof v === "number" && Number.isFinite(v) ? v : toPrice(v));
+/** 単価・金額の欄に出す形（3けたごとにカンマ。直すときはカンマがあってもよい＝toPrice が読む） */
+const comma = v => (v == null || v === "" ? "" : Number(v).toLocaleString("ja-JP", { maximumFractionDigits: 3 }));
 const REPAIR = /修理|工賃|技術料|出張費/;   // 修理・工賃の行（工賃は日報から台帳へ行くので、材料費には入れない）
 function fixChuban(s) {
   const v = String(s || "").normalize("NFKC").toUpperCase().replace(/\s/g, "");
@@ -298,15 +300,18 @@ export function openImport({ sups, getOrders, me }) {
             <label class="mini">納品書番号<input class="inp" data-f="no" value="${esc(gr.no)}" maxlength="40"></label>
             <label class="mini">日付<input class="inp" type="date" data-f="date" value="${esc(gr.date)}"></label>
           </div>
-          <table class="imp-rows"><thead><tr><th>品名</th><th>数</th><th>単位</th><th>単価</th><th>金額</th><th></th></tr></thead><tbody>
-            ${gr.rows.map((r, ri) => `<tr data-r="${ri}">
-              <td><input class="inp" data-rf="spec" value="${esc(r.spec)}" aria-label="品名"></td>
-              <td><input class="inp num" data-rf="qty" inputmode="decimal" value="${r.qty ?? ""}" aria-label="数"></td>
-              <td><input class="inp" data-rf="unit" value="${esc(r.unit)}" aria-label="単位"></td>
-              <td><input class="inp num" data-rf="price" inputmode="decimal" value="${r.price ?? ""}" aria-label="単価"></td>
-              <td><input class="inp num" data-rf="amount" inputmode="numeric" value="${r.amount ?? ""}" aria-label="金額"></td>
-              <td><button type="button" class="linkbtn muted" data-rdel="${ri}" aria-label="この行を消す">×</button></td></tr>`).join("")}
-          </tbody></table>
+          <div class="imp-rows">
+            ${gr.rows.map((r, ri) => `<div class="imp-row" data-r="${ri}">
+              <div class="imp-rhead"><span>品名</span><button type="button" class="linkbtn muted" data-rdel="${ri}">この行を消す ×</button></div>
+              <textarea class="inp imp-spec" data-rf="spec" rows="${Math.min(4, Math.max(1, Math.ceil([...r.spec].length / 28)))}" aria-label="品名">${esc(r.spec)}</textarea>
+              <div class="imp-nums">
+                <label class="mini n-qty">数<input class="inp num" data-rf="qty" inputmode="decimal" value="${r.qty ?? ""}"></label>
+                <label class="mini n-unit">単位<input class="inp" data-rf="unit" value="${esc(r.unit)}"></label>
+                <label class="mini n-price">単価<input class="inp num" data-rf="price" inputmode="decimal" value="${comma(r.price)}"></label>
+                <label class="mini n-amount">金額<input class="inp num" data-rf="amount" inputmode="numeric" value="${comma(r.amount)}"></label>
+              </div>
+            </div>`).join("")}
+          </div>
           <p class="imp-sum">${gr.noPrice ? "金額のない納品書です（入れると「届いた」にするだけ）" : `明細の合計 <span class="money" data-sum>${yen(sumOf(gr))}</span> 円（税抜）`}</p>
           <label class="mini">入れる先<select class="inp" data-f="dest">${destOpts}</select></label>
           ${gr.dest === "new" && gr.chuban ? `<p class="hint">注番 ${esc(gr.chuban)} で、新しい注文を作ってから入れます（工事件名は日報から）。</p>` : ""}
@@ -373,16 +378,20 @@ export function openImport({ sups, getOrders, me }) {
     w.addEventListener("dragover", e => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); drop.classList.add("on"); } });
     w.addEventListener("dragleave", () => drop.classList.remove("on"));
     w.addEventListener("drop", e => { if (!e.dataTransfer.files.length) return; e.preventDefault(); drop.classList.remove("on"); addFiles(e.dataTransfer.files); });
+    // 品名の欄で Enter を押しても、改行しない（品名は1行。長いときは折りかえして見せるだけ）
+    w.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.classList && e.target.classList.contains("imp-spec")) e.preventDefault(); });
     w.addEventListener("input", e => {
       const t = e.target, gr = groupAt(t);
       if (!gr) return;
       if (t.dataset.rf) {
         const r = gr.rows[Number(t.closest("[data-r]").dataset.r)], f = t.dataset.rf;
-        if (f === "spec" || f === "unit") r[f] = t.value.trim();
+        if (f === "spec") r.spec = t.value.replace(/\s*\n\s*/g, " ").trim();   // 品名は1行（折りかえして見せるだけ）
+        else if (f === "unit") r.unit = t.value.trim();
         else r[f] = toPrice(t.value);
-        if ((f === "qty" || f === "price") && r.qty != null && r.price != null && !t.closest("tr").querySelector('[data-rf="amount"]').dataset.touched) {
+        const am = t.closest("[data-r]").querySelector('[data-rf="amount"]');
+        if ((f === "qty" || f === "price") && r.qty != null && r.price != null && !am.dataset.touched) {
           r.amount = Math.round(r.qty * r.price);
-          t.closest("tr").querySelector('[data-rf="amount"]').value = r.amount;
+          am.value = comma(r.amount);
         }
         if (f === "amount") t.dataset.touched = "1";
         const s = t.closest(".imp-g").querySelector("[data-sum]");
