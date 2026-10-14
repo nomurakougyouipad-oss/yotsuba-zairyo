@@ -35,8 +35,9 @@ export function orderText(o) {
    材料屋ごとに ⚙ 設定で「送り方」（send: "mail" | "line"）、メールアドレス（email）と CC（cc。並び）、
    LINE の送り先のメモ（lineTo）を決める。メールアドレスはプログラムに書かない
    - メール：Gmail（ブラウザ）の新しいメールの画面を、宛先・件名・本文が入った形で開く
-   - LINE：LINE の「送る」画面を、文が入った形で開く（https://line.me/R/share。line:// は古いのでやめる予定と LINE の説明にある）。
-     送り先は、LINE の決まりで毎回自分でえらぶ
+   - LINE：スマホでは、LINE の「送る」画面を文が入った形で開く（https://line.me/R/share。line:// は古いのでやめる予定と LINE の説明にある）。
+     パソコン版の LINE では使えない（LINE の説明・10/14 ためし）ので、パソコンでは開かずに、コピーと「○○ をえらんで、貼り付けて」だけ
+     （jimusho-app.js の copyOrSend）。送り先は、LINE の決まりで毎回自分でえらぶ
    どちらも、押したときに文のコピーもする（うまく入らなかったときに、はりつけられるように） */
 const COMPANY = "よつば建設工業";
 

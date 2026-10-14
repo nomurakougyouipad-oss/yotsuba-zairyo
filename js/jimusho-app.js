@@ -26,24 +26,35 @@ const isCancelled = r => r.status === "cancelled";
 /** まだ注文しきっていない依頼（status "sent"。一部だけ注文したものも入る） */
 const isNew = r => r.status === "sent";
 
+/** スマホ・タブレットか（LINE の「送る」画面を文入りで開けるのは、スマホの LINE だけ） */
+const isPhone = () => /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
 /** 注文の文をコピーする。sup をわたすと、その材料屋の送り方（Gmail・LINE）も開く（10/14）
  *  コピーした文は fb（下の欄）にも出す（うまくコピーできなかったときに、選んでコピーできるように）
- *  コピーは開く前にする（新しいタブが前に出ると、このページからはコピーできなくなるため） */
+ *  コピーは開く前にする（新しいタブが前に出ると、このページからはコピーできなくなるため）
+ *  LINE は、パソコンでは開かない（LINE の説明に「LINE URLスキームは、デスクトップ版（macOS、Windows）のLINEではサポートされません」。
+ *  line.me/R/share を開くと、Chrome で line.me のトップページが出るだけだった 10/14 持ち主）。コピーと「○○ をえらんで、貼り付けて」だけ */
 async function copyOrSend(o, sup, fb) {
-  const text = orderText(o), url = sup ? sendUrl(sup, o) : "";
+  const text = orderText(o);
+  const lineCopyOnly = !!sup && sup.send === "line" && !isPhone();
+  const url = sup && !lineCopyOnly ? sendUrl(sup, o) : "";
   fb.hidden = false;
   fb.querySelector("textarea").value = text;
   let copied = true;
   try { await navigator.clipboard.writeText(text); } catch (ex) { copied = false; fb.querySelector("textarea").select(); }
   if (url) window.open(url, "_blank", "noopener");
   // 送るときの知らせは、ボタンの下に残す（すぐ消える知らせだと、見落とすため）
-  const msg = !url ? ""
+  const who = sup && sup.lineTo ? `「${sup.lineTo}」` : "送り先";
+  const msg = lineCopyOnly
+      ? `${copied ? "文をコピーしました。" : "コピーできませんでした。下の文を選んでコピーしてから、"}LINE で${who}をえらんで、貼り付けて送ってください。`
+    : !url ? ""
     : sup.send === "mail" ? (sup.email ? "Gmail を開きました。中身を見て、送信してください。" : "Gmail を開きました。メールアドレスが入っていないので、宛先を入れてください（⚙ 設定 → 材料屋 で入れられます）。")
-    : `LINE で${sup.lineTo ? `「${sup.lineTo}」` : "送り先"}をえらんで、送ってください。文が入っていなければ、はりつけてください（コピーしてあります）。`;
+    : `LINE で${who}をえらんで、送ってください。文が入っていなければ、はりつけてください（コピーしてあります）。`;
   const note = fb.querySelector(".send-note");
   note.textContent = msg;
   note.hidden = !msg;
-  if (!url) toast(copied ? "注文の文をコピーしました。LINE やメールにはりつけられます" : "コピーできませんでした。下の文を選んでコピーしてください");
+  if (lineCopyOnly) toast(copied ? `文をコピーしました。LINE で${who}をえらんでください` : "コピーできませんでした。下の文を選んでコピーしてください");
+  else if (!url) toast(copied ? "注文の文をコピーしました。LINE やメールにはりつけられます" : "コピーできませんでした。下の文を選んでコピーしてください");
   else toast(sup.send === "mail" ? "Gmail を開きました" : sup.lineTo ? `LINE で「${sup.lineTo}」をえらんでください` : "LINE を開きました");
 }
 
