@@ -34,6 +34,7 @@ const pickOwners = new Set();  // 日報の人から足す人（えらんでい�
 
 const LOADING = '<p class="muted">読んでいます…</p>';
 const BAD_KEY = /[.#$\[\]\/]/;
+const EMAIL_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;   // 材料屋のメールアドレス（データベースのルールと同じ形）
 // 人の名前でないもの（日報の担当の欄の「その他」「なし」「よつば」など、数字やローマ字の入ったもの、会社や班の名前）は、足す候補に出さない
 const NOT_PERSON = /^(その他|そのた|他|ほか|なし|無し|ナシ|未定|不明|共通|全員|全体|全社|みんな|事務所|事務|会社|本社|営業|工務|現場|[ー－\-―]+)$|よつば|ヨツバ|四つ葉|四葉|テスト|[0-9０-９A-Za-zＡ-Ｚａ-ｚ]|(会社|工業|建設|産業|商事|商会|農園|工場|班|組|課|係)$/;
 const z2h = s => String(s ?? "").normalize("NFKC");
@@ -124,6 +125,24 @@ function supCard([id, s]) {
         <button type="button" class="linkbtn muted" data-suphide="${id}">${s.hidden ? "出す" : "かくす"}</button></div>
       <label class="mini">宛名
         <input class="inp" data-edit="to" data-id="${id}" value="${esc(s.to || "御中")}" maxlength="20"></label>
+      <div class="mini">送り方（注文のところに「メールで送る」か「LINE で送る」のボタンが出ます）
+        <div class="seg sendby" role="radiogroup" aria-label="${esc(s.name)} の送り方">
+          ${[["mail", "メール"], ["line", "LINE"], ["", "決めない"]].map(([v, l]) => `<button type="button" role="radio" data-supsend="${id}" data-v="${v}" aria-checked="${(s.send || "") === v}">${l}</button>`).join("")}
+        </div>
+      </div>
+      ${s.send === "mail" ? `<label class="mini">メールアドレス（宛先。消すときは空にする）
+        <input class="inp" type="email" data-edit="email" data-id="${id}" value="${esc(s.email || "")}" maxlength="100" autocomplete="off" placeholder="例 order@example.co.jp"></label>
+      <div class="mini">CC（なくてもよい。いくつでも）
+        <div class="chips">
+          ${entries(s.cc).map(([, a], i) => `<span class="chip">${esc(a)}<button type="button" data-ccdel="${id}" data-i="${i}" aria-label="${esc(a)} を CC から外す">×</button></span>`).join("")}
+          <form class="chip-add" data-form="cc" data-id="${id}">
+            <input id="cc-${id}" class="inp" type="email" maxlength="100" autocomplete="off" placeholder="CC のアドレス" aria-label="${esc(s.name)} の CC を足す">
+            <button class="btn">足す</button>
+          </form>
+        </div>
+      </div>` : ""}
+      ${s.send === "line" ? `<label class="mini">LINE の送り先（友だちやグループの名前。LINE ボタンを押したときに「○○ をえらんでください」と出ます）
+        <input class="inp" data-edit="lineto" data-id="${id}" value="${esc(s.lineTo || "")}" maxlength="40" autocomplete="off" placeholder="例 ○○商店（グループ）"></label>` : ""}
       <div class="mini">読みかえ
         <div class="chips">
           ${alias.map((a, i) => `<span class="chip">${esc(a)}<button type="button" data-aliasdel="${id}" data-i="${i}" aria-label="${esc(a)} を外す">×</button></span>`).join("")}
@@ -584,6 +603,12 @@ async function onClick(e) {
   if ("pushtest" in d) return pushDo("test");
   if ("pushoff" in d) return pushDo("off");
 
+  if (d.supsend) {
+    const s = S.sup[d.supsend], v = d.v || null;
+    await update(ref(db, `${PATH.sup}/${d.supsend}`), { send: v });
+    toast(`${s.name} の送り方を「${v === "mail" ? "メール" : v === "line" ? "LINE" : "決めない"}」にしました`);
+    return;
+  }
   if (d.swaz) {
     const s = S.sup[d.swaz];
     await update(ref(db, `${PATH.sup}/${d.swaz}`), { azukari: !s.azukari });
@@ -598,6 +623,12 @@ async function onClick(e) {
     const gone = list.splice(Number(d.i), 1)[0];
     await set(ref(db, `${PATH.sup}/${d.aliasdel}/alias`), list.length ? list : null);
     toast(`${s.name} の読みかえから「${gone}」を外しました`);
+  } else if (d.ccdel) {
+    const s = S.sup[d.ccdel];
+    const list = entries(s.cc).map(([, a]) => a);
+    const gone = list.splice(Number(d.i), 1)[0];
+    await set(ref(db, `${PATH.sup}/${d.ccdel}/cc`), list.length ? list : null);
+    toast(`${s.name} の CC から ${gone} を外しました`);
   } else if (d.khide) {
     const k = kPath(d.khide);
     await update(ref(db, k.path), { hidden: !k.x.hidden });
@@ -668,6 +699,15 @@ async function onChange(e) {
     const s = S.sup[d.id];
     await update(ref(db, `${PATH.sup}/${d.id}`), { to: v || "御中" });
     toast(`${s.name} の宛名を「${v || "御中"}」にしました`);
+  } else if (d.edit === "email") {
+    const s = S.sup[d.id];
+    if (v && !EMAIL_RE.test(v)) { toast("メールアドレスの形がちがいます（例 order@example.co.jp）"); return; }
+    await update(ref(db, `${PATH.sup}/${d.id}`), { email: v || null });
+    toast(v ? `${s.name} のメールアドレスを入れました` : `${s.name} のメールアドレスを消しました`);
+  } else if (d.edit === "lineto") {
+    const s = S.sup[d.id];
+    await update(ref(db, `${PATH.sup}/${d.id}`), { lineTo: v || null });
+    toast(v ? `${s.name} の LINE の送り先を「${v}」にしました` : `${s.name} の LINE の送り先を消しました`);
   } else if (d.edit === "kname" || d.edit === "kkana") {
     const k = kPath(d.k);
     if (d.edit === "kname" && !v) { t.value = k.x.name; toast("名前は空にできません"); return; }
@@ -712,6 +752,17 @@ async function onSubmit(form) {
     clear(`al-${id}`);
     await set(ref(db, `${PATH.sup}/${id}/alias`), [...list, word]);
     toast(`${s.name} の読みかえに「${word}」を足しました`);
+  } else if (kind === "cc") {
+    const id = form.dataset.id, s = S.sup[id];
+    const addr = val(`cc-${id}`);
+    if (!addr) return toast("CC のアドレスを入れてください");
+    if (!EMAIL_RE.test(addr)) return toast("メールアドレスの形がちがいます（例 order@example.co.jp）");
+    const list = entries(s.cc).map(([, a]) => a);
+    if (list.includes(addr)) return toast(`${addr} はもう入っています`);
+    if (list.length >= 10) return toast("CC は10までです");
+    clear(`cc-${id}`);
+    await set(ref(db, `${PATH.sup}/${id}/cc`), [...list, addr]);
+    toast(`${s.name} の CC に ${addr} を足しました`);
   } else if (kind === "kaisha") {
     const code = z2h(val("kNewCode")).toUpperCase().replace(/[^A-Z]/g, "");
     const name = val("kNewName"), kana = val("kNewKana");

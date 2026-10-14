@@ -11,7 +11,7 @@ import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet } from "./common.js";
 import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
-import { orderText, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, markBilled, backToArrived, billMany } from "./chumon.js";
+import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, markBilled, backToArrived, billMany } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
@@ -25,6 +25,27 @@ const linesOf = r => Object.values(r.lines || {});
 const isCancelled = r => r.status === "cancelled";
 /** まだ注文しきっていない依頼（status "sent"。一部だけ注文したものも入る） */
 const isNew = r => r.status === "sent";
+
+/** 注文の文をコピーする。sup をわたすと、その材料屋の送り方（Gmail・LINE）も開く（10/14）
+ *  コピーした文は fb（下の欄）にも出す（うまくコピーできなかったときに、選んでコピーできるように）
+ *  コピーは開く前にする（新しいタブが前に出ると、このページからはコピーできなくなるため） */
+async function copyOrSend(o, sup, fb) {
+  const text = orderText(o), url = sup ? sendUrl(sup, o) : "";
+  fb.hidden = false;
+  fb.querySelector("textarea").value = text;
+  let copied = true;
+  try { await navigator.clipboard.writeText(text); } catch (ex) { copied = false; fb.querySelector("textarea").select(); }
+  if (url) window.open(url, "_blank", "noopener");
+  // 送るときの知らせは、ボタンの下に残す（すぐ消える知らせだと、見落とすため）
+  const msg = !url ? ""
+    : sup.send === "mail" ? (sup.email ? "Gmail を開きました。中身を見て、送信してください。" : "Gmail を開きました。メールアドレスが入っていないので、宛先を入れてください（⚙ 設定 → 材料屋 で入れられます）。")
+    : `LINE で${sup.lineTo ? `「${sup.lineTo}」` : "送り先"}をえらんで、送ってください。文が入っていなければ、はりつけてください（コピーしてあります）。`;
+  const note = fb.querySelector(".send-note");
+  note.textContent = msg;
+  note.hidden = !msg;
+  if (!url) toast(copied ? "注文の文をコピーしました。LINE やメールにはりつけられます" : "コピーできませんでした。下の文を選んでコピーしてください");
+  else toast(sup.send === "mail" ? "Gmail を開きました" : sup.lineTo ? `LINE で「${sup.lineTo}」をえらんでください` : "LINE を開きました");
+}
 
 export function startOfficeApp(main, me) {
   const st = {
@@ -304,12 +325,13 @@ export function startOfficeApp(main, me) {
             <ul class="g-lines">${ids.map(id => { const l = r.lines[id], n = Object.keys(l.photos || {}).length;
               return `<li>${esc(lineText(l))}${n ? ` <span class="tag">写真${n}枚は別に送る</span>` : ""}${l.link ? ` <span class="tag">リンクつき</span>` : ""}</li>`; }).join("")}</ul>
             <div class="row"><button type="button" class="btn" data-gcopy="${esc(sid)}">注文の文をコピー</button>
+              ${sendLabel(s) ? `<button type="button" class="btn" data-gsend="${esc(sid)}">${sendLabel(s)}</button>` : ""}
               <button type="button" class="btn primary" data-gorder="${esc(sid)}">注文した</button></div>
-            <div class="field" data-gfb="${esc(sid)}" hidden><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
+            <div class="field" data-gfb="${esc(sid)}" hidden><p class="send-note" role="status" hidden></p><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
               <textarea class="inp ta copybox" rows="12" readonly></textarea></div>
           </div>`;
       }).join("")}</div>
-      <p class="hint">「注文の文をコピー」して、LINE・メールで材料屋に送ってから、「注文した」を押してください。</p>`;
+      <p class="hint">「注文の文をコピー」（または「メールで送る」「LINE で送る」）で材料屋に送ってから、「注文した」を押してください。</p>`;
     }
     if (none.length) h += `<p class="err">材料屋が決まっていない品物が ${none.length}点 あります（上の 1. でえらんでください）</p>`;
     if (!groups.length && !none.length) h += "<p>この依頼は、すべて注文しました。</p>";
@@ -356,7 +378,7 @@ export function startOfficeApp(main, me) {
 
   /** 中身の画面で押したとき */
   async function onPanelClick(e, w) {
-    const t = e.target.closest("[data-gcopy],[data-gorder],[data-ocancel],[data-ocyes],[data-ocno]");
+    const t = e.target.closest("[data-gcopy],[data-gsend],[data-gorder],[data-ocancel],[data-ocyes],[data-ocno]");
     if (!t || t.disabled) return;
     const r = (st.reqs || []).find(x => x.id === st.openId);
     if (!r) return;
@@ -365,20 +387,10 @@ export function startOfficeApp(main, me) {
       const g = groupsOf(r).groups.find(([s]) => s === sid);
       return g ? draftOrder(r, sid, st.sups[sid], g[1], bashoText(r)) : null;
     };
-    if (d.gcopy) {
-      const dr = draftFor(d.gcopy);
+    if (d.gcopy || d.gsend) {
+      const sid = d.gcopy || d.gsend, dr = draftFor(sid);
       if (!dr) return;
-      const text = orderText(dr);
-      const fb = w.querySelector(`[data-gfb="${CSS.escape(d.gcopy)}"]`);
-      fb.hidden = false;
-      fb.querySelector("textarea").value = text;
-      try {
-        await navigator.clipboard.writeText(text);
-        toast("注文の文をコピーしました。LINE やメールにはりつけられます");
-      } catch (ex) {
-        fb.querySelector("textarea").select();
-        toast("コピーできませんでした。下の文を選んでコピーしてください");
-      }
+      await copyOrSend(dr, d.gsend ? st.sups[sid] : null, w.querySelector(`[data-gfb="${CSS.escape(sid)}"]`));
     } else if (d.gorder) {
       const dr = draftFor(d.gorder);
       if (!dr) return;
@@ -530,8 +542,9 @@ export function startOfficeApp(main, me) {
           ${o.memo ? `<dt>メモ</dt><dd>${esc(o.memo)}</dd>` : ""}
         </dl></div>
         ${o.src ? `<details class="block hidbox"><summary>LINE の元の文</summary><pre class="src-text">${esc(o.src)}</pre></details>` : ""}
-        <div class="row"><button type="button" class="btn" data-ocopy="${esc(o.id)}">注文の文をコピー（メール・LINE用）</button></div>
-        <div class="field" id="oCopyFb" hidden><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
+        <div class="row"><button type="button" class="btn" data-ocopy="${esc(o.id)}">注文の文をコピー（メール・LINE用）</button>
+          ${sendLabel(st.sups && st.sups[o.supplier]) ? `<button type="button" class="btn" data-osend="${esc(o.id)}">${sendLabel(st.sups[o.supplier])}</button>` : ""}</div>
+        <div class="field" id="oCopyFb" hidden><p class="send-note" role="status" hidden></p><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
           <textarea class="inp ta copybox" rows="12" readonly></textarea></div>
         ${o.status === "wait" ? `
           <div class="cx-start" id="ocx-${esc(o.id)}">
@@ -567,7 +580,7 @@ export function startOfficeApp(main, me) {
   }
 
   async function onOrderClick(e, w) {
-    const t = e.target.closest("[data-arrive],[data-back],[data-ocopy],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-slipmore],[data-billgo],[data-unbill]");
+    const t = e.target.closest("[data-arrive],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-slipmore],[data-billgo],[data-unbill]");
     if (!t || t.disabled) return;
     const d = t.dataset, o = (st.orders || []).find(x => x.id === st.openOrderId);
     if (!o) return;
@@ -619,17 +632,8 @@ export function startOfficeApp(main, me) {
     } else if (d.unbill) {
       await busy("もどしています…", () => backToArrived(o));
       toast("「請求まだ」にもどしました");
-    } else if (d.ocopy) {
-      const text = orderText(o), fb = w.querySelector("#oCopyFb");
-      fb.hidden = false;
-      fb.querySelector("textarea").value = text;
-      try {
-        await navigator.clipboard.writeText(text);
-        toast("注文の文をコピーしました。LINE やメールにはりつけられます");
-      } catch (ex) {
-        fb.querySelector("textarea").select();
-        toast("コピーできませんでした。下の文を選んでコピーしてください");
-      }
+    } else if (d.ocopy || d.osend) {
+      await copyOrSend(o, d.osend ? st.sups[o.supplier] : null, w.querySelector("#oCopyFb"));
     } else if (d.ocancel) {
       const box = w.querySelector(`#ocx-${CSS.escape(d.ocancel)}`);
       box.className = "confirm";

@@ -31,6 +31,34 @@ export function orderText(o) {
   return L.join("\n");
 }
 
+/* ---------- メール・LINE で送る（10/14 持ち主） ----------
+   材料屋ごとに ⚙ 設定で「送り方」（send: "mail" | "line"）、メールアドレス（email）と CC（cc。並び）、
+   LINE の送り先のメモ（lineTo）を決める。メールアドレスはプログラムに書かない
+   - メール：Gmail（ブラウザ）の新しいメールの画面を、宛先・件名・本文が入った形で開く
+   - LINE：LINE の「送る」画面を、文が入った形で開く（https://line.me/R/share。line:// は古いのでやめる予定と LINE の説明にある）。
+     送り先は、LINE の決まりで毎回自分でえらぶ
+   どちらも、押したときに文のコピーもする（うまく入らなかったときに、はりつけられるように） */
+const COMPANY = "よつば建設工業";
+
+/** メールの件名「注文　注番　件名（よつば建設工業）」 */
+export function mailSubject(o) {
+  return `注文　${o.chuban}　${zenkana(o.kenmei || "")}（${COMPANY}）`;
+}
+
+/** 材料屋 sup に o を送る住所（Gmail か LINE）。送り方を決めていなければ "" */
+export function sendUrl(sup, o) {
+  const text = orderText(o), enc = encodeURIComponent;
+  if (sup && sup.send === "mail") {
+    const cc = Object.values(sup.cc || {}).filter(Boolean);   // CC は、なくてもよい・いくつでも（カンマでつなぐ）
+    return `https://mail.google.com/mail/?view=cm&fs=1&to=${enc(sup.email || "")}${cc.length ? `&cc=${enc(cc.join(","))}` : ""}&su=${enc(mailSubject(o))}&body=${enc(text)}`;
+  }
+  if (sup && sup.send === "line") return `https://line.me/R/share?text=${enc(text)}`;
+  return "";
+}
+
+/** ボタンの名前 */
+export const sendLabel = sup => (sup && sup.send === "mail" ? "メールで送る" : sup && sup.send === "line" ? "LINE で送る" : "");
+
 /** 依頼のうち、材料屋（supId）にたのむ品物（lineIds）で、注文の形を作る（まだしまわない。文のコピーにも使う） */
 export function draftOrder(r, supId, sup, lineIds, bashoText) {
   const lines = {};

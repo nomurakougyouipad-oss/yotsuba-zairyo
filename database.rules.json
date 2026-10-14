@@ -86,6 +86,12 @@
             "to": { ".validate": "newData.isString() && newData.val().length <= 20" },
             "app": { ".validate": "newData.isBoolean()" },
             "azukari": { ".validate": "newData.isBoolean()" },
+            "send": { ".validate": "newData.val() == 'mail' || newData.val() == 'line'" },
+            "email": { ".validate": "newData.isString() && newData.val().length <= 100 && newData.val().matches(/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z][A-Za-z]+$/)" },
+            "cc": {
+              "$i": { ".validate": "$i.matches(/^[0-9]$/) && newData.isString() && newData.val().length <= 100 && newData.val().matches(/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z][A-Za-z]+$/)" }
+            },
+            "lineTo": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" },
             "alias": {
               "$i": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" }
             },
