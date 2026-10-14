@@ -40,6 +40,25 @@
           }
         }
       },
+      "officeInfo": {
+        ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
+        ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
+        "company": {
+          "name": { ".validate": "newData.isString() && newData.val().length <= 60" },
+          "zip": { ".validate": "newData.isString() && newData.val().matches(/^[0-9]{3}-?[0-9]{4}$/)" },
+          "addr": { ".validate": "newData.isString() && newData.val().length <= 120" },
+          "tel": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 20 && newData.val().matches(/^[0-9()+\\- ]+$/)" },
+          "fax": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 20 && newData.val().matches(/^[0-9()+\\- ]+$/)" },
+          "email": { ".validate": "newData.isString() && newData.val().length <= 100" },
+          "url": { ".validate": "newData.isString() && newData.val().length <= 200 && newData.val().matches(/^https?:\\/\\/.+/)" },
+          "$other": { ".validate": false }
+        },
+        "phrases": { ".validate": "newData.isString() && newData.val().length <= 1000" },
+        "tels": {
+          "$name": { ".validate": "$name.length <= 20 && newData.isString() && newData.val().length >= 1 && newData.val().length <= 20 && newData.val().matches(/^[0-9()+\\- ]+$/)" }
+        },
+        "$other": { ".validate": false }
+      },
       "backupLog": {
         ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'"
       },
@@ -86,7 +105,8 @@
             "to": { ".validate": "newData.isString() && newData.val().length <= 20" },
             "app": { ".validate": "newData.isBoolean()" },
             "azukari": { ".validate": "newData.isBoolean()" },
-            "send": { ".validate": "newData.val() == 'mail' || newData.val() == 'line'" },
+            "send": { ".validate": "newData.val() == 'mail' || newData.val() == 'line' || newData.val() == 'fax'" },
+            "fax": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 20 && newData.val().matches(/^[0-9()+\\- ]+$/)" },
             "email": { ".validate": "newData.isString() && newData.val().length <= 100 && newData.val().matches(/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z][A-Za-z]+$/)" },
             "cc": {
               "$i": { ".validate": "$i.matches(/^[0-9]$/) && newData.isString() && newData.val().length <= 100 && newData.val().matches(/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z][A-Za-z]+$/)" }

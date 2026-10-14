@@ -17,6 +17,7 @@ import { photosHTML, fillPhotos, attachHTML, linkLabel } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
 import { openImport } from "./nouhin.js";
 import { openReqEdit, openOrderEdit } from "./naosu.js";
+import { printFax } from "./fax.js";
 
 const pad = n => String(n).padStart(2, "0");
 const md = ts => { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()}`; };
@@ -42,10 +43,22 @@ const isPhone = () => /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (
  *  コピーは開く前にする（新しいタブが前に出ると、このページからはコピーできなくなるため）
  *  LINE は、パソコンでは開かない（LINE の説明に「LINE URLスキームは、デスクトップ版（macOS、Windows）のLINEではサポートされません」。
  *  line.me/R/share を開くと、Chrome で line.me のトップページが出るだけだった 10/14 持ち主）。コピーと「○○ をえらんで、貼り付けて」だけ */
-async function copyOrSend(o, sup, fb) {
-  const text = orderText(o);
+async function copyOrSend(o, sup, fb, info = {}) {
+  const text = orderText(o, info);   // info＝⚙ 設定の「会社・注文書」と電話番号（決まり文句・電話番号が入る）
+  // FAX（10/14）：注文書を印刷する画面を開く（印刷の画面で FAX 用のプリンターをえらぶ）。文のコピーもしておく
+  if (sup && sup.send === "fax") {
+    printFax(o, sup, info);
+    fb.hidden = false;
+    fb.querySelector("textarea").value = text;
+    try { await navigator.clipboard.writeText(text); } catch (ex) { }
+    const note = fb.querySelector(".send-note");
+    note.textContent = `印刷の画面を開きました。プリンターで「FAX」をえらんで、${sup.fax ? `${sup.fax} に` : "送り先の FAX 番号に"}送ってください。${sup.fax ? "" : "（FAX 番号は ⚙ 設定 → 材料屋 で入れられます）"}`;
+    note.hidden = false;
+    toast("印刷の画面を開きました");
+    return;
+  }
   const lineCopyOnly = !!sup && sup.send === "line" && !isPhone();
-  const url = sup && !lineCopyOnly ? sendUrl(sup, o) : "";
+  const url = sup && !lineCopyOnly ? sendUrl(sup, o, info) : "";
   fb.hidden = false;
   fb.querySelector("textarea").value = text;
   let copied = true;
@@ -466,7 +479,7 @@ export function startOfficeApp(main, me) {
     if (d.gcopy || d.gsend) {
       const sid = d.gcopy || d.gsend, dr = draftFor(sid);
       if (!dr) return;
-      await copyOrSend(dr, d.gsend ? st.sups[sid] : null, w.querySelector(`[data-gfb="${CSS.escape(sid)}"]`));
+      await copyOrSend(dr, d.gsend ? st.sups[sid] : null, w.querySelector(`[data-gfb="${CSS.escape(sid)}"]`), st.info);
     } else if (d.gorder) {
       const dr = draftFor(d.gorder);
       if (!dr) return;
@@ -715,7 +728,7 @@ export function startOfficeApp(main, me) {
       await busy("もどしています…", () => backToArrived(o));
       toast("「請求まだ」にもどしました");
     } else if (d.ocopy || d.osend) {
-      await copyOrSend(o, d.osend ? st.sups[o.supplier] : null, w.querySelector("#oCopyFb"));
+      await copyOrSend(o, d.osend ? st.sups[o.supplier] : null, w.querySelector("#oCopyFb"), st.info);
     } else if (d.ocancel) {
       const box = w.querySelector(`#ocx-${CSS.escape(d.ocancel)}`);
       box.className = "confirm";
@@ -965,6 +978,9 @@ export function startOfficeApp(main, me) {
   onValue(ref(db, "zairyo/master/catalog"), s => { st.catalog = normCatalog(s.val()); });
   onValue(ref(db, "zairyo/master/suppliers"), s => { st.sups = s.val() || {}; refreshPanel(); });
   onValue(ref(db, "zairyo/master/places"), s => { st.places = s.val() || {}; });
+  // ⚙ 設定の「会社・注文書」と、注文する人の電話番号（事務所だけ読める。注文の文・FAX に入れる。10/14）
+  st.info = {};
+  onValue(ref(db, "zairyo/officeInfo"), s => { st.info = s.val() || {}; }, () => { st.info = {}; });
 
   draw();
 }

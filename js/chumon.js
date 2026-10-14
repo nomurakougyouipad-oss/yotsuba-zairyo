@@ -10,8 +10,14 @@ import { attachOf } from "./shashin.js";
 
 const linesArr = o => Object.values(o.lines || {});
 
-/** 材料屋への注文の文（試作の orderText と同じ形。LINE・メールにはりつける）。日報の件名の半角カナは全角にする */
-export function orderText(o) {
+/** 材料屋への注文の文（試作の orderText と同じ形。LINE・メール・FAX）。日報の件名の半角カナは全角にする
+ *  info＝事務所の情報（⚙ 設定の「会社・注文書」と「注文する人」の電話番号。/zairyo/officeInfo）{ company, phrases, tels }
+ *  - 納入希望日は「○○工場へ最短希望」の形の1行（届け先＋希望日＋希望）。「取りに行く」は今までどおり（希望日＋届け先の文「取りに伺います」）
+ *  - 注文者・担当者の名前のうしろに電話番号（入れてある人だけ）。決まり文句は、いちばん下（LINE・メール・FAX ぜんぶ）
+ *  - footer：会社の名前・住所など（メールだけ。FAX は印刷の紙の下に別に出す。LINE には出さない）（10/14 持ち主） */
+export function orderText(o, info = {}, { footer = false } = {}) {
+  const tels = info.tels || {};
+  const who = n => (n && tels[n] ? `${n}(${tels[n]})` : n || "");
   const L = [];
   L.push(`注文先　${o.supplierName}　${o.to || "御中"}`, "");
   L.push(`工事件名　${zenkana(o.kenmei || "")}`);
@@ -21,14 +27,27 @@ export function orderText(o) {
   at.links.forEach(h => L.push("参考：" + h));
   if (at.photos.length) L.push("※品物の写真を別に送ります");
   L.push("");
-  L.push("納入希望日", kibouText(o.kibou));
+  const pickup = !o.basho || /^取りに/.test(o.basho);
+  L.push("納入希望日", pickup ? kibouText(o.kibou) : `${o.basho}へ${kibouText(o.kibou)}希望`);
   if (o.contacted) L.push(`${o.supplierName}さんに連絡済みです`);
   if (o.bashoText) L.push(o.bashoText);
   L.push("");
   if (o.memo) L.push(o.memo, "");
-  L.push("注文者", o.chumonsha || "");
-  if (o.tantou) L.push("担当者", o.tantou);
+  L.push("注文者", who(o.chumonsha));
+  if (o.tantou) L.push("担当者", who(o.tantou));
+  const ph = String(info.phrases || "").split("\n").map(s => s.trim()).filter(Boolean);
+  if (ph.length) L.push("", ...ph);
+  if (footer) {
+    const f = companyLines(info.company);
+    if (f.length) L.push("", "------------------------------------------", ...f.map(s => "  " + s), "------------------------------------------");
+  }
   return L.join("\n");
+}
+
+/** 会社の名前・住所などの行（⚙ 設定の「会社・注文書」。入れていない所はとばす） */
+export function companyLines(c = {}) {
+  const tf = [c.tel ? `TEL: ${c.tel}` : "", c.fax ? `FAX: ${c.fax}` : ""].filter(Boolean).join(" ");
+  return [c.name || "", c.zip ? `〒${c.zip}` : "", c.addr || "", tf, c.email ? `Email: ${c.email}` : "", c.url ? `URL: ${c.url}` : ""].filter(Boolean);
 }
 
 /* ---------- メール・LINE で送る（10/14 持ち主） ----------
@@ -47,18 +66,19 @@ export function mailSubject(o) {
 }
 
 /** 材料屋 sup に o を送る住所（Gmail か LINE）。送り方を決めていなければ "" */
-export function sendUrl(sup, o) {
-  const text = orderText(o), enc = encodeURIComponent;
+export function sendUrl(sup, o, info = {}) {
+  const enc = encodeURIComponent;
   if (sup && sup.send === "mail") {
+    const text = orderText(o, info, { footer: true });   // メールは、いちばん下に会社の名前・住所など
     const cc = Object.values(sup.cc || {}).filter(Boolean);   // CC は、なくてもよい・いくつでも（カンマでつなぐ）
     return `https://mail.google.com/mail/?view=cm&fs=1&to=${enc(sup.email || "")}${cc.length ? `&cc=${enc(cc.join(","))}` : ""}&su=${enc(mailSubject(o))}&body=${enc(text)}`;
   }
-  if (sup && sup.send === "line") return `https://line.me/R/share?text=${enc(text)}`;
+  if (sup && sup.send === "line") return `https://line.me/R/share?text=${enc(orderText(o, info))}`;
   return "";
 }
 
 /** ボタンの名前 */
-export const sendLabel = sup => (sup && sup.send === "mail" ? "メールで送る" : sup && sup.send === "line" ? "LINE で送る" : "");
+export const sendLabel = sup => (sup && sup.send === "mail" ? "メールで送る" : sup && sup.send === "line" ? "LINE で送る" : sup && sup.send === "fax" ? "FAX 用に印刷" : "");
 
 /** 依頼のうち、材料屋（supId）にたのむ品物（lineIds）で、注文の形を作る（まだしまわない。文のコピーにも使う） */
 export function draftOrder(r, supId, sup, lineIds, bashoText) {

@@ -108,6 +108,8 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .codeform{display:flex;flex-direction:column;gap:10px;max-width:420px}
 .codeform .btn{align-self:flex-start}
 .staff .nm{font-weight:700;font-size:16px;min-width:0;overflow-wrap:anywhere}
+.staff .tel{width:12em;min-height:40px;padding:6px 10px;margin-left:auto;background:var(--surface)}
+@media (max-width:520px){.staff li{flex-wrap:wrap}.staff .tel{width:100%}}
 .add{display:flex;gap:8px}
 .add .inp{flex:1}
 

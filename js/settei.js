@@ -9,9 +9,10 @@ import { errorText } from "./touroku.js";
 import { watchJobs, watchWorkers } from "./nippo.js";
 import { BACKUP_PATHS, countText, readAll, saveBackup, lastBackup } from "./backup.js";
 import { pushState, enablePush, disablePush, testPush } from "./tsuuchi.js";
+import { printFax } from "./fax.js";
 import { normCatalog, buildSpec } from "./tanomu.js";
 
-const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["memo", "覚えた当て方"], ["notify", "通知"], ["backup", "バックアップ"], ["ai", "AI"]];
+const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["memo", "覚えた当て方"], ["notify", "通知"], ["company", "会社・注文書"], ["backup", "バックアップ"], ["ai", "AI"]];
 const TAB_KEY = "yotsuba-zairyo-settab";
 const PATH = {
   sup: "zairyo/master/suppliers",
@@ -25,6 +26,7 @@ const PATH = {
   memo: "zairyo/master/itemMemo",  // LINE の品名の、覚えた当て方（7-4）
   notify: "zairyo/notify/tokens",  // 通知がオンのパソコン（10/14。js/tsuuchi.js）
   reqs: "zairyo/requests",        // 依頼（品物一覧の「手で書いた品物」を数えるため。10/14）
+  info: "zairyo/officeInfo",      // 会社の名前・住所など・決まり文句・注文する人の電話番号（事務所だけ読める。注文の文・FAX。10/14）
   year: "common/chubanYear",      // 注番の年（2けた）。12/20〜25 ごろに事務所が切りかえる（日付からは決めない）
 };
 const S = {};                 // データベースの中身（読みこむまでは undefined）
@@ -35,6 +37,7 @@ const pickOwners = new Set();  // 日報の人から足す人（えらんでい�
 
 const LOADING = '<p class="muted">読んでいます…</p>';
 const BAD_KEY = /[.#$\[\]\/]/;
+const TEL_RE = /^[0-9()+\- ]{1,20}$/;   // 電話番号・FAX 番号（データベースのルールと同じ形）
 const EMAIL_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;   // 材料屋のメールアドレス（データベースのルールと同じ形）
 // 人の名前でないもの（日報の担当の欄の「その他」「なし」「よつば」など、数字やローマ字の入ったもの、会社や班の名前）は、足す候補に出さない
 const NOT_PERSON = /^(その他|そのた|他|ほか|なし|無し|ナシ|未定|不明|共通|全員|全体|全社|みんな|事務所|事務|会社|本社|営業|工務|現場|[ー－\-―]+)$|よつば|ヨツバ|四つ葉|四葉|テスト|[0-9０-９A-Za-zＡ-Ｚａ-ｚ]|(会社|工業|建設|産業|商事|商会|農園|工場|班|組|課|係)$/;
@@ -101,7 +104,7 @@ function draw(force = false) {
   if (focusId) { const f = document.getElementById(focusId); if (f) f.focus(); }
 }
 
-const VIEW = { sup: supHTML, kaisha: kaishaHTML, staff: staffHTML, place: placeHTML, catalog: catalogHTML, dev: devHTML, memo: memoHTML, notify: notifyHTML, backup: backupHTML, ai: aiHTML };
+const VIEW = { sup: supHTML, kaisha: kaishaHTML, staff: staffHTML, place: placeHTML, catalog: catalogHTML, dev: devHTML, memo: memoHTML, notify: notifyHTML, company: companyHTML, backup: backupHTML, ai: aiHTML };
 
 /* ==================== 材料屋 ==================== */
 function supHTML() {
@@ -128,7 +131,7 @@ function supCard([id, s]) {
         <input class="inp" data-edit="to" data-id="${id}" value="${esc(s.to || "御中")}" maxlength="20"></label>
       <div class="mini">送り方（注文のところに「メールで送る」か「LINE で送る」のボタンが出ます）
         <div class="seg sendby" role="radiogroup" aria-label="${esc(s.name)} の送り方">
-          ${[["mail", "メール"], ["line", "LINE"], ["", "決めない"]].map(([v, l]) => `<button type="button" role="radio" data-supsend="${id}" data-v="${v}" aria-checked="${(s.send || "") === v}">${l}</button>`).join("")}
+          ${[["mail", "メール"], ["line", "LINE"], ["fax", "FAX"], ["", "決めない"]].map(([v, l]) => `<button type="button" role="radio" data-supsend="${id}" data-v="${v}" aria-checked="${(s.send || "") === v}">${l}</button>`).join("")}
         </div>
       </div>
       ${s.send === "mail" ? `<label class="mini">メールアドレス（宛先。消すときは空にする）
@@ -142,6 +145,8 @@ function supCard([id, s]) {
           </form>
         </div>
       </div>` : ""}
+      ${s.send === "fax" ? `<label class="mini">FAX 番号（注文書の上に出します）
+        <input class="inp" data-edit="faxno" data-id="${id}" value="${esc(s.fax || "")}" maxlength="20" inputmode="tel" autocomplete="off" placeholder="例 089-000-0000"></label>` : ""}
       ${s.send === "line" ? `<label class="mini">LINE の送り先（友だちやグループの名前。LINE ボタンを押したときに「○○ をえらんでください」と出ます）
         <input class="inp" data-edit="lineto" data-id="${id}" value="${esc(s.lineTo || "")}" maxlength="40" autocomplete="off" placeholder="例 ○○商店（グループ）"></label>` : ""}
       <div class="mini">読みかえ
@@ -249,12 +254,13 @@ function staffHTML() {
   if (!S.staff) return LOADING;
   const all = Object.entries(S.staff).sort(([a], [b]) => ja(a, b));
   const row = ([n, x]) => `
-      <li${x.hidden ? ' class="hid"' : ""}><span class="nm">${esc(n)}</span>${ask === "staff:" + n
+      <li${x.hidden ? ' class="hid"' : ""}><span class="nm">${esc(n)}</span>
+        <input class="inp tel" data-edit="tel" data-name="${esc(n)}" value="${esc(((S.info || {}).tels || {})[n] || "")}" maxlength="20" inputmode="tel" autocomplete="off" placeholder="電話番号（あれば）" aria-label="${esc(n)} の電話番号">${ask === "staff:" + n
         ? `<span class="row"><button type="button" class="btn danger" data-staffdelyes="${esc(n)}">消す</button><button type="button" class="btn" data-askno>やめる</button></span>`
         : `<span class="row"><button type="button" class="linkbtn" data-staffhide="${esc(n)}">${x.hidden ? "出す" : "かくす"}</button><button type="button" class="btn danger" data-staffdel="${esc(n)}">消す</button></span>`}</li>`;
   const shown = all.filter(([, x]) => !x.hidden), hid = all.filter(([, x]) => x.hidden);
   return `
-    <p class="hint">現場のスマホで登録するときに、この中から自分の名前をえらびます。かくした人は、えらぶ一覧に出ません。</p>
+    <p class="hint">現場のスマホで登録するときに、この中から自分の名前をえらびます。かくした人は、えらぶ一覧に出ません。電話番号を入れた人は、注文の文（LINE・メール・FAX）の注文者・担当者の名前のうしろに出ます（電話番号は事務所だけが見られます）。</p>
     <ul class="staff">${shown.length ? shown.map(row).join("") : '<li class="muted">まだだれもいません。下で名前を足してください。</li>'}</ul>
     <form class="add" data-form="staff">
       <input id="newStaff" class="inp" maxlength="20" autocomplete="off" placeholder="足す名前" aria-label="足す名前">
@@ -436,6 +442,39 @@ function btnEditor(ci, ii, it) {
 
 /* ==================== 登録した端末・合言葉（11章 8） ==================== */
 const when = ms => { const d = new Date(ms); return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`; };
+
+/* ==================== 会社・注文書（10/14） ==================== */
+/** 会社の名前・住所など（FAX の注文書とメールのいちばん下）と、決まり文句（LINE・メール・FAX のいちばん下） */
+function companyHTML() {
+  if (!S.info) return LOADING;
+  const c = S.info.company || {};
+  const f = (k, label, ph, extra = "") => `<label class="mini">${label}<input class="inp" data-edit="co" data-k="${k}" value="${esc(c[k] || "")}" placeholder="${esc(ph)}" autocomplete="off" ${extra}></label>`;
+  return `
+    <p class="hint">ここに入れたものは、プログラムには書かずに、データベースにしまいます（事務所だけが見られます）。会社の名前・住所などは、FAX の注文書とメールのいちばん下に出ます（LINE には出しません）。決まり文句は、LINE・メール・FAX のいちばん下に出ます。</p>
+    <div class="block"><h3>会社の名前・住所など</h3><div class="ef-grid">
+      ${f("name", "会社の名前", "例 株式会社○○", 'maxlength="60"')}
+      ${f("zip", "郵便番号", "例 000-0000", 'maxlength="8" inputmode="numeric"')}
+      ${f("addr", "住所", "例 ○○県○○市…", 'maxlength="120"')}
+      ${f("tel", "TEL", "例 089-000-0000", 'maxlength="20" inputmode="tel"')}
+      ${f("fax", "FAX", "例 089-000-0000", 'maxlength="20" inputmode="tel"')}
+      ${f("email", "メール", "例 info@example.co.jp", 'maxlength="100" type="email"')}
+      ${f("url", "ホームページ", "例 https://example.co.jp/", 'maxlength="200" type="url"')}
+    </div></div>
+    <div class="block"><h3>決まり文句（1行に1つ）</h3>
+      <textarea class="inp ta" data-edit="phrases" rows="4" maxlength="1000">${esc(S.info.phrases || "")}</textarea></div>
+    <div class="block"><h3>FAX の注文書の見本</h3>
+      <p class="hint">見本の注文で、印刷の画面を開きます（送らずに、見るだけにできます）。</p>
+      <button type="button" class="btn" data-faxtest>ためしに印刷の画面を開く</button></div>`;
+}
+function faxTest() {
+  const place = Object.values(S.place || {}).find(p => p && !p.hidden && !/^取りに/.test(p.name || "")) || {};
+  const staff = Object.keys(S.staff || {})[0] || "";
+  printFax({
+    supplierName: "（見本）材料屋", to: "御中", chuban: "AB26123", kenmei: "（見本）ポンプ配管修理",
+    lines: { a: { spec: "SUS304 六角ボルト M12×55(B,N,SW,2FW)", qty: 20, unit: "組" }, b: { spec: "SUS304 六角ボルト M12×35(B,N,SW,2FW)", qty: 30, unit: "組" } },
+    kibou: "最短", basho: place.name || "", bashoText: place.text || "", chumonsha: staff, tantou: staff, memo: "",
+  }, { fax: "000-000-0000" }, S.info || {});
+}
 
 /* ==================== 通知（10/14） ==================== */
 let pushBusy = "", pushNote = null;   // いましていること（on・test・off）／前の結果 { ok, text }
@@ -705,13 +744,14 @@ async function onClick(e) {
   if ("backup" in d) return doBackup();
   if ("aiping" in d) return pingAi();
   if ("pushon" in d) return pushDo("on");
+  if ("faxtest" in d) return faxTest();
   if ("pushtest" in d) return pushDo("test");
   if ("pushoff" in d) return pushDo("off");
 
   if (d.supsend) {
     const s = S.sup[d.supsend], v = d.v || null;
     await update(ref(db, `${PATH.sup}/${d.supsend}`), { send: v });
-    toast(`${s.name} の送り方を「${v === "mail" ? "メール" : v === "line" ? "LINE" : "決めない"}」にしました`);
+    toast(`${s.name} の送り方を「${v === "mail" ? "メール" : v === "line" ? "LINE" : v === "fax" ? "FAX" : "決めない"}」にしました`);
     return;
   }
   if (d.swaz) {
@@ -835,6 +875,27 @@ async function onChange(e) {
     if (v && !EMAIL_RE.test(v)) { toast("メールアドレスの形がちがいます（例 order@example.co.jp）"); return; }
     await update(ref(db, `${PATH.sup}/${d.id}`), { email: v || null });
     toast(v ? `${s.name} のメールアドレスを入れました` : `${s.name} のメールアドレスを消しました`);
+  } else if (d.edit === "tel" || d.edit === "faxno") {
+    // 電話番号・FAX 番号（全角は半角に。数字・ハイフン・かっこ・空白だけ）
+    const tel = z2h(v).replace(/[ー－―]/g, "-").trim();
+    if (tel && !TEL_RE.test(tel)) { toast("番号の形がちがいます（例 090-0000-0000）"); return; }
+    if (d.edit === "tel") {
+      await set(ref(db, `${PATH.info}/tels/${d.name}`), tel || null);
+      toast(tel ? `${d.name} の電話番号を入れました` : `${d.name} の電話番号を消しました`);
+    } else {
+      const s = S.sup[d.id];
+      await update(ref(db, `${PATH.sup}/${d.id}`), { fax: tel || null });
+      toast(tel ? `${s.name} の FAX 番号を入れました` : `${s.name} の FAX 番号を消しました`);
+    }
+  } else if (d.edit === "co" || d.edit === "phrases") {
+    // 会社の名前・住所など／決まり文句（1行に1つ）
+    const k = d.edit === "phrases" ? "phrases" : d.k;
+    let val = d.edit === "phrases" ? t.value.split("\n").map(x => x.trim()).filter(Boolean).join("\n") : v;
+    if (["tel", "fax", "zip"].includes(k)) val = z2h(val).replace(/[ー－―]/g, "-").trim();
+    const bad = { email: x => !EMAIL_RE.test(x), url: x => !/^https?:\/\/\S+$/.test(x), tel: x => !TEL_RE.test(x), fax: x => !TEL_RE.test(x), zip: x => !/^\d{3}-?\d{4}$/.test(x) }[k];
+    if (val && bad && bad(val)) { toast("形がちがいます。たしかめてください"); return; }
+    await set(ref(db, k === "phrases" ? `${PATH.info}/phrases` : `${PATH.info}/company/${k}`), val || null);
+    toast("会社・注文書の設定を直しました");
   } else if (d.edit === "isub") {
     const { it, base } = itemOf(d.ci, d.ii);
     await set(ref(db, `${base}/sub`), v || null);
