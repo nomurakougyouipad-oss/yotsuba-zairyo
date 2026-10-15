@@ -7,6 +7,7 @@ rules_version = '2';
 //   事務所が端末の登録を消しても、しるしは最大1時間のこる（Storage だけ、最大1時間のずれがある）
 // - 材料屋（2回目）に見せるときは、そのときに決める
 // - 納品書のスキャン（7-5c）：zairyo/scans/{端末の番号}/{番号}.jpg。事務所だけ
+// - 注文につけるファイル（注文書・図面。10/15）：zairyo/files/{注文の番号}/{番号}.{拡張子}。事務所だけ
 // - それ以外の場所は、だれも読めない・書けない
 service firebase.storage {
   match /b/{bucket}/o {
@@ -33,6 +34,17 @@ service firebase.storage {
         && file.matches('[A-Za-z0-9]+[.]jpg')
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType == 'image/jpeg';
+      allow delete: if office();
+    }
+
+    // 注文につけるファイル（注文書・図面。10/15）：zairyo/files/{注文の番号}/{番号}.{拡張子}。事務所だけが上げる・見る・消す。
+    // 1つ 200MB まで。種類はえらばない（Excel・DXF・DWG・JWW・PDF など）。上げたものは書きかえない（つけなおすときは、消してから）
+    match /zairyo/files/{owner}/{file} {
+      allow read: if office();
+      allow create: if office()
+        && owner.matches('[A-Za-z0-9_-]{1,40}')
+        && file.matches('[A-Za-z0-9_-]{1,40}([.][a-z0-9]{1,10})?')
+        && request.resource.size <= 200 * 1024 * 1024;
       allow delete: if office();
     }
 

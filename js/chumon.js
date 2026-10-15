@@ -26,6 +26,8 @@ export function orderText(o, info = {}, { footer = false } = {}) {
   const at = attachOf(o.lines);
   at.links.forEach(h => L.push("参考：" + h));
   if (at.photos.length) L.push("※品物の写真を別に送ります");
+  const fl = Object.values(o.files || {}).sort((a, b) => (a.at || 0) - (b.at || 0)).map(f => f.name).filter(Boolean);
+  if (fl.length) L.push(`※添付ファイル：${fl.join("、")}`);   // 注文につけた注文書・図面（10/15）
   L.push("");
   const pickup = !o.basho || /^取りに/.test(o.basho);
   L.push("納入希望日", pickup ? kibouText(o.kibou) : `${o.basho}へ${kibouText(o.kibou)}希望`);

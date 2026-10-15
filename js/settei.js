@@ -675,7 +675,7 @@ function backupHTML() {
 const kb = b => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(b / 1024))}KB`);
 function autoHTML() {
   if (!S.blog) return "";
-  const { data: d, photos: p } = S.blog;
+  const { data: d, photos: p, files: fl } = S.blog;
   const late = !d || !d.ok || Date.now() - d.at > 2 * 86400000;   // 2日より前のまま
   const row = (label, x, ok) => `
     <li><span>${label}</span><span class="${!x ? "muted" : x.ok ? "muted" : "hint warn"}">${!x ? "まだ動いていません"
@@ -685,10 +685,12 @@ function autoHTML() {
       <ul class="bk-list">
         ${row("データ（毎日）", d, x => `依頼 ${x.requests}件・注文 ${x.orders}件（${kb(x.bytes)}）`)}
         ${row("写真（週1回・日曜）", p, x => (x.count ? `写真 ${x.count}枚（${kb(x.bytes)}）` : "写真 0枚（写真がまだありません）"))}
+        ${fl ? row("注文のファイル（毎日・新しいものだけ）", fl, x => `新しく ${x.count}つ（${kb(x.bytes || 0)}）・ぜんぶで ${x.total}つ`) : ""}
       </ul>
+      ${fl && !fl.ok ? '<p class="hint warn">注文のファイルの保存がうまくいきませんでした。次の日の夜中に、もう一度ためします。</p>' : ""}
       ${d && late ? '<p class="hint warn">自動の保存が、2日以上うまくいっていません。持ち主に知らせてください。</p>' : ""}
       ${p && !p.ok ? '<p class="hint warn">写真の保存がうまくいきませんでした。次の日の夜中に、もう一度ためします。</p>' : ""}
-      <p class="hint">保存先は、東京にある別の置き場です。12週（約3か月）たったものは、自動で消えます。</p>
+      <p class="hint">保存先は、東京にある別の置き場です。12週（約3か月）たったものは、自動で消えます（注文のファイルは、消える前にもう一度保存します）。</p>
     </div>`;
 }
 

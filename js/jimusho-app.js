@@ -18,6 +18,7 @@ import { openLineOrder } from "./line-chumon.js";
 import { openImport } from "./nouhin.js";
 import { openReqEdit, openOrderEdit } from "./naosu.js";
 import { printFax } from "./fax.js";
+import { fileBlockHTML, wireFiles, filesOf, downloadFiles } from "./fairu.js";
 
 const pad = n => String(n).padStart(2, "0");
 const md = ts => { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()}`; };
@@ -64,18 +65,33 @@ async function copyOrSend(o, sup, fb, info = {}) {
   let copied = true;
   try { await navigator.clipboard.writeText(text); } catch (ex) { copied = false; fb.querySelector("textarea").select(); }
   if (url) window.open(url, "_blank", "noopener");
+  // 注文につけたファイル（注文書・図面）は、メールのときに「ダウンロード」に出す。Gmail を開く住所ではファイルをつけられないので、
+  // Gmail のクリップで付けてもらう（10/15 事務所の相談）
+  const files = url && sup.send === "mail" ? filesOf(o).map(([, f]) => f) : [];
+  let dl = "", dlOk = false;
+  if (files.length) {
+    try {
+      await downloadFiles(files);
+      dlOk = true;
+      dl = `ファイル${files.length}つを「ダウンロード」に入れました。Gmail のクリップ（📎）から付けて、送信してください。` +
+        (files.length > 1 ? "（1回目だけ、Chrome が「複数のファイルのダウンロード」を聞きます。このページで「許可」を押してください）" : "");
+    } catch (ex) {
+      dl = "ファイルを「ダウンロード」に出せませんでした。上の「ファイル」の欄の「ダウンロード」から出してください。";
+    }
+  }
   // 送るときの知らせは、ボタンの下に残す（すぐ消える知らせだと、見落とすため）
   const who = sup && sup.lineTo ? `「${sup.lineTo}」` : "送り先";
   const msg = lineCopyOnly
       ? `${copied ? "文をコピーしました。" : "コピーできませんでした。下の文を選んでコピーしてから、"}LINE で${who}をえらんで、貼り付けて送ってください。`
     : !url ? ""
-    : sup.send === "mail" ? (sup.email ? "Gmail を開きました。中身を見て、送信してください。" : "Gmail を開きました。メールアドレスが入っていないので、宛先を入れてください（⚙ 設定 → 材料屋 で入れられます）。")
+    : sup.send === "mail" ? "Gmail を開きました。" + dl + (!sup.email ? "メールアドレスが入っていないので、宛先を入れてください（⚙ 設定 → 材料屋 で入れられます）。" : dlOk ? "" : "中身を見て、送信してください。")
     : `LINE で${who}をえらんで、送ってください。文が入っていなければ、はりつけてください（コピーしてあります）。`;
   const note = fb.querySelector(".send-note");
   note.textContent = msg;
   note.hidden = !msg;
   if (lineCopyOnly) toast(copied ? `文をコピーしました。LINE で${who}をえらんでください` : "コピーできませんでした。下の文を選んでコピーしてください");
   else if (!url) toast(copied ? "注文の文をコピーしました。LINE やメールにはりつけられます" : "コピーできませんでした。下の文を選んでコピーしてください");
+  else if (sup.send === "mail" && files.length) toast(dlOk ? "ファイルをダウンロードに入れました。Gmail のクリップから付けてください" : "Gmail を開きました。ファイルは出せませんでした");
   else toast(sup.send === "mail" ? "Gmail を開きました" : sup.lineTo ? `LINE で「${sup.lineTo}」をえらんでください` : "LINE を開きました");
 }
 
@@ -656,6 +672,7 @@ export function startOfficeApp(main, me) {
         ${cx ? "" : slipBlockHTML(o)}
         <div class="block"><h3>品名・数量</h3><ul class="g-lines">${Object.values(o.lines || {}).map(l => `<li>${esc(lineText(l))}</li>`).join("")}</ul>
           ${cx ? "" : `<div class="row"><button type="button" class="btn" data-oedit>注文を直す</button></div>`}</div>
+        ${fileBlockHTML(o, !cx)}
         ${logHTML(o)}
         ${attachHTML(o.lines, "写真・リンク（材料屋に写真を送るときは、写真を開いて保存してください）")}
         <div class="block"><dl class="dl">
@@ -699,6 +716,8 @@ export function startOfficeApp(main, me) {
       fillPhotos(p);
       const w = p.querySelector("#orderWrap");
       w.addEventListener("click", e => onOrderClick(e, w).catch(ex => toast(errorText(ex))));
+      // ファイル（注文書・図面）をつける・出す・消す（10/15。js/fairu.js）
+      wireFiles(w, () => (st.orders || []).find(x => x.id === id), me, { onErr: ex => toast(errorText(ex)), redraw: () => openOrder(id, true) });
       w.addEventListener("input", e => {
         if (e.target.matches("[data-mpi]")) calcSlip(w);
         if (e.target.id === "mTotal") { if (e.target.value.trim()) e.target.dataset.manual = "1"; else delete e.target.dataset.manual; }

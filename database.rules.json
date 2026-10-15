@@ -338,6 +338,18 @@
           "billedAt": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
           "billedBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "invoiceId": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "files": {
+            "$f": {
+              ".validate": "$f.length <= 40 && newData.hasChildren(['name', 'path', 'size', 'at', 'by'])",
+              "name": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200" },
+              "path": { ".validate": "newData.isString() && newData.val().matches(/^zairyo\\/files\\/[A-Za-z0-9_-]{1,40}\\/[A-Za-z0-9_-]{1,40}([.][a-z0-9]{1,10})?$/)" },
+              "size": { ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= 209715200" },
+              "type": { ".validate": "newData.isString() && newData.val().length <= 100" },
+              "at": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
+              "by": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "$other": { ".validate": false }
+            }
+          },
           "log": {
             "$k": {
               ".validate": "$k.length <= 40 && newData.hasChildren(['at', 'by', 'what'])",

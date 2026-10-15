@@ -360,6 +360,14 @@ ul.plain{margin:0;padding-left:1.2em}
 .net-lines li:last-child{border-bottom:0}
 .net-lines li>span{flex:1 1 12em;min-width:0}
 .net-lines .btn{flex:0 0 auto;margin-left:auto}
+/* 注文のファイル（注文書・図面。10/15） */
+.flist{list-style:none;margin:0 0 8px;padding:0;display:flex;flex-direction:column}
+.flist li{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--line)}
+.flist li:last-child{border-bottom:0}
+.flist li.confirm{display:block}
+.fname{flex:1 1 14em;min-width:0;overflow-wrap:anywhere;font-weight:700}
+.fname small{display:block;font-weight:400}
+.fbtns{display:flex;align-items:center;gap:8px;margin-left:auto}
 .copybox{font-family:var(--f-ja);font-size:14px;line-height:1.6}
 .olist{display:flex;flex-direction:column;gap:10px}
 .oitem{border:1px solid var(--line);border-left:4px solid var(--amber-btn);border-radius:10px;padding:10px 12px;background:var(--surface);display:flex;flex-direction:column;gap:6px}
