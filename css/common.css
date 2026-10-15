@@ -365,6 +365,17 @@ ul.plain{margin:0;padding-left:1.2em}
 .big-money{font-family:var(--f-num);font-size:26px}
 .afile{align-items:center;flex-wrap:wrap}
 .qorder{border-top:1px dashed var(--line);padding-top:10px}
+/* 相見積もり（10/15）：くらべる表（安い所に印）・見送りの店 */
+.cmp-wrap{overflow-x:auto}
+.cmp{width:100%;border-collapse:collapse;font-size:14px;min-width:420px}
+.cmp th,.cmp td{border-bottom:1px solid var(--line);padding:8px 6px;text-align:right;vertical-align:top}
+.cmp th:first-child,.cmp td:first-child{text-align:left;overflow-wrap:anywhere}
+.cmp thead th{font-size:13px;color:var(--muted)}
+.cmp .best{background:var(--surface2);font-weight:800}
+.cmp .tot td{font-size:16px;font-weight:800}
+.cmp .min{display:inline-block;font-size:11px;font-weight:700;color:var(--on-amber);background:var(--amber-btn);border-radius:4px;padding:0 5px;margin-left:4px;vertical-align:1px}
+.qorder-for{border-top:1px dashed var(--line);padding-top:10px;display:flex;flex-direction:column;gap:8px}
+.qsup.lost{opacity:.7;border-left-color:var(--line)}
 @media (max-width:640px){.arow{grid-template-columns:repeat(3,minmax(0,1fr))}.arow .a-spec,.arow .a-amt{grid-column:1/-1}.arow.head{display:none}}
 .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
 .sup{font-weight:800;font-size:16px;line-height:1.35;min-width:0}

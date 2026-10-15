@@ -187,13 +187,13 @@ export function openKakouOrder({ sups, places, units, me, onPlaced }) {
   const supList = Object.entries(sups || {}).filter(([, s]) => !s.hidden).sort(byOrder);
   const placeList = Object.entries(places || {}).filter(([, p]) => !p.hidden).sort(byOrder);
   const us = unitsOr(units);
-  const f = { basho: placeList.length ? placeList[0][0] : "", kibou: "最短" };
+  const f = { basho: placeList.length ? placeList[0][0] : "", kibou: "最短", kind: "kakou" };   // kind：加工品（kakou）・めっき（mekki。10/15）
   const picked = [];   // えらんだファイル（「注文を入れる」まで、パソコンの中だけ）
   let stopJobs = null, busy = false;
 
   const html = `
     <div class="pw" id="kakouWrap">
-      <div class="panel-head"><div><span class="eyebrow">事務所から注文を入れる</span><h2 id="panelTitle">加工品の注文（図面つき）</h2></div>
+      <div class="panel-head"><div><span class="eyebrow">事務所から注文を入れる</span><h2 id="panelTitle">加工品・めっきの注文（図面つき）</h2></div>
         <button type="button" class="x" data-close aria-label="閉じる">×</button></div>
       <p class="hint">注文の中身と、注文書・図面のファイルを、いっしょに入れます。入れたあと、注文の画面の「メールで送る」で材料屋に送ります。</p>
       <form id="kakouForm" class="stack" novalidate>
@@ -204,6 +204,9 @@ export function openKakouOrder({ sups, places, units, me, onPlaced }) {
           </select>
           <span class="hint">送り方が「メール」の材料屋なら、送るときにファイルを「ダウンロード」に出します。一覧にない材料屋は、⚙ 設定 →「材料屋」で足してください。</span>
           <p class="err" id="eSup"></p></div>
+        <div class="field"><span class="lab">種類</span>
+          <div class="pick"><button type="button" data-kind="kakou" aria-pressed="true">加工品</button><button type="button" data-kind="mekki" aria-pressed="false">めっき</button></div>
+          <span class="hint">めっきをえらぶと、一覧に「めっき」の印がつきます。めっき代は材料費に入りますが、「工事（注番）ごと」で、めっき代だけを分けて見られます。</span></div>
         <div class="two">
           <div class="field"><label for="kChuban">注文番号（注番）<span class="req">必ず</span></label>
             <input id="kChuban" class="inp" list="kJobList" placeholder="例 AB26123" autocomplete="off" autocapitalize="characters" maxlength="12">
@@ -241,7 +244,12 @@ export function openKakouOrder({ sups, places, units, me, onPlaced }) {
     wireItems(p, us);
     wireFilePick(p, picked);
     p.addEventListener("click", e => {
-      const k = e.target.closest("[data-kibou]"), b = e.target.closest("[data-basho]");
+      const k = e.target.closest("[data-kibou]"), b = e.target.closest("[data-basho]"), kd = e.target.closest("[data-kind]");
+      if (kd) {
+        f.kind = kd.dataset.kind;
+        p.querySelectorAll("[data-kind]").forEach(x => x.setAttribute("aria-pressed", x === kd));
+        return;
+      }
       if (k) {
         const date = k.dataset.kibou === "__date";
         p.querySelectorAll("[data-kibou]").forEach(x => x.setAttribute("aria-pressed", x === k));
@@ -300,7 +308,7 @@ export function openKakouOrder({ sups, places, units, me, onPlaced }) {
           chuban, kenmei, tantou: g("#kTan").value.trim().slice(0, 20), chumonsha: g("#kChu").value.trim().slice(0, 20),
           kibou: f.kibou, basho: place.name || "", bashoText: place.text || "",
           contacted: false, memo: g("#kMemo").value.trim().slice(0, 500),
-          status: "wait", kind: "kakou", unsent: true, lines: rowsToLines(it.rows),
+          status: "wait", kind: f.kind, unsent: true, lines: rowsToLines(it.rows),
           orderedAt: serverTimestamp(), orderedBy: me.name, orderedByUid: auth.currentUser.uid,
           ...(paths.length ? { files } : {}),
         };
@@ -312,7 +320,7 @@ export function openKakouOrder({ sups, places, units, me, onPlaced }) {
       }
       busy = false;
       closeSheet();
-      toast(`${sup.name} への加工品の注文を入れました。「メールで送る」で送ってください`);
+      toast(`${sup.name} への${f.kind === "mekki" ? "めっき" : "加工品"}の注文を入れました。「メールで送る」で送ってください`);
       if (onPlaced) onPlaced(key);
     }
   }, {

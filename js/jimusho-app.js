@@ -23,7 +23,10 @@ import { openKakouOrder } from "./kakou.js";
 import { quoteState, isOpenQuote, quoteCard, openQuoteForm, quoteHTML, wireQuote, qLines } from "./mitsumori.js";
 
 /** 一覧・注文の画面の小さい印（加工品・見積から。10/15） */
-const kindTag = o => (o.kind === "kakou" ? ' <span class="tag">加工品</span>' : o.kind === "mitsumori" ? ' <span class="tag">見積から</span>' : "");
+const KIND_TAG = { kakou: "加工品", mekki: "めっき", mitsumori: "見積から" };
+const kindTag = o => (KIND_TAG[o.kind] ? ` <span class="tag">${KIND_TAG[o.kind]}</span>` : "");
+/** 事務所で入れて、あとで「送った」を押す注文（加工品・めっき・見積から） */
+const officeKind = o => o.kind === "kakou" || o.kind === "mekki" || o.kind === "mitsumori";
 
 /** まだ材料屋に送っていない注文（加工品・見積から。「送った」を押すまで。10/15） */
 const isUnsent = o => !!o.unsent && o.status === "wait";
@@ -146,7 +149,7 @@ export function startOfficeApp(main, me) {
         <h2 id="entryTitle">事務所から注文を入れる</h2>
         <div class="entry-btns">
           <button type="button" class="entry-btn" id="lineBtn"><b>＋ LINE・電話の注文</b><span>LINE や電話で来た注文を、そのまま入れます</span></button>
-          <button type="button" class="entry-btn" id="kakouBtn"><b>＋ 加工品の注文（図面つき）</b><span>注文書・図面のファイルをつけて注文します。メールでいっしょに送れます</span></button>
+          <button type="button" class="entry-btn" id="kakouBtn"><b>＋ 加工品の注文（図面つき）</b><span>注文書・図面のファイルをつけて注文します。めっき依頼もここから</span></button>
           <button type="button" class="entry-btn" id="mitsuBtn"><b>＋ 見積依頼</b><span>材料屋に見積を出して、返事の金額で注文します</span></button>
         </div>
       </section>
@@ -345,11 +348,13 @@ export function startOfficeApp(main, me) {
       const color = w ? "var(--amber)" : a ? "var(--blue)" : "var(--grey)";
       const latest = os.reduce((x, o) => (o.orderedAt || 0) > (x.orderedAt || 0) ? o : x, os[0]);
       const total = os.reduce((t, o) => t + (cost(o) || 0), 0), noAmt = os.filter(o => cost(o) == null).length;
+      const mekki = os.filter(o => o.kind === "mekki").reduce((t, o) => t + (cost(o) || 0), 0);   // めっき代（材料費に入っている。10/15）
       return `
         <button type="button" class="kcard" data-kouji="${esc(cb)}" style="--c:${color}">
           <span class="kouji"><span class="chuban">${esc(cb)}</span><span class="kenmei">${esc(zenkana(latest.kenmei))}</span></span>
           <span class="kstats"><span>注文 <b>${os.length}</b> 件</span><span>材料がまだ届いていない <b>${w}</b></span><span>請求まだ <b>${a}</b></span></span>
           <span class="kcost"><span class="lab">材料費</span><span><span class="num big">${yen(total)}</span><span class="yen">円</span></span>
+            ${mekki ? `<span class="khint">うち めっき代 ${yen(mekki)}円</span>` : ""}
             <span class="khint">${noAmt ? `金額が入っていない注文が ${noAmt} 件あります` : "全部の金額が入っています"}</span></span>
         </button>`;
     }).join("");
@@ -690,7 +695,7 @@ export function startOfficeApp(main, me) {
     const s = ST[o.status] || ST.wait, late = isLate(o, ymd(0)), cx = o.status === "cancelled";
     const osup = st.sups && st.sups[o.supplier], unsent = isUnsent(o), net = !!osup && osup.send === "net";
     const steps = [["注文した", o.orderedAt, true], ["届いた", o.arrivedAt, o.status === "arrived" || o.status === "billed"], ["請求が来た", o.billedAt, o.status === "billed"]];
-    if (o.kind === "kakou" || o.kind === "mitsumori") steps.splice(0, 1, ["入れた", o.orderedAt, true], ["送った", o.sentAt, !o.unsent]);   // 加工品・見積から（10/15）
+    if (officeKind(o)) steps.splice(0, 1, ["入れた", o.orderedAt, true], ["送った", o.sentAt, !o.unsent]);   // 加工品・見積から（10/15）
     // 材料屋に送るところ（ネットで買う材料屋は、お店のページ）。まだ送っていない注文は、上の「つぎにやること」に出す
     const sendArea = net ? `
         <div class="block"><h3>お店のページ（ネットで買う）</h3>${netLinesHTML(osup, Object.values(o.lines || {}))}
@@ -746,9 +751,9 @@ export function startOfficeApp(main, me) {
           <dt>届け先</dt><dd>${esc(o.basho || "—")}</dd>
           <dt>注文者</dt><dd>${esc(o.chumonsha || "—")}</dd>
           <dt>担当者</dt><dd>${esc(o.tantou || "—")}</dd>
-          <dt>来たところ</dt><dd>${o.reqId ? `現場のスマホ（${esc(o.chumonsha)}さん）` : o.kind === "kakou" ? "事務所（加工品）" : o.kind === "mitsumori" ? `見積から（事務所）${o.quoteId ? ` <button type="button" class="linkbtn" data-oquote="${esc(o.quoteId)}">もとの見積を開く</button>` : ""}` : "LINE・電話"}</dd>
+          <dt>来たところ</dt><dd>${o.reqId ? `現場のスマホ（${esc(o.chumonsha)}さん）` : o.kind === "kakou" ? "事務所（加工品）" : o.kind === "mekki" ? "事務所（めっき）" : o.kind === "mitsumori" ? `見積から（事務所）${o.quoteId ? ` <button type="button" class="linkbtn" data-oquote="${esc(o.quoteId)}">もとの見積を開く</button>` : ""}` : "LINE・電話"}</dd>
           ${o.quoteTotal != null ? `<dt>見積の金額</dt><dd>${yen(o.quoteTotal)} 円（税抜）</dd>` : ""}
-          <dt>${o.kind === "kakou" || o.kind === "mitsumori" ? "入れた" : "注文した"}</dt><dd>${md(o.orderedAt)} ${hm(o.orderedAt)}（${esc(o.orderedBy || "")}）</dd>
+          <dt>${officeKind(o) ? "入れた" : "注文した"}</dt><dd>${md(o.orderedAt)} ${hm(o.orderedAt)}（${esc(o.orderedBy || "")}）</dd>
           ${o.sentAt ? `<dt>送った</dt><dd>${md(o.sentAt)} ${hm(o.sentAt)}（${esc(o.sentBy || "")}）</dd>` : ""}
           ${o.arrivedAt ? `<dt>届いた</dt><dd>${md(o.arrivedAt)} ${hm(o.arrivedAt)}（${esc(o.arrivedBy || "")}）</dd>` : ""}
           ${o.billedAt ? `<dt>請求が来た</dt><dd>${md(o.billedAt)} ${hm(o.billedAt)}（${esc(o.billedBy || "")}）</dd>` : ""}

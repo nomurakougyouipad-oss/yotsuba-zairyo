@@ -423,7 +423,7 @@
           "billedAt": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
           "billedBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "invoiceId": { ".validate": "newData.isString() && newData.val().length <= 40" },
-          "kind": { ".validate": "newData.val() == 'kakou' || newData.val() == 'mitsumori'" },
+          "kind": { ".validate": "newData.val() == 'kakou' || newData.val() == 'mekki' || newData.val() == 'mitsumori'" },
           "quoteId": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "quoteTotal": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000000" },
           "unsent": { ".validate": "newData.val() == true" },

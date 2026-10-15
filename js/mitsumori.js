@@ -91,8 +91,12 @@ export function quotePack(q, supId, sup, info = {}) {
 export function quoteCard(q) {
   const s = quoteState(q), sups = Object.values(q.sups || {});
   const ans = sups.filter(x => x.answer);
-  const items = ans.length && s.key !== "unsent"
-    ? ans.map(x => `${sups.length > 1 ? `${x.name}：` : ""}見積 ${yen(x.answer.total)}円${x.answer.nouki ? `・納期 ${x.answer.nouki}` : ""}`).join("\n")
+  const money = x => `${yen(x.answer.total)}円${x.answer.nouki ? `（納期 ${x.answer.nouki}）` : ""}`;
+  const chosen = q.status === "ordered" && q.sups && q.sups[q.orderSup];
+  const cheap = ans.length ? ans.reduce((m, x) => (x.answer.total < m.answer.total ? x : m)) : null;
+  // 相見積もりは「いちばん安い店」、1つの店は見積の金額、注文したら注文した店。返事がまだなら品物
+  const items = chosen && chosen.answer ? `注文した：${chosen.name} ${money(chosen)}`
+    : cheap && s.key !== "unsent" ? (sups.length > 1 ? `いちばん安い：${cheap.name} ${money(cheap)}` : `見積 ${money(cheap)}`)
     : qLines(q).map(([, l]) => lineText(l)).join("\n");
   return `
     <article class="ocard${isOpenQuote(q) ? "" : " cx"}${s.key === "unsent" ? " unsent" : ""}" tabindex="0" data-quote="${esc(q.id)}" style="--c:${s.color}">
@@ -123,12 +127,9 @@ export function openQuoteForm({ q = null, sups, units, me, onSaved }) {
       ${answered ? '<p class="warn">返事が入っています。品物を直すと、返事の品物ごとの金額と合わなくなることがあります。</p>' : ""}
       <form id="qForm" class="stack" novalidate>
         ${edit ? `<div class="field"><span class="lab">見積を出す材料屋</span><p>${esc(Object.values(q.sups || {}).map(s => s.name).join("・"))}</p></div>` : `
-        <div class="field"><label for="qSup">見積を出す材料屋<span class="req">必ず</span></label>
-          <select id="qSup" class="inp" data-autofocus>
-            <option value="">えらんでください</option>
-            ${supList.map(([id, s]) => `<option value="${esc(id)}">${esc(s.name)}${sendWord(s) ? `（${sendWord(s)}）` : ""}</option>`).join("")}
-          </select>
-          <span class="hint">いまは1つ。あとで「相見積もり」で、いくつかの材料屋に出せるようにします。</span>
+        <div class="field"><span class="lab">見積を出す材料屋<span class="req">必ず</span>（いくつでも）</span>
+          <div class="pick" id="qSups">${supList.map(([id, s]) => `<button type="button" data-qsup="${esc(id)}" aria-pressed="false">${esc(s.name)}${sendWord(s) ? `（${sendWord(s)}）` : ""}</button>`).join("")}</div>
+          <span class="hint">2つ以上えらぶと「相見積もり」になります。同じ見積依頼を、それぞれの材料屋に送ります。あとから足すこともできます。</span>
           <p class="err" id="eSup"></p></div>`}
         <div class="two">
           <div class="field"><label for="kChuban">注番（工事番号）<span class="req">必ず</span></label>
@@ -178,7 +179,15 @@ export function openQuoteForm({ q = null, sups, units, me, onSaved }) {
       f.kibou = date ? g("#qDate").value || null : k.dataset.qk === "最短" ? "最短" : "";
     });
     g("#qDate").addEventListener("change", e => { f.kibou = e.target.value || null; });
-    if (!edit) g("#qSup").addEventListener("change", () => { g("#eSup").textContent = ""; });
+    // 見積を出す材料屋：押すたびに、えらぶ・外す（相見積もり。10/15）
+    p.addEventListener("click", e => {
+      const b = e.target.closest("[data-qsup]");
+      if (!b) return;
+      const on = b.getAttribute("aria-pressed") !== "true";
+      b.setAttribute("aria-pressed", String(on));
+      b.textContent = (on ? "✓ " : "") + b.textContent.replace(/^✓ /, "");
+      g("#eSup").textContent = "";
+    });
 
     g("#qForm").addEventListener("submit", e => {
       e.preventDefault();
@@ -193,9 +202,9 @@ export function openQuoteForm({ q = null, sups, units, me, onSaved }) {
     async function submit() {
       if (busy) return;
       const errs = [];
-      const supId = edit ? "" : g("#qSup").value, sup = edit ? null : (sups || {})[supId];
+      const pickedSups = edit ? [] : [...p.querySelectorAll("[data-qsup][aria-pressed=\"true\"]")].map(b => b.dataset.qsup).filter(id => (sups || {})[id]);
       const chuban = normalizeChuban(g("#kChuban").value), kenmei = g("#kKenmei").value.replace(/\s*\n\s*/g, " ").trim();
-      if (!edit && !sup) { g("#eSup").textContent = "見積を出す材料屋をえらんでください"; errs.push(g("#qSup")); }
+      if (!edit && !pickedSups.length) { g("#eSup").textContent = "見積を出す材料屋を、1つ以上えらんでください"; errs.push(g("#qSups button")); }
       if (!CHUBAN_RE.test(chuban)) { const h = g("#hChuban"); h.textContent = chuban ? "形がちがいます（例 AB26123）" : "注番を入れてください"; h.className = "hint bad"; errs.push(g("#kChuban")); }
       if (!kenmei) { g("#eKenmei").textContent = "工事件名を入れてください"; errs.push(g("#kKenmei")); }
       const it = readItems(p);
@@ -230,7 +239,7 @@ export function openQuoteForm({ q = null, sups, units, me, onSaved }) {
         g("#kProg").textContent = "見積依頼をしまっています…";
         await set(ref(db, `zairyo/quotes/${key}`), {
           ...head, ...(paths.length ? { files } : {}),
-          sups: { [supId]: { name: sup.name, to: sup.to || "御中", unsent: true } },
+          sups: Object.fromEntries(pickedSups.map(id => [id, { name: sups[id].name, to: sups[id].to || "御中", unsent: true }])),
           status: "open", createdAt: serverTimestamp(), createdBy: me.name, createdByUid: auth.currentUser.uid,
         });
       } catch (ex) {
@@ -239,7 +248,7 @@ export function openQuoteForm({ q = null, sups, units, me, onSaved }) {
       }
       busy = false;
       closeSheet();
-      toast(`${sup.name} への見積依頼を作りました。「メールで送る」などで送ってください`);
+      toast(`${pickedSups.map(id => sups[id].name).join("・")} への見積依頼を作りました。材料屋ごとに「メールで送る」などで送ってください`);
       if (onSaved) onSaved(key);
     }
   }, { side: true, onClose: () => { if (stopJobs) stopJobs(); } });
@@ -249,6 +258,8 @@ export function openQuoteForm({ q = null, sups, units, me, onSaved }) {
 /** ctx = { me, sups（いまの材料屋）, places, info, sendLabel, ui（画面だけの状態 { editAns: 材料屋, ordering: 材料屋, askClose }） } */
 export function quoteHTML(q, ctx) {
   const s = quoteState(q), open = isOpenQuote(q), ui = ctx.ui || {};
+  const sups = sortedSups(q), multi = sups.length > 1;
+  if (!ui.openSups) ui.openSups = {};
   const fb = (sid, cur) => `${cur && cur.send === "net" ? "" : `
         <div class="row"><button type="button" class="btn" data-qcopy="${esc(sid)}">見積依頼の文をコピー</button>
           ${ctx.sendLabel(cur) ? `<button type="button" class="btn" data-qsend="${esc(sid)}">${ctx.sendLabel(cur)}</button>` : ""}</div>`}
@@ -257,41 +268,52 @@ export function quoteHTML(q, ctx) {
   const supCard = ([sid, x]) => {
     const st = supState(x), cur = (ctx.sups || {})[sid] || {}, a = x.answer;
     const editing = ui.editAns === sid || (open && !a);
+    // 相見積もりのときは、たためる（まだ送っていない店は、はじめから開いておく）
+    const shown = !multi || (sid in ui.openSups ? ui.openSups[sid] : st === "unsent");
     let body = "";
     if (open && editing) {
       body = (st !== "answered" ? fb(sid, cur) : "") +
         (st === "unsent" ? `<p class="hint">送ったら「送った」を押してください（返事を先に入れても、送ったことになります）。</p>
-          <div class="row"><button type="button" class="btn primary" data-qsent="${esc(sid)}">送った</button></div>` : "") +
+          <div class="row"><button type="button" class="btn primary" data-qsent="${esc(sid)}">送った</button>
+            ${multi && !x.sentAt ? `<button type="button" class="linkbtn muted" data-qremove="${esc(sid)}">この材料屋を外す</button>` : ""}</div>` : "") +
         answerFormHTML(q, sid, a);
     } else if (a) {
       body = answerViewHTML(q, x) + (open ? `
-        ${ui.ordering === sid ? orderFormHTML(q, ctx) : `<div class="row"><button type="button" class="btn primary big" data-qgo="${esc(sid)}">この見積で注文する</button>
+        ${multi ? `<div class="row"><button type="button" class="btn" data-qaedit="${esc(sid)}">返事を直す</button></div>`
+          : ui.ordering === sid ? orderFormHTML(q, ctx) : `<div class="row"><button type="button" class="btn primary big" data-qgo="${esc(sid)}">この見積で注文する</button>
           <button type="button" class="btn" data-qaedit="${esc(sid)}">返事を直す</button></div>
         <p class="hint">押すと、品物・ファイル（図面など）・見積の単価が入った注文ができます（「まだ送っていない」から。加工品と同じ）。見積書は注文には入りません。</p>`}
         <details class="hidbox"><summary>見積依頼の文・もう一度送る</summary>${fb(sid, cur)}</details>` : "");
     }
     const sent = x.sentAt ? `${md(x.sentAt)} 送った（${esc(x.sentBy || "")}）` : "";
+    const lost = q.status === "ordered" && q.orderSup !== sid;
     return `
-      <div class="qsup ${st}" data-qs="${esc(sid)}">
+      <div class="qsup ${st}${lost ? " lost" : ""}" data-qs="${esc(sid)}">
         <div class="qsup-head"><b>${esc(x.name)}</b>${cur.send ? `<span class="tag">${esc(sendWord(cur))}</span>` : ""}
-          ${st === "answered" ? '<span class="ochip blue">返事が来た</span>' : st === "unsent" ? '<span class="ochip solid">まだ送っていない</span>' : '<span class="ochip solid">返事待ち</span>'}
-          <span class="hint">${sent}${a && a.at ? `・${md(a.at)} 返事` : ""}</span></div>
-        ${body}
+          ${q.status === "ordered" && q.orderSup === sid ? '<span class="ochip blue">注文した</span>' : lost ? '<span class="ochip">見送り</span>'
+            : st === "answered" ? '<span class="ochip blue">返事が来た</span>' : st === "unsent" ? '<span class="ochip solid">まだ送っていない</span>' : '<span class="ochip solid">返事待ち</span>'}
+          <span class="hint">${sent}${a && a.at ? `・${md(a.at)} 返事` : ""}</span>
+          ${multi ? `<button type="button" class="linkbtn" data-qtoggle="${esc(sid)}">${shown ? "とじる" : open && !a ? "ひらく（返事を入れる）" : "ひらく"}</button>` : ""}</div>
+        ${shown ? body : ""}
       </div>`;
   };
-  const sups = Object.entries(q.sups || {}).sort(([, a], [, b]) => (a.name || "").localeCompare(b.name || "", "ja"));
+  const others = q.status === "ordered" ? sups.filter(([sid, x]) => sid !== q.orderSup && x.sentAt) : [];
   return `
     <div class="pw" id="quoteWrap">
       <div class="panel-head"><div>
         <span class="ochip${s.solid ? " solid" : s.key === "answered" ? " blue" : ""}">${esc(s.label)}</span>
-        <h2 id="panelTitle" class="mt6">見積　${esc(q.chuban)}</h2>
+        <h2 id="panelTitle" class="mt6">見積　${esc(q.chuban)}${multi ? '<span class="tag" style="margin-left:8px">相見積もり</span>' : ""}</h2>
         <div class="kouji"><span class="kenmei">${esc(zenkana(q.kenmei || ""))}</span></div>
       </div><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
-      ${q.status === "ordered" ? `<div class="block act" style="--c:var(--blue)"><h3>この見積で注文しました</h3>
-          <p>${esc(((q.sups || {})[q.orderSup] || {}).name || "")}${q.orderedAt ? `（${md(q.orderedAt)} ${hm(q.orderedAt)}）` : ""}</p>
-          <div class="row"><button type="button" class="btn" data-qorder="${esc(q.orderId || "")}">注文の画面を開く</button></div></div>` : ""}
+      ${q.status === "ordered" ? `<div class="block act" style="--c:var(--blue)"><h3>${esc(((q.sups || {})[q.orderSup] || {}).name || "")} で注文しました</h3>
+          <p>${q.orderedAt ? `${md(q.orderedAt)} ${hm(q.orderedAt)}。` : ""}${others.length ? `ほかの材料屋（${esc(others.map(([, x]) => x.name).join("・"))}）は「見送り」になりました。` : ""}</p>
+          <div class="row"><button type="button" class="btn" data-qorder="${esc(q.orderId || "")}">注文の画面を開く</button>
+            ${others.map(([sid, x]) => `<button type="button" class="btn" data-qdecline="${esc(sid)}">${others.length > 1 ? `${esc(x.name)} への` : ""}見送りの連絡の文をコピー</button>`).join("")}</div>
+          ${others.length ? `<div class="field" id="qDeclineFb" hidden><span class="lab">コピーした文（LINE・メールなどで送ってください。うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
+            <textarea class="inp ta copybox" rows="9" readonly></textarea></div>` : ""}</div>` : ""}
       ${q.status === "closed" ? `<div class="block"><p class="warn">この見積依頼はやめました${q.closedAt ? `（${md(q.closedAt)}・${esc(q.closedBy || "")}）` : ""}。</p>
           <button type="button" class="linkbtn" data-qreopen>もとにもどす</button></div>` : ""}
+      ${multi && sups.some(([, x]) => x.answer) ? compareHTML(q, sups, open, ui, ctx) : ""}
       <div class="block"><h3>品物</h3><ul class="g-lines">${qLines(q).map(([, l]) => `<li>${esc(lineText(l))}</li>`).join("")}</ul>
         ${open ? '<div class="row"><button type="button" class="btn" data-qedit>見積依頼を直す</button></div>' : ""}</div>
       <div class="block"><dl class="dl">
@@ -302,10 +324,76 @@ export function quoteHTML(q, ctx) {
       </dl></div>
       ${ctx.fileBlock}
       <div class="qsups">${sups.map(supCard).join("")}</div>
+      ${open ? addSupHTML(q, ui, ctx) : ""}
       ${open ? (ui.askClose ? `<div class="confirm"><p class="confirm-q">この見積依頼をやめますか？（注文はしません。あとで、もとにもどせます）</p>
           <div class="confirm-btns"><button type="button" class="btn danger" data-qcloseyes>やめる</button><button type="button" class="btn" data-qcloseno>やめない</button></div></div>`
         : '<div class="row"><button type="button" class="linkbtn muted" data-qclose>この見積依頼をやめる（注文しない）</button></div>') : ""}
     </div>`;
+}
+
+/** 材料屋（名前の順） [[番号, 材料屋]] */
+const sortedSups = q => Object.entries(q.sups || {}).sort(([, a], [, b]) => (a.name || "").localeCompare(b.name || "", "ja"));
+
+/** くらべる表（相見積もり。返事が来た材料屋の単価・金額・合計・納期。安い所に印） */
+function compareHTML(q, sups, open, ui, ctx) {
+  const lines = qLines(q), ans = sups.filter(([, x]) => x.answer);
+  const row = (x, lid) => ((x.answer && x.answer.rows) || {})[lid];
+  const minAmt = {};
+  for (const [lid] of lines) {
+    const v = ans.map(([, x]) => row(x, lid)).filter(r => r && r.amount != null).map(r => r.amount);
+    if (v.length > 1) minAmt[lid] = Math.min(...v);
+  }
+  const minTot = ans.length > 1 ? Math.min(...ans.map(([, x]) => x.answer.total)) : null;
+  const wait = x => (supState(x) === "unsent" ? "まだ送っていない" : "返事待ち");
+  const best = '<span class="min">安い</span>';
+  return `
+    <div class="block"><h3>くらべる（返事が来た材料屋）</h3>
+      <div class="cmp-wrap"><table class="cmp">
+        <thead><tr><th>品物</th>${sups.map(([, x]) => `<th>${esc(x.name)}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${lines.map(([lid, l], i) => `<tr><td>${esc(lineText(l))}</td>${sups.map(([, x]) => {
+            if (!x.answer) return `<td class="muted">${i === 0 ? wait(x) : "—"}</td>`;
+            const r = row(x, lid);
+            if (!r || (r.price == null && r.amount == null)) return '<td class="muted">—</td>';
+            const isBest = r.amount != null && minAmt[lid] === r.amount;
+            return `<td${isBest ? ' class="best"' : ""}>${r.price != null ? `@${comma(r.price)}${isBest ? best : ""}<br>` : ""}${r.amount != null ? yen(r.amount) : ""}${r.price == null && isBest ? best : ""}</td>`;
+          }).join("")}</tr>`).join("")}
+          <tr class="tot"><td>合計（税抜）</td>${sups.map(([, x]) => !x.answer ? '<td class="muted">—</td>'
+            : `<td${x.answer.total === minTot ? ' class="best"' : ""}>${yen(x.answer.total)}${x.answer.total === minTot ? '<span class="min">いちばん安い</span>' : ""}</td>`).join("")}</tr>
+          <tr><td>納期</td>${sups.map(([, x]) => `<td${x.answer ? "" : ' class="muted"'}>${x.answer ? esc(x.answer.nouki || "—") : "—"}</td>`).join("")}</tr>
+          <tr><td>メモ・見積書</td>${sups.map(([sid, x]) => !x.answer ? '<td class="muted">—</td>'
+            : `<td data-qs="${esc(sid)}">${esc(x.answer.memo || "")}${x.answer.file ? `${x.answer.memo ? "<br>" : ""}<button type="button" class="linkbtn" data-afdl="1">見積書</button>` : ""}</td>`).join("")}</tr>
+          ${open ? `<tr><td></td>${sups.map(([sid, x]) => `<td>${x.answer ? `<button type="button" class="btn${x.answer.total === minTot ? " primary" : ""}" data-qgo="${esc(sid)}">この材料屋で注文</button>` : ""}</td>`).join("")}</tr>` : ""}
+        </tbody>
+      </table></div>
+      <span class="hint">金額がいちばん安い所に印がつきます。納期も見て、えらんでください。押すと、その材料屋の注文ができます（ほかの材料屋は「見送り」になります）。</span>
+      ${open && ui.ordering && multi(q) ? `<div class="qorder-for"><b>${esc(((q.sups || {})[ui.ordering] || {}).name || "")} で注文する</b>${orderFormHTML(q, ctx)}</div>` : ""}
+    </div>`;
+}
+const multi = q => Object.keys(q.sups || {}).length > 1;
+
+/** 「＋ 材料屋を足す」（相見積もり。まだ入っていない材料屋をえらんで足す） */
+function addSupHTML(q, ui, ctx) {
+  const rest = Object.entries(ctx.sups || {}).filter(([id, s]) => !s.hidden && s.send !== "net" && !(q.sups || {})[id]).sort(byOrder);
+  if (!rest.length) return "";
+  if (!ui.addSup) return '<div class="row"><button type="button" class="btn" data-qaddsup>＋ 材料屋を足す（相見積もり）</button></div>';
+  return `
+    <div class="block"><h3>材料屋を足す</h3>
+      <div class="pick">${rest.map(([id, s]) => `<button type="button" data-qaddone="${esc(id)}">${esc(s.name)}${sendWord(s) ? `（${esc(sendWord(s))}）` : ""}</button>`).join("")}</div>
+      <span class="hint">押すと、その材料屋が「まだ送っていない」で足されます。そのあと「メールで送る」などで送ってください。</span>
+      <div class="row"><button type="button" class="btn" data-qaddno>やめる</button></div></div>`;
+}
+
+/** 見送りの連絡の文（注文しなかった材料屋に） */
+export function declineText(q, sid, info = {}) {
+  const x = (q.sups || {})[sid] || {}, c = (info.company || {}), tels = info.tels || {};
+  const who = n => (n && tels[n] ? `${n}(${tels[n]})` : n || "");
+  return [
+    `${x.name || ""}　${x.to || "御中"}`, "",
+    `先日お願いした見積（工事番号 ${q.chuban}　${zenkana(q.kenmei || "")}）は、今回は見送らせていただきます。`,
+    "ご対応いただき、ありがとうございました。", "",
+    ...(c.name ? [c.name] : []), ...(q.tantou ? [`担当　${who(q.tantou)}`] : []),
+  ].join("\n");
 }
 
 /** 返事を入れる欄（a＝前の返事。直すとき） */
@@ -496,7 +584,7 @@ export function wireQuote(w, ctx) {
     }, ex => { btn.disabled = false; btn.textContent = "返事を入れる"; prog.hidden = true; err.textContent = errorText(ex); });
   });
   w.addEventListener("click", e => {
-    const t = e.target.closest("[data-qcopy],[data-qsend],[data-qsent],[data-qaedit],[data-qaedno],[data-afout],[data-afdl],[data-qgo],[data-qgono],[data-qgoyes],[data-qbasho],[data-qok],[data-qedit],[data-qclose],[data-qcloseyes],[data-qcloseno],[data-qreopen],[data-qorder]");
+    const t = e.target.closest("[data-qcopy],[data-qsend],[data-qsent],[data-qaedit],[data-qaedno],[data-afout],[data-afdl],[data-qgo],[data-qgono],[data-qgoyes],[data-qbasho],[data-qok],[data-qedit],[data-qclose],[data-qcloseyes],[data-qcloseno],[data-qreopen],[data-qorder],[data-qtoggle],[data-qremove],[data-qaddsup],[data-qaddone],[data-qaddno],[data-qdecline]");
     if (!t || t.disabled) return;
     const q = ctx.getQuote();
     if (!q) return;
@@ -551,6 +639,29 @@ export function wireQuote(w, ctx) {
       update(ref(db, `zairyo/quotes/${q.id}`), { status: "open", closedAt: null, closedBy: null })
         .then(() => { toast("見積依頼を、もとにもどしました"); ctx.redraw(); }, ctx.onErr);
     } else if (d.qorder) ctx.openOrder(d.qorder);
+    /* 相見積もり（10/15） */
+    else if (d.qtoggle) { ui.openSups = ui.openSups || {}; ui.openSups[d.qtoggle] = t.textContent.trim() !== "とじる"; ctx.redraw(); }
+    else if (d.qremove) {   // まだ送っていない材料屋を外す
+      t.disabled = true;
+      update(ref(db, `zairyo/quotes/${q.id}/sups`), { [d.qremove]: null }).then(() => { toast("材料屋を外しました"); ctx.redraw(); }, ex => { t.disabled = false; ctx.onErr(ex); });
+    } else if ("qaddsup" in d) { ui.addSup = true; ctx.redraw(); }
+    else if ("qaddno" in d) { ui.addSup = false; ctx.redraw(); }
+    else if (d.qaddone) {
+      const sp = (ctx.sups || {})[d.qaddone];
+      if (!sp) return;
+      t.disabled = true;
+      update(ref(db, `zairyo/quotes/${q.id}/sups/${d.qaddone}`), { name: sp.name, to: sp.to || "御中", unsent: true }).then(() => {
+        ui.addSup = false;
+        ui.openSups = { ...(ui.openSups || {}), [d.qaddone]: true };
+        toast(`${sp.name} を足しました。「メールで送る」などで送ってください`);
+        ctx.redraw();
+      }, ex => { t.disabled = false; ctx.onErr(ex); });
+    } else if (d.qdecline) {   // 見送りの連絡の文をコピー
+      const text = declineText(q, d.qdecline, ctx.info), box = w.querySelector("#qDeclineFb");
+      if (box) { box.hidden = false; box.querySelector("textarea").value = text; }
+      navigator.clipboard.writeText(text).then(() => toast("見送りの連絡の文をコピーしました。LINE・メールなどにはりつけて送ってください"),
+        () => { toast("コピーできませんでした。下の文を選んでコピーしてください"); if (box) box.querySelector("textarea").select(); });
+    }
   });
   // はじめに、入っている数で計算しておく（直すとき）
   w.querySelectorAll("[data-qans]").forEach(f => calcAnswer(f, null));
