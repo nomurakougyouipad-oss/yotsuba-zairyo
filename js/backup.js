@@ -10,6 +10,7 @@ import { db } from "./firebase.js";
 export const BACKUP_PATHS = [
   ["zairyo/requests", "依頼"],
   ["zairyo/orders", "注文"],
+  ["zairyo/quotes", "見積"],
   ["zairyo/invoices", "まとめて請求"],
   ["zairyo/prices", "単価の記録"],
   ["zairyo/imports", "納品書の取りこみの記録"],

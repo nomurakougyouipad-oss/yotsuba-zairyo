@@ -303,7 +303,7 @@ ul.plain{margin:0;padding-left:1.2em}
 .dl dd{margin:0;min-width:0;overflow-wrap:anywhere;white-space:pre-line}
 
 /* 事務所：上の箱・タブ・依頼のカード */
-.boxes{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.boxes{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}   /* 5つ（見積の返事待ちを足した。10/15） */
 .box{background:var(--surface);border:1px solid var(--line);border-top:5px solid var(--c);border-radius:10px;padding:12px 14px 10px;text-align:left;display:flex;flex-direction:column;gap:2px;transition:background .15s;min-height:96px}
 .box:hover:not(:disabled){background:var(--surface2)}
 .box[aria-pressed="true"]{background:var(--surface2);border-color:var(--c)}
@@ -348,6 +348,24 @@ ul.plain{margin:0;padding-left:1.2em}
 @media (max-width:560px){.krow{grid-template-columns:minmax(0,1fr) 72px 76px 40px}.krow .k-mat{grid-column:1/-1}.krow .k-spec{grid-column:1/-1}.krow.head{display:none}}
 .drop{border:2px dashed var(--line);border-radius:10px;padding:12px;text-align:center;color:var(--muted);display:flex;flex-direction:column;gap:8px;align-items:center}
 .drop.over{border-color:var(--amber);background:var(--surface2)}
+/* 見積の画面（10/15）：材料屋ごとのまとまり・返事の行（品物｜Kg｜¥/kg｜単価｜金額） */
+.qsups{display:flex;flex-direction:column;gap:12px}
+.qsup{border:1px solid var(--line);border-left:6px solid var(--amber-btn);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;background:var(--surface)}
+.qsup.answered{border-left-color:var(--blue)}
+.qsup-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.qsup-head b{font-size:16px}
+.arows{display:flex;flex-direction:column;gap:6px}
+.arow{display:grid;grid-template-columns:minmax(0,1fr) 76px 92px 100px 96px;gap:6px;align-items:center;font-size:14px}
+.arow.head{font-size:12px;font-weight:700;color:var(--muted)}
+.arow .inp{width:100%;min-width:0}
+.a-spec{overflow-wrap:anywhere}
+.a-amt{text-align:right;font-weight:700}
+.atotal{display:flex;justify-content:flex-end;align-items:center;gap:10px;flex-wrap:wrap;font-weight:800}
+.atotal .yen-in{width:170px}
+.big-money{font-family:var(--f-num);font-size:26px}
+.afile{align-items:center;flex-wrap:wrap}
+.qorder{border-top:1px dashed var(--line);padding-top:10px}
+@media (max-width:640px){.arow{grid-template-columns:repeat(3,minmax(0,1fr))}.arow .a-spec,.arow .a-amt{grid-column:1/-1}.arow.head{display:none}}
 .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
 .sup{font-weight:800;font-size:16px;line-height:1.35;min-width:0}
 .ochip{flex:none;font-size:12px;font-weight:700;border:1px solid var(--muted);color:var(--muted);border-radius:999px;padding:1px 10px;white-space:nowrap}
@@ -445,6 +463,7 @@ ul.plain{margin:0;padding-left:1.2em}
   .lrow.has-sup{grid-template-columns:minmax(0,1fr) auto}
   .lrow.has-sup .lsup{grid-column:1 / -1}
   .boxes{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .boxes .box:first-child{grid-column:1/-1}   /* 5つなので、いちばん上の「新しい依頼」は横いっぱい */
   .box{padding:10px 10px 8px}
   .box .num{font-size:32px}
   .box .lab{font-size:12px}

@@ -15,7 +15,7 @@ const BACKUP_BUCKET = "yotsuba-daicho-zairyo-backup";
 const PHOTO_BUCKET = "yotsuba-daicho.firebasestorage.app";
 const PHOTO_PREFIXES = ["zairyo/photos/", "zairyo/scans/"];   // 写真と、納品書のスキャン（7-5c）
 // js/backup.js の BACKUP_PATHS と同じ（tools/restore-backup.mjs でもどせる形）
-const BACKUP_PATHS = ["zairyo/requests", "zairyo/orders", "zairyo/invoices", "zairyo/prices", "zairyo/imports", "zairyo/officeInfo", "zairyo/master", "zairyo/devices", "common"];
+const BACKUP_PATHS = ["zairyo/requests", "zairyo/orders", "zairyo/quotes", "zairyo/invoices", "zairyo/prices", "zairyo/imports", "zairyo/officeInfo", "zairyo/master", "zairyo/devices", "common"];
 const PHOTO_EVERY = 6.5 * 24 * 60 * 60 * 1000;   // 前の写真の保存からこれだけたったら、日曜でなくても写真を保存する
 // 注文につけたファイル（注文書・図面。10/15）：大きいので、写真のように毎週ぜんぶはコピーしない。毎日、まだコピーしていないものだけ。
 // 別の置き場は84日で消えるので、80日たったものは、もう一度コピーする（このプログラムは置き場を読めない＝「足す」だけなので、

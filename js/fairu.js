@@ -32,10 +32,10 @@ function setProg(oid, u) {
 }
 
 /** 注文の画面の「ファイル（注文書・図面）」の欄。canAdd＝つける・消すができる（取り消した注文はできない） */
-export function fileBlockHTML(o, canAdd = true) {
+export function fileBlockHTML(o, canAdd = true, { title = "ファイル（注文書・図面）", hint = "注文書（Excel）・図面（DXF・DWG・JWW・PDF など）。1つ 200MB まで。「メールで送る」を押すと、ここのファイルをパソコンの「ダウンロード」に出します。" } = {}) {
   const fs = filesOf(o), up = uploading.get(o.id);
   return `
-    <div class="block" id="fileBlock"><h3>ファイル（注文書・図面）</h3>
+    <div class="block" id="fileBlock"><h3>${esc(title)}</h3>
       ${fs.length ? `<ul class="flist">${fs.map(([fid, f]) => `
         <li data-fid="${esc(fid)}"><span class="fname">${esc(f.name)}<small class="hint">${sizeText(f.size)}</small></span>
           <span class="fbtns"><button type="button" class="btn" data-fdl="${esc(fid)}">ダウンロード</button>${canAdd ? `<button type="button" class="linkbtn muted" data-fdel="${esc(fid)}">消す</button>` : ""}</span></li>`).join("")}</ul>`
@@ -43,7 +43,7 @@ export function fileBlockHTML(o, canAdd = true) {
       <p class="hint ok" id="fileProg" data-oid="${esc(o.id)}" role="status"${up ? "" : " hidden"}>${up ? esc(progText(up)) : ""}</p>
       ${canAdd ? `<div class="row"><label class="btn">＋ ファイルをつける<input type="file" multiple data-fadd hidden></label>
         ${fs.length > 1 ? '<button type="button" class="btn" data-fdlall>ぜんぶダウンロード</button>' : ""}</div>
-      <p class="hint">注文書（Excel）・図面（DXF・DWG・JWW・PDF など）。1つ 200MB まで。「メールで送る」を押すと、ここのファイルをパソコンの「ダウンロード」に出します。</p>` : ""}
+      <p class="hint">${esc(hint)}</p>` : ""}
     </div>`;
 }
 
@@ -75,7 +75,7 @@ export async function uploadFile(owner, f, me, onPct) {
 export const removeUploaded = paths => Promise.all(paths.map(p => deleteObject(sref(storage, p)).catch(() => {})));
 
 /** ファイルを上げて、注文につける（1つずつ。上げおわったら注文に書く。書けなかったら置き場からも消す） */
-async function addFiles(o, list, me) {
+async function addFiles(o, list, me, base) {
   const ok = okFiles(list);
   if (!ok.length) return;
   if (uploading.has(o.id)) { toast("いま上げています。終わってから、もう一度つけてください"); return; }
@@ -86,7 +86,7 @@ async function addFiles(o, list, me) {
       setProg(o.id, u);
       const { fid, entry } = await uploadFile(o.id, f, me, pct => setProg(o.id, { ...u, pct }));
       try {
-        await update(ref(db, `zairyo/orders/${o.id}/files/${fid}`), entry);
+        await update(ref(db, `${base}/${o.id}/files/${fid}`), entry);
       } catch (ex) {
         await removeUploaded([entry.path]);
         throw ex;
@@ -115,15 +115,16 @@ export async function downloadFiles(list) {
 }
 
 /** 注文の画面のファイルの欄を動かす。getOrder()＝いまの注文（データが変わると新しくなるので、押したときに読む）。
+ *  base＝データの場所（注文は zairyo/orders、見積は zairyo/quotes。10/15）。
  *  redraw()＝画面をかきなおす（「本当に？」を出している間は、データが変わってもかきなおさないため、終わったら呼ぶ） */
-export function wireFiles(w, getOrder, me, { onErr, redraw }) {
+export function wireFiles(w, getOrder, me, { onErr, redraw, base = "zairyo/orders" }) {
   w.addEventListener("change", e => {
     const inp = e.target.closest("[data-fadd]");
     if (!inp || !inp.files || !inp.files.length) return;
     const o = getOrder();
     const list = [...inp.files];
     inp.value = "";
-    if (o) addFiles(o, list, me).catch(onErr);
+    if (o) addFiles(o, list, me, base).catch(onErr);
   });
   w.addEventListener("click", e => {
     const t = e.target.closest("[data-fdl],[data-fdlall],[data-fdel],[data-fdelyes],[data-fdelno]");
@@ -149,7 +150,7 @@ export function wireFiles(w, getOrder, me, { onErr, redraw }) {
       t.disabled = true;
       t.textContent = "消しています…";
       deleteObject(sref(storage, x.path)).catch(() => {})   // 置き場にもうなくても、注文からは外す
-        .then(() => update(ref(db, `zairyo/orders/${o.id}/files`), { [d.fdelyes]: null }))
+        .then(() => update(ref(db, `${base}/${o.id}/files`), { [d.fdelyes]: null }))
         .then(() => toast(`「${x.name}」を消しました`), onErr)
         .finally(redraw);
     }

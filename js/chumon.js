@@ -60,7 +60,7 @@ export function companyLines(c = {}) {
      パソコン版の LINE では使えない（LINE の説明・10/14 ためし）ので、パソコンでは開かずに、コピーと「○○ をえらんで、貼り付けて」だけ
      （jimusho-app.js の copyOrSend）。送り先は、LINE の決まりで毎回自分でえらぶ
    どちらも、押したときに文のコピーもする（うまく入らなかったときに、はりつけられるように） */
-const COMPANY = "よつば建設工業";
+export const COMPANY = "よつば建設工業";
 
 /** メールの件名「注文　注番　件名（よつば建設工業）」 */
 export function mailSubject(o) {
