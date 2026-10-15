@@ -11,7 +11,7 @@ import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet } from "./common.js";
 import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
-import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, markBilled, backToArrived, billMany } from "./chumon.js";
+import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, markBilled, backToArrived, billMany } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel, shopOf, pageLink, SHOPS } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
@@ -19,6 +19,10 @@ import { openImport } from "./nouhin.js";
 import { openReqEdit, openOrderEdit } from "./naosu.js";
 import { printFax } from "./fax.js";
 import { fileBlockHTML, wireFiles, filesOf, downloadFiles } from "./fairu.js";
+import { openKakouOrder } from "./kakou.js";
+
+/** まだ材料屋に送っていない注文（加工品。「送った」を押すまで。10/15） */
+const isUnsent = o => !!o.unsent && o.status === "wait";
 
 const pad = n => String(n).padStart(2, "0");
 const md = ts => { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()}`; };
@@ -76,7 +80,7 @@ async function copyOrSend(o, sup, fb, info = {}) {
       dl = `ファイル${files.length}つを「ダウンロード」に入れました。Gmail のクリップ（📎）から付けて、送信してください。` +
         (files.length > 1 ? "（1回目だけ、Chrome が「複数のファイルのダウンロード」を聞きます。このページで「許可」を押してください）" : "");
     } catch (ex) {
-      dl = "ファイルを「ダウンロード」に出せませんでした。上の「ファイル」の欄の「ダウンロード」から出してください。";
+      dl = "ファイルを「ダウンロード」に出せませんでした。「ファイル（注文書・図面）」の欄の「ダウンロード」から出してください。";
     }
   }
   // 送るときの知らせは、ボタンの下に残す（すぐ消える知らせだと、見落とすため）
@@ -131,6 +135,19 @@ export function startOfficeApp(main, me) {
   main.innerHTML = `
     <div id="home" class="stack">
       <section class="boxes" id="boxes" aria-label="注文のようす"></section>
+      <section class="entry" aria-labelledby="entryTitle">
+        <h2 id="entryTitle">事務所から注文を入れる</h2>
+        <div class="entry-btns">
+          <button type="button" class="entry-btn" id="lineBtn"><b>＋ LINE・電話の注文</b><span>LINE や電話で来た注文を、そのまま入れます</span></button>
+          <button type="button" class="entry-btn" id="kakouBtn"><b>＋ 加工品の注文（図面つき）</b><span>注文書・図面のファイルをつけて注文します。メールでいっしょに送れます</span></button>
+          <button type="button" class="entry-btn soon" disabled><b>＋ 見積依頼<span class="soon-tag">準備中</span></b><span>いくつかの材料屋に見積を出して、くらべてから注文します</span></button>
+        </div>
+      </section>
+      <section class="after" aria-labelledby="afterTitle">
+        <h2 id="afterTitle">届いたあと</h2>
+        <button type="button" class="btn" id="impBtn">納品書の取りこみ<small>スキャン・PDF・表から金額を入れる</small></button>
+        <button type="button" class="btn" id="billBtn">まとめて請求<small>月の請求書で請求ずみにする</small></button>
+      </section>
       <div class="toolbar">
         <div class="seg" role="tablist" aria-label="見かた" id="seg">
           <button type="button" role="tab" data-view="irai">依頼</button>
@@ -138,9 +155,6 @@ export function startOfficeApp(main, me) {
           <button type="button" role="tab" data-view="kouji">工事（注番）<wbr>ごと</button>
         </div>
         <input id="q" class="inp search" type="search" placeholder="注番・件名・品名・人でさがす" aria-label="さがす" autocomplete="off">
-        <button type="button" class="btn" id="lineBtn">＋ LINE・電話の注文を入れる</button>
-        <button type="button" class="btn" id="impBtn">納品書の取りこみ</button>
-        <button type="button" class="btn" id="billBtn">まとめて請求</button>
         <button type="button" class="btn" id="setBtn">⚙ 設定</button>
       </div>
       <div id="filterNote" class="filter-note" hidden></div>
@@ -268,11 +282,11 @@ export function startOfficeApp(main, me) {
 
   /* 注文のカード（試作の cardHTML と同じ） */
   function orderCard(o) {
-    const s = ST[o.status] || ST.wait, late = isLate(o, ymd(0)), cx = o.status === "cancelled";
+    const s = ST[o.status] || ST.wait, late = isLate(o, ymd(0)), cx = o.status === "cancelled", unsent = isUnsent(o);
     return `
-      <article class="ocard${cx ? " cx" : ""}" tabindex="0" data-open="${esc(o.id)}" style="--c:${s.color}">
-        <div class="card-head"><span class="sup">${esc(o.supplierName)}</span>
-          <span class="ochip${o.status === "wait" ? " solid" : o.status === "arrived" ? " blue" : ""}">${s.chip}</span></div>
+      <article class="ocard${cx ? " cx" : ""}${unsent ? " unsent" : ""}" tabindex="0" data-open="${esc(o.id)}" style="--c:${s.color}">
+        <div class="card-head"><span class="sup">${esc(o.supplierName)}${o.kind === "kakou" ? ' <span class="tag">加工品</span>' : ""}</span>
+          <span class="ochip${o.status === "wait" ? " solid" : o.status === "arrived" ? " blue" : ""}">${unsent ? "まだ送っていない" : s.chip}</span></div>
         <div class="kouji"><span class="chuban">${esc(o.chuban)}</span><span class="kenmei">${esc(zenkana(o.kenmei))}</span></div>
         <div class="items">${esc(Object.values(o.lines || {}).map(lineText).join("\n"))}</div>
         <dl class="meta">
@@ -282,7 +296,8 @@ export function startOfficeApp(main, me) {
           <div><dt>注文した</dt><dd>${md(o.orderedAt)}</dd></div>
         </dl>
         <div class="card-foot">${amtHTML(o)}
-          ${o.status === "wait" ? `<button type="button" class="btn primary" data-next="${esc(o.id)}">届いた</button>`
+          ${unsent ? '<span class="hint warn">開いて「メールで送る」→ 送信したら「送った」</span>'
+            : o.status === "wait" ? `<button type="button" class="btn primary" data-next="${esc(o.id)}">届いた</button>`
             : o.status === "arrived" ? `<button type="button" class="btn" data-bill="${esc(o.id)}">請求が来た</button>` : ""}</div>
       </article>`;
   }
@@ -290,7 +305,8 @@ export function startOfficeApp(main, me) {
   /** 並び：まだ届いていない → 届いた → 請求ずみ。その中で、希望日がすぎた注文が上、そのあと新しい順 */
   function sortOrders(list) {
     const rank = { wait: 0, arrived: 1, billed: 2, cancelled: 3 }, today = ymd(0);
-    return list.slice().sort((a, b) => (rank[a.status] - rank[b.status]) || ((isLate(b, today) ? 1 : 0) - (isLate(a, today) ? 1 : 0)) || ((b.orderedAt || 0) - (a.orderedAt || 0)));
+    return list.slice().sort((a, b) => (rank[a.status] - rank[b.status]) || ((isUnsent(b) ? 1 : 0) - (isUnsent(a) ? 1 : 0))   // まだ送っていない加工品がいちばん上
+      || ((isLate(b, today) ? 1 : 0) - (isLate(a, today) ? 1 : 0)) || ((b.orderedAt || 0) - (a.orderedAt || 0)));
   }
 
   function drawOrders(list) {
@@ -637,10 +653,25 @@ export function startOfficeApp(main, me) {
   /* ---------- 注文の中身（右から出る）：届いた・もどす・コピー・取り消して依頼にもどす ---------- */
   function orderHTML(o) {
     const s = ST[o.status] || ST.wait, late = isLate(o, ymd(0)), cx = o.status === "cancelled";
-    const osup = st.sups && st.sups[o.supplier];
+    const osup = st.sups && st.sups[o.supplier], unsent = isUnsent(o), net = !!osup && osup.send === "net";
     const steps = [["注文した", o.orderedAt, true], ["届いた", o.arrivedAt, o.status === "arrived" || o.status === "billed"], ["請求が来た", o.billedAt, o.status === "billed"]];
+    if (o.kind === "kakou") steps.splice(0, 1, ["入れた", o.orderedAt, true], ["送った", o.sentAt, !o.unsent]);   // 加工品（10/15）
+    // 材料屋に送るところ（ネットで買う材料屋は、お店のページ）。まだ送っていない注文は、上の「つぎにやること」に出す
+    const sendArea = net ? `
+        <div class="block"><h3>お店のページ（ネットで買う）</h3>${netLinesHTML(osup, Object.values(o.lines || {}))}
+          <div class="row"><button type="button" class="btn" data-chuban="${esc(o.chuban)}">注番をコピー</button></div></div>` : `
+        <div class="row"><button type="button" class="btn" data-ocopy="${esc(o.id)}">注文の文をコピー（メール・LINE用）</button>
+          ${sendLabel(osup) ? `<button type="button" class="btn" data-osend="${esc(o.id)}">${sendLabel(osup)}</button>` : ""}</div>
+        <div class="field" id="oCopyFb" hidden><p class="send-note" role="status" hidden></p><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
+          <textarea class="inp ta copybox" rows="12" readonly></textarea></div>`;
     let act = "";
-    if (o.status === "wait") {
+    if (unsent) {   // まだ送っていない（加工品。10/15）：送ってから「送った」
+      act = `<div class="block act" style="--c:var(--amber)"><h3>つぎにやること</h3>
+          <p class="warn">まだ材料屋に送っていません。</p>
+          <p>${net ? "お店のページで買ってから" : osup && osup.send === "mail" ? "「メールで送る」で Gmail を開いて、ファイルをつけて送信してから" : "注文の文を送ってから"}、「送った」を押してください。</p>
+          ${sendArea}
+          <button type="button" class="btn primary big" data-osent="${esc(o.id)}">送った</button></div>`;
+    } else if (o.status === "wait") {
       act = `<div class="block act" style="--c:${s.color}"><h3>つぎにやること</h3>
           <p>材料は届きましたか？<br><span class="hint">納品書が来ていれば、下の「納品書の金額」で入れると「届いた」になります。</span></p>
           <button type="button" class="btn primary big" data-arrive="${esc(o.id)}">届いた（金額はあとで）</button></div>`;
@@ -663,7 +694,7 @@ export function startOfficeApp(main, me) {
     return `
       <div class="pw" id="orderWrap">
         <div class="panel-head"><div>
-          <span class="ochip${o.status === "wait" ? " solid" : o.status === "arrived" ? " blue" : ""}">${s.chip}</span>
+          <span class="ochip${o.status === "wait" ? " solid" : o.status === "arrived" ? " blue" : ""}">${unsent ? "まだ送っていない" : s.chip}</span>${o.kind === "kakou" ? ' <span class="tag">加工品</span>' : ""}
           <h2 id="panelTitle" class="mt6">${esc(o.supplierName)}</h2>
           <div class="kouji"><span class="chuban">${esc(o.chuban)}</span><span class="kenmei">${esc(zenkana(o.kenmei))}</span></div>
         </div><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
@@ -680,8 +711,9 @@ export function startOfficeApp(main, me) {
           <dt>届け先</dt><dd>${esc(o.basho || "—")}</dd>
           <dt>注文者</dt><dd>${esc(o.chumonsha || "—")}</dd>
           <dt>担当者</dt><dd>${esc(o.tantou || "—")}</dd>
-          <dt>来たところ</dt><dd>${o.reqId ? `現場のスマホ（${esc(o.chumonsha)}さん）` : "LINE・電話"}</dd>
-          <dt>注文した</dt><dd>${md(o.orderedAt)} ${hm(o.orderedAt)}（${esc(o.orderedBy || "")}）</dd>
+          <dt>来たところ</dt><dd>${o.reqId ? `現場のスマホ（${esc(o.chumonsha)}さん）` : o.kind === "kakou" ? "事務所（加工品）" : "LINE・電話"}</dd>
+          <dt>${o.kind === "kakou" ? "入れた" : "注文した"}</dt><dd>${md(o.orderedAt)} ${hm(o.orderedAt)}（${esc(o.orderedBy || "")}）</dd>
+          ${o.sentAt ? `<dt>送った</dt><dd>${md(o.sentAt)} ${hm(o.sentAt)}（${esc(o.sentBy || "")}）</dd>` : ""}
           ${o.arrivedAt ? `<dt>届いた</dt><dd>${md(o.arrivedAt)} ${hm(o.arrivedAt)}（${esc(o.arrivedBy || "")}）</dd>` : ""}
           ${o.billedAt ? `<dt>請求が来た</dt><dd>${md(o.billedAt)} ${hm(o.billedAt)}（${esc(o.billedBy || "")}）</dd>` : ""}
           <dt>請求書の金額</dt><dd>${o.seikyu != null ? yen(o.seikyu) + " 円" : "—"}</dd>
@@ -689,19 +721,19 @@ export function startOfficeApp(main, me) {
           ${o.memo ? `<dt>メモ</dt><dd>${esc(o.memo)}</dd>` : ""}
         </dl></div>
         ${o.src ? `<details class="block hidbox"><summary>LINE の元の文</summary><pre class="src-text">${esc(o.src)}</pre></details>` : ""}
-        ${osup && osup.send === "net" ? `
-        <div class="block"><h3>お店のページ（ネットで買う）</h3>${netLinesHTML(osup, Object.values(o.lines || {}))}
-          <div class="row"><button type="button" class="btn" data-chuban="${esc(o.chuban)}">注番をコピー</button></div></div>` : `
-        <div class="row"><button type="button" class="btn" data-ocopy="${esc(o.id)}">注文の文をコピー（メール・LINE用）</button>
-          ${sendLabel(osup) ? `<button type="button" class="btn" data-osend="${esc(o.id)}">${sendLabel(osup)}</button>` : ""}</div>
-        <div class="field" id="oCopyFb" hidden><p class="send-note" role="status" hidden></p><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
-          <textarea class="inp ta copybox" rows="12" readonly></textarea></div>`}
+        ${unsent ? "" : sendArea}
         ${o.status === "wait" ? `
           <div class="cx-start" id="ocx-${esc(o.id)}">
             <button type="button" class="btn danger" data-ocancel="${esc(o.id)}">${o.reqId ? "注文を取り消して依頼にもどす" : "注文を取り消す"}</button>
             <span class="hint">押しまちがえたときや、材料屋を変えたいときに。材料屋に連絡したあとなら、材料屋にも取り消しを伝えてください。</span>
           </div>` : ""}
       </div>`;
+  }
+
+  /** 入れたばかりの注文を開く（データが届くまで、少し待つ。3秒たっても来なければやめる） */
+  function waitOpen(id, tries = 0) {
+    if ((st.orders || []).some(x => x.id === id)) openOrder(id);
+    else if (tries < 30) setTimeout(() => waitOpen(id, tries + 1), 100);
   }
 
   function openOrder(id, keepScroll = false, focusSel = "") {
@@ -732,7 +764,7 @@ export function startOfficeApp(main, me) {
   }
 
   async function onOrderClick(e, w) {
-    const t = e.target.closest("[data-oedit],[data-arrive],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-slipmore],[data-billgo],[data-unbill],[data-chuban]");
+    const t = e.target.closest("[data-oedit],[data-arrive],[data-osent],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-slipmore],[data-billgo],[data-unbill],[data-chuban]");
     if (!t || t.disabled) return;
     const d = t.dataset, o = (st.orders || []).find(x => x.id === st.openOrderId);
     if (!o) return;
@@ -751,7 +783,10 @@ export function startOfficeApp(main, me) {
       if (a && w.contains(a)) a.blur();
       refreshPanel();
     };
-    if (d.arrive) {
+    if (d.osent) {   // 加工品：材料屋に送った（10/15）
+      await busy("しまっています…", () => markSent(o, me));
+      toast("「送った」にしました（材料がまだ届いていない）");
+    } else if (d.arrive) {
       await busy("しまっています…", () => markArrived(o, me));
       toast("「届いた」にしました。納品書の金額は、あとで入れられます");
     } else if (d.back) {
@@ -967,7 +1002,7 @@ export function startOfficeApp(main, me) {
   main.addEventListener("click", e => {
     // カードの中の「取り消し」のたしかめの所（理由の欄など）は、押してもカードを開かない
     if (e.target.closest(".rcx-box") && !e.target.closest("[data-rcxyes],[data-rcxno],[data-rrsyes]")) return;
-    const t = e.target.closest("[data-rcx],[data-rcxyes],[data-rcxno],[data-rrs],[data-rrsyes],[data-newbox],[data-filter],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],#billBtn,#lineBtn,#impBtn,#setBtn,#setBack,#clearQ");
+    const t = e.target.closest("[data-rcx],[data-rcxyes],[data-rcxno],[data-rrs],[data-rrsyes],[data-newbox],[data-filter],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],#billBtn,#lineBtn,#kakouBtn,#impBtn,#setBtn,#setBack,#clearQ");
     if (!t || t.disabled) return;
     const d = t.dataset;
     if (d.rcx || d.rrs || "rcxno" in d) {
@@ -999,6 +1034,9 @@ export function startOfficeApp(main, me) {
     else if (d.open) openOrder(d.open);
     else if (t.id === "billBtn") { bulk.done = ""; openBulk(); }
     else if (t.id === "impBtn") openImport({ sups: st.sups, getOrders: () => st.orders, me });
+    else if (t.id === "kakouBtn") {   // 加工品の注文（図面つき）（10/15）
+      openKakouOrder({ sups: st.sups, places: st.places, units: unitsList(), me, onPlaced: id => { st.view = "orders"; st.filter = "all"; draw(); waitOpen(id); } });
+    }
     else if (t.id === "lineBtn") {
       openLineOrder({ sups: st.sups, places: st.places, catalog: st.catalog, me, onPlaced: id => { st.view = "orders"; st.filter = "all"; draw(); openOrder(id); } });
     }

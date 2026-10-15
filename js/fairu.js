@@ -47,36 +47,48 @@ export function fileBlockHTML(o, canAdd = true) {
     </div>`;
 }
 
-/** ファイルを上げて、注文につける（1つずつ。上げおわったら注文に書く。書けなかったら置き場からも消す） */
-async function addFiles(o, list, me) {
+/** つけられるファイルだけにする（200MB より大きい・空のファイルは知らせて外す） */
+export function okFiles(list) {
   const all = [...list];
   const big = all.filter(f => f.size > MAX_FILE), empty = all.filter(f => !f.size);
   if (big.length) toast(`200MB より大きいファイルは、つけられません（${big.map(f => f.name).join("・")}）`);
   if (empty.length) toast(`中身が空のファイルは、つけられません（${empty.map(f => f.name).join("・")}）`);
-  const ok = all.filter(f => f.size && f.size <= MAX_FILE);
+  return all.filter(f => f.size && f.size <= MAX_FILE);
+}
+
+/** 1つのファイルを置き場に上げる（owner＝注文の番号。まだしまっていない注文の番号でもよい）。onPct(0〜100)。
+ *  返り値 { fid, entry }：entry を注文の files/{fid} に書く（書けなかったら removeUploaded で置き場からも消す） */
+export async function uploadFile(owner, f, me, onPct) {
+  const fid = push(ref(db, `zairyo/orders/${owner}/files`)).key;
+  const m = f.name.match(/\.([A-Za-z0-9]{1,10})$/);
+  const path = `zairyo/files/${owner}/${fid}${m ? "." + m[1].toLowerCase() : ""}`;
+  await new Promise((resolve, reject) => {
+    const task = uploadBytesResumable(sref(storage, path), f, {
+      contentType: f.type || "application/octet-stream",
+      contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`,   // ダウンロードの名前を元の名前に
+    });
+    task.on("state_changed", s => onPct(s.totalBytes ? Math.floor(s.bytesTransferred / s.totalBytes * 100) : 0), reject, resolve);
+  });
+  return { fid, entry: { name: f.name.slice(0, 200), path, size: f.size, type: (f.type || "").slice(0, 100), at: serverTimestamp(), by: (me && me.name) || "事務所" } };
+}
+/** 上げたけれど注文に書けなかったファイルを、置き場から消す */
+export const removeUploaded = paths => Promise.all(paths.map(p => deleteObject(sref(storage, p)).catch(() => {})));
+
+/** ファイルを上げて、注文につける（1つずつ。上げおわったら注文に書く。書けなかったら置き場からも消す） */
+async function addFiles(o, list, me) {
+  const ok = okFiles(list);
   if (!ok.length) return;
   if (uploading.has(o.id)) { toast("いま上げています。終わってから、もう一度つけてください"); return; }
   let done = 0;
   try {
     for (const [i, f] of ok.entries()) {
-      const fid = push(ref(db, `zairyo/orders/${o.id}/files`)).key;
-      const m = f.name.match(/\.([A-Za-z0-9]{1,10})$/);
-      const path = `zairyo/files/${o.id}/${fid}${m ? "." + m[1].toLowerCase() : ""}`;
       const u = { name: f.name, pct: 0, i: i + 1, n: ok.length };
       setProg(o.id, u);
-      await new Promise((resolve, reject) => {
-        const task = uploadBytesResumable(sref(storage, path), f, {
-          contentType: f.type || "application/octet-stream",
-          contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`,   // ダウンロードの名前を元の名前に
-        });
-        task.on("state_changed", s => setProg(o.id, { ...u, pct: s.totalBytes ? Math.floor(s.bytesTransferred / s.totalBytes * 100) : 0 }), reject, resolve);
-      });
+      const { fid, entry } = await uploadFile(o.id, f, me, pct => setProg(o.id, { ...u, pct }));
       try {
-        await update(ref(db, `zairyo/orders/${o.id}/files/${fid}`), {
-          name: f.name.slice(0, 200), path, size: f.size, type: (f.type || "").slice(0, 100), at: serverTimestamp(), by: (me && me.name) || "事務所",
-        });
+        await update(ref(db, `zairyo/orders/${o.id}/files/${fid}`), entry);
       } catch (ex) {
-        deleteObject(sref(storage, path)).catch(() => {});
+        await removeUploaded([entry.path]);
         throw ex;
       }
       done++;

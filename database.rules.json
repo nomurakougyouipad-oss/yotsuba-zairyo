@@ -338,6 +338,10 @@
           "billedAt": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
           "billedBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "invoiceId": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "kind": { ".validate": "newData.val() == 'kakou'" },
+          "unsent": { ".validate": "newData.val() == true" },
+          "sentAt": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
+          "sentBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "files": {
             "$f": {
               ".validate": "$f.length <= 40 && newData.hasChildren(['name', 'path', 'size', 'at', 'by'])",

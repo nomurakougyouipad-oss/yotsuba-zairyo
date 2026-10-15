@@ -138,6 +138,11 @@ export async function markArrived(o, me) {
   await update(ref(db, `zairyo/orders/${o.id}`), { status: "arrived", arrivedAt: serverTimestamp(), arrivedBy: me.name });
 }
 
+/** 材料屋に送った（加工品の「まだ送っていない」を消す。Gmail で送信したあとに押す。10/15） */
+export async function markSent(o, me) {
+  await update(ref(db, `zairyo/orders/${o.id}`), { unsent: null, sentAt: serverTimestamp(), sentBy: me.name });
+}
+
 /** 「材料がまだ届いていない」にもどす（届いたを押しまちがえたとき） */
 export async function backToWait(o) {
   await update(ref(db, `zairyo/orders/${o.id}`), { status: "wait", arrivedAt: null, arrivedBy: null });

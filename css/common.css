@@ -324,6 +324,30 @@ ul.plain{margin:0;padding-left:1.2em}
 .ocard{background:var(--surface);border:1px solid var(--line);border-top:5px solid var(--c);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;cursor:pointer;min-width:0}
 .ocard:hover{border-color:var(--muted);border-top-color:var(--c)}
 .ocard.cx{opacity:.65}
+.ocard.unsent{border-color:var(--amber);border-top-color:var(--amber)}   /* まだ送っていない加工品（10/15） */
+/* 事務所の最初の画面：「事務所から注文を入れる」と「届いたあと」（10/15） */
+.entry{display:flex;flex-direction:column;gap:8px}
+.entry h2,.after h2{margin:0;font-size:15px;font-weight:800}
+.entry-btns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.entry-btn{display:flex;flex-direction:column;gap:4px;text-align:left;background:var(--surface);border:1px solid var(--line);border-left:6px solid var(--amber-btn);border-radius:10px;padding:12px 16px;min-height:84px;color:var(--fg)}
+.entry-btn:hover:not(:disabled){background:var(--surface2)}
+.entry-btn b{font-size:16px;font-weight:800}
+.entry-btn span{font-size:13px;color:var(--muted);line-height:1.5}
+.entry-btn.soon{border-left-color:var(--line);opacity:.6;cursor:default}
+.entry-btn .soon-tag{display:inline-block;font-size:12px;font-weight:700;border:1px solid var(--line);border-radius:6px;padding:0 6px;margin-left:8px;color:var(--muted);vertical-align:2px}
+.after{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
+.after h2{font-size:14px;color:var(--muted);margin-right:4px}
+.after .btn small{font-weight:400;font-size:13px;color:var(--muted);margin-left:6px}
+@media (max-width:760px){.entry-btns{grid-template-columns:1fr}.entry-btn{min-height:0}}
+/* 加工品の注文の画面：品物の行（材質・品名・数・単位）とファイルを置く所（10/15） */
+.krows{display:flex;flex-direction:column;gap:6px}
+.krow{display:grid;grid-template-columns:110px minmax(0,1fr) 72px 76px 40px;gap:6px;align-items:start}
+.krow.head{font-size:12px;font-weight:700;color:var(--muted)}
+.krow .inp{width:100%;min-width:0}
+.k-del{border:0;background:none;font-size:20px;color:var(--muted);min-height:44px}
+@media (max-width:560px){.krow{grid-template-columns:minmax(0,1fr) 72px 76px 40px}.krow .k-mat{grid-column:1/-1}.krow .k-spec{grid-column:1/-1}.krow.head{display:none}}
+.drop{border:2px dashed var(--line);border-radius:10px;padding:12px;text-align:center;color:var(--muted);display:flex;flex-direction:column;gap:8px;align-items:center}
+.drop.over{border-color:var(--amber);background:var(--surface2)}
 .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
 .sup{font-weight:800;font-size:16px;line-height:1.35;min-width:0}
 .ochip{flex:none;font-size:12px;font-weight:700;border:1px solid var(--muted);color:var(--muted);border-radius:999px;padding:1px 10px;white-space:nowrap}
