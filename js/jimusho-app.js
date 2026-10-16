@@ -625,6 +625,7 @@ export function startOfficeApp(main, me) {
         throw ex;
       }
       toast(`${o.supplierName} への注文を取り消しました。品物は依頼にもどりました`);
+      t.closest(".confirm").remove();   // 「本当に？」をしまってから、かきなおす（残すと、かきなおさずに止まって見える）
       afterSave(w);
     }
   }
@@ -925,6 +926,7 @@ export function startOfficeApp(main, me) {
       const r = o.reqId ? (st.reqs || []).find(x => x.id === o.reqId) : null;
       await busy("取り消しています…", () => cancelOrder(o, r, me));
       toast(`${o.supplierName} への注文を取り消しました${o.reqId ? "。品物は依頼にもどりました" : ""}`);
+      t.closest(".confirm").remove();   // 「本当に？」をしまってから、かきなおす（残すと、かきなおさずに止まって見える）
       afterSave(w);
     }
   }
