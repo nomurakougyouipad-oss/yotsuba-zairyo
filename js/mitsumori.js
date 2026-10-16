@@ -43,7 +43,8 @@ export function quoteState(q, now = Date.now()) {
   if (ss.some(s => supState(s) === "unsent")) return { key: "unsent", label: "まだ送っていない", color: "var(--amber)", solid: true };
   const waiting = ss.filter(s => supState(s) === "wait");
   if (waiting.length) {
-    const first = Math.min(...waiting.map(s => s.sentAt || now)), d = Math.floor((now - first) / DAY);
+    // パソコンの時計がサーバーより少しおくれていると、送った直後に -1日 になるので、0 より小さくしない（10/16）
+    const first = Math.min(...waiting.map(s => s.sentAt || now)), d = Math.max(0, Math.floor((now - first) / DAY));
     const got = ss.length - waiting.length;
     return { key: "wait", label: `返事待ち・${d ? `${d}日` : "今日"}${got ? `（${got}/${ss.length} 来た）` : ""}`, color: "var(--amber)", solid: true };
   }
