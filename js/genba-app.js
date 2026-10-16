@@ -13,7 +13,7 @@ import { errorText } from "./touroku.js";
 import { watchJobs } from "./nippo.js";
 import { jobPicker } from "./kouji.js";
 import { normCatalog, openItem, buildSpec, lineText, loadCart, saveCart, newForm, fmtQty, ymd, kibouText } from "./tanomu.js";
-import { yen, linePrice, priceText, reqMoney } from "./chumon.js";
+import { yen, linePrice, priceText, reqMoney, deliverPlan } from "./chumon.js";
 import { attachHTML, fillPhotos, deletePhoto, openWebSearch } from "./shashin.js";
 
 const CAT_KEY = "yotsuba-zairyo-cat";   // さいごに見た種類（この端末だけ）
@@ -37,14 +37,16 @@ function progress(r, os = []) {
     return { step: 3, label: `届いた（${r.basho || "届け先"}）`, orderedAt, arrivedAt: Math.max(...arrived.map(o => o.arrivedAt || 0)) };
   }
   const label = r.status !== "ordered" ? "一部を注文した" : arrived.length ? "一部が届いた" : "事務所が注文した";
-  return { step: 2, label: `${label}（${names}）`, orderedAt };
+  // 材料屋がアプリで受けた注文は「○日に届く予定」（2回目・2-3）。いくつもあるときは、いちばんおそい日
+  const plans = act.filter(o => deliverPlan(o)).map(o => o.deliverDate).sort();
+  return { step: 2, label: `${label}（${names}）${plans.length ? `・${kibouText(plans[plans.length - 1])} 届く予定` : ""}`, orderedAt };
 }
 /** 品物ごとのようす */
 function lineStatus(l, os, r) {
   const o = l.orderId && os.find(x => x.id === l.orderId && x.status !== "cancelled");
   if (!o) return { cls: "s1", text: "事務所で確認中" };
   if (o.status === "arrived" || o.status === "billed") return { cls: "s3", text: `届いた（${r.basho || o.basho || "届け先"}）` };
-  return { cls: "s2", text: `注文ずみ（${o.supplierName}）・まだ届いていない` };
+  return { cls: "s2", text: `注文ずみ（${o.supplierName}）・${deliverPlan(o) ? `${deliverPlan(o)} に届く予定` : "まだ届いていない"}` };
 }
 
 export function startGenbaApp(main, me) {

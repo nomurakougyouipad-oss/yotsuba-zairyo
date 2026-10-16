@@ -28,6 +28,7 @@ const PATH = {
   notify: "zairyo/notify/tokens",  // 通知がオンのパソコン（10/14。js/tsuuchi.js）
   reqs: "zairyo/requests",        // 依頼（品物一覧の「手で書いた品物」を数えるため。10/14）
   info: "zairyo/officeInfo",      // 会社の名前・住所など・決まり文句・注文する人の電話番号（事務所だけ読める。注文の文・FAX。10/14）
+  supAccess: "zairyo/supAccess",  // 材料屋のアプリの専用リンクの鍵（2回目。事務所だけ読める。書くのはサーバーのプログラム）
   year: "common/chubanYear",      // 注番の年（2けた）。12/20〜25 ごろに事務所が切りかえる（日付からは決めない）
 };
 const S = {};                 // データベースの中身（読みこむまでは undefined）
@@ -168,6 +169,36 @@ function supCard([id, s]) {
         </div>
       </div>
       <button type="button" class="sw" data-swaz="${id}" aria-pressed="${!!s.azukari}"><span class="knob" aria-hidden="true"></span>預かりを使う</button>
+      ${s.send === "net" ? "" : `<button type="button" class="sw" data-swapp="${id}" aria-pressed="${!!s.app}"><span class="knob" aria-hidden="true"></span>材料屋のアプリで受ける</button>
+      ${s.app ? supAppHTML(id, s) : ""}`}
+    </div>`;
+}
+
+/** 材料屋のアプリ（2回目）：専用リンク・この材料屋の合言葉・登録した端末。「材料屋のアプリで受ける」が ON のときだけ出す */
+function supAppHTML(id, s) {
+  const acc = (S.supAccess || {})[id] || {};
+  const url = acc.key ? new URL(`zairyoya.html?k=${acc.key}`, location.href).href : "";
+  const devs = Object.values(S.dev || {}).filter(d => d && d.role === "sup" && d.sup === id);
+  const k = "remake:" + id;
+  return `
+    <div class="supapp">
+      <div class="mini">専用リンク
+        ${url ? `<code class="supurl">${esc(url)}</code>
+          ${ask === k ? `<span class="kask">作り直すと、前のリンクでは新しく登録できなくなります（前のリンクで登録ずみの端末は使えるままです。いらない端末は「登録した端末」で消してください）。
+            <span class="row"><button type="button" class="btn danger" data-supremakeyes="${id}">作り直す</button><button type="button" class="btn" data-askno>やめる</button></span></span>`
+          : `<span class="row"><button type="button" class="btn" data-supcopy="${id}">リンクをコピー</button><button type="button" class="linkbtn muted" data-supremake="${id}">作り直す</button></span>`}`
+        : `<span class="row"><button type="button" class="btn primary" data-supmake="${id}">リンクを作る</button></span>`}
+      </div>
+      <form class="codeform" data-form="supcode" data-id="${id}" autocomplete="off">
+        <span class="mini">${esc(s.name)} の合言葉（この材料屋だけ。最初の登録のときだけ使う）：${acc.codeSetAt ? `決めてあります（${when(acc.codeSetAt)}）` : "<b>まだ決めていません</b>"}</span>
+        <label class="mini">新しい合言葉（6文字以上）
+          <input id="sc1-${id}" class="inp" type="password" autocomplete="off" maxlength="64"></label>
+        <label class="mini">もう一度、同じ合言葉
+          <input id="sc2-${id}" class="inp" type="password" autocomplete="off" maxlength="64"></label>
+        <button class="btn">${acc.codeSetAt ? "合言葉を変える" : "合言葉を決める"}</button>
+      </form>
+      <p class="hint">リンクを LINE・メールで送り、合言葉は口（電話）で伝えてください。開いた人が、合言葉とその端末の名前を入れて登録します。</p>
+      <p class="mini">登録した端末：${devs.length ? devs.map(d => esc(d.name)).join("・") : "まだありません"}（消すのは「登録した端末」のタブで）</p>
     </div>`;
 }
 
@@ -555,6 +586,7 @@ function devHTML() {
     <p class="hint">機種（例 iPhone・ホーム画面）と最後に開いた日は、その端末でアプリを開いたときに入ります（前から登録してある端末は、次に開いたときから）。</p>
     ${group("genba", "現場のスマホ")}
     ${group("office", "事務所のパソコン")}
+    ${Object.values(S.dev).some(d => d && d.role === "sup") ? group("sup", "材料屋の端末") : ""}
     ${codeHTML()}`;
 }
 
@@ -573,7 +605,7 @@ function devRow(uid, d, me) {
   const old = d.seenAt && Date.now() - d.seenAt > OLD_DAYS * 86400000;
   return `
     <li>
-      <span class="dev-name"><span><b>${esc(d.name || "（名前なし）")}</b>${d.kiki ? ` <span class="kiki">${esc(d.kiki)}</span>` : ""}</span>
+      <span class="dev-name"><span><b>${d.role === "sup" ? esc(d.supName || "材料屋") + "・" : ""}${esc(d.name || "（名前なし）")}</b>${d.kiki ? ` <span class="kiki">${esc(d.kiki)}</span>` : ""}</span>
         ${me ? '<span><span class="tag">いま使っているこのパソコン</span></span>' : ""}
         <span class="muted">登録 ${d.registeredAt ? when(d.registeredAt) : "—"}</span>
         <span class="${old ? "hint warn" : "muted"}">最後に開いた ${d.seenAt ? lastOpen(d.seenAt) : "（まだ記録なし）"}${old ? `・${OLD_DAYS}日以上使っていません` : ""}</span></span>
@@ -776,6 +808,25 @@ async function onClick(e) {
     const s = S.sup[d.swaz];
     await update(ref(db, `${PATH.sup}/${d.swaz}`), { azukari: !s.azukari });
     toast(`${s.name} の預かりを${s.azukari ? "使わないように" : "使うように"}しました`);
+  } else if (d.swapp) {
+    // 材料屋のアプリで受ける（2回目）。OFF にしても、もう登録した端末は消さない（「登録した端末」で消す）
+    const s = S.sup[d.swapp];
+    await update(ref(db, `${PATH.sup}/${d.swapp}`), { app: !s.app });
+    toast(s.app ? `${s.name} を「材料屋のアプリで受ける」から外しました` : `${s.name} を「材料屋のアプリで受ける」にしました。専用リンクを作って、合言葉を決めてください`);
+  } else if (d.supmake || d.supremakeyes) {
+    const id = d.supmake || d.supremakeyes, s = S.sup[id];
+    ask = "";
+    t.disabled = true;
+    try { await call("zairyoSupLink")({ supId: id, remake: !!d.supremakeyes }); } finally { t.disabled = false; }
+    toast(d.supremakeyes ? `${s.name} の専用リンクを作り直しました。前のリンクでは、もう登録できません` : `${s.name} の専用リンクを作りました`);
+  } else if (d.supremake) {
+    ask = "remake:" + d.supremake;
+    draw(true);
+  } else if (d.supcopy) {
+    const acc = (S.supAccess || {})[d.supcopy] || {};
+    const url = new URL(`zairyoya.html?k=${acc.key}`, location.href).href;
+    try { await navigator.clipboard.writeText(url); toast("専用リンクをコピーしました。LINE・メールで材料屋さんに送ってください"); }
+    catch (err) { toast("コピーできませんでした。リンクの文字を選んでコピーしてください"); }
   } else if (d.suphide) {
     const s = S.sup[d.suphide];
     await update(ref(db, `${PATH.sup}/${d.suphide}`), { hidden: !s.hidden });
@@ -1058,6 +1109,18 @@ async function onSubmit(form) {
     clear("pNewName", "pNewText");
     await push(ref(db, PATH.place), { name, text, order: maxOrder(S.place) + 1 });
     toast(`${name} を足しました`);
+  } else if (kind === "supcode") {
+    // 材料屋ごとの合言葉（2回目）。サーバーと同じ見方でくらべる
+    const id = form.dataset.id, s = S.sup[id];
+    const norm = x => z2h($(`#${x}-${id}`, form).value).trim().toLowerCase();
+    const a = norm("sc1"), b = norm("sc2");
+    if ([...a].length < 6) return toast("合言葉は6文字以上にしてください");
+    if (a !== b) return toast("2つの欄の合言葉がちがいます。もう一度入れてください");
+    const btn = form.querySelector("button");
+    btn.disabled = true;
+    try { await call("zairyoSupCode")({ supId: id, code: $(`#sc1-${id}`, form).value }); } finally { btn.disabled = false; }
+    clear(`sc1-${id}`, `sc2-${id}`);
+    toast(`${s.name} の合言葉を決めました。材料屋さんに口（電話）で伝えてください`);
   } else if (kind === "code") {
     // サーバーと同じ見方（全角・半角、前後の空白、大文字・小文字）でくらべる
     const norm = id => z2h($(`#${id}`, form).value).trim().toLowerCase();

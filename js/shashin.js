@@ -159,14 +159,14 @@ export function photoPicker(box, list, onChange) {
   return { isBusy: () => busy > 0 };
 }
 
-/** 写真を大きく見る（押すか Esc で閉じる） */
-export function openPhoto(path) {
+/** 写真を大きく見る（押すか Esc で閉じる）。url＝もう分かっている見る用の住所（材料屋のアプリ。2-5） */
+export function openPhoto(path, url = "") {
   const d = document.createElement("div");
   d.className = "lightbox";
   d.setAttribute("role", "dialog");
   d.setAttribute("aria-label", "写真");
   d.innerHTML = '<img alt=""><button type="button" class="x" aria-label="閉じる">×</button>';
-  photoURL(path).then(u => { d.querySelector("img").src = u; }, () => { d.querySelector("img").alt = "見られません"; });
+  (url ? Promise.resolve(url) : photoURL(path)).then(u => { d.querySelector("img").src = u; }, () => { d.querySelector("img").alt = "見られません"; });
   const close = () => { d.remove(); document.removeEventListener("keydown", onKey, true); };
   const onKey = e => { if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); close(); } };
   d.addEventListener("click", close);

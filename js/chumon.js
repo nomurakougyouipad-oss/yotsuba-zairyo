@@ -2,7 +2,7 @@
 // - 注文は /zairyo/orders/{id}。依頼（/zairyo/requests）には、品物ごとの材料屋（supplier）と注文の番号（orderId）、
 //   1つでも注文したら ordered:true、全部注文したら status:"ordered" をつける（注文と依頼は1回の書きこみでいっしょに変える）
 // - 注文を取り消すときは消さずに status:"cancelled"（いつ・だれが）。その品物は依頼にもどる（材料屋を変えて注文しなおせる）
-import { ref, push, update, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+import { ref, push, get, update, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, auth } from "./firebase.js";
 import { zenkana } from "./common.js";
 import { lineText, kibouText } from "./tanomu.js";
@@ -138,6 +138,33 @@ export async function markArrived(o, me) {
   await update(ref(db, `zairyo/orders/${o.id}`), { status: "arrived", arrivedAt: serverTimestamp(), arrivedBy: me.name });
 }
 
+/* ---------- 材料屋のアプリ（2回目・2-2。10/16 持ち主） ----------
+   - ⚙ 設定で「材料屋のアプリで受ける」が ON の材料屋（ネットで買う店はのぞく）には、事務所が「アプリに送る」を押したときに注文がとどく（B）
+   - supState：sent（アプリに送った・まだ受けていない）→ accepted（受けた）→ delivered（届けた）→ priced（金額を入れた）
+   - LINE・電話の注文は、もう受けているので accepted から（supVia:"line"。持ち主 5A） */
+/** 材料屋のアプリで受ける材料屋か */
+export const isAppSup = s => !!(s && s.app && s.send !== "net");
+/** アプリに送るときに、注文に書く欄 */
+export const appSentFields = me => ({ supState: "sent", supSentAt: serverTimestamp(), supSentBy: me.name || "事務所" });
+/** いまある注文をアプリに送る（加工品などの「まだ送っていない」も、送ったことにする） */
+export async function sendToApp(o, me) {
+  await update(ref(db, `zairyo/orders/${o.id}`), {
+    ...appSentFields(me),
+    ...(o.unsent ? { unsent: null, sentAt: serverTimestamp(), sentBy: me.name || "事務所" } : {}),
+  });
+}
+/** 事務所に出す、アプリのようす（アプリに送っていなければ ""） */
+export function supStateText(o) {
+  if (!o.supState) return "";
+  const plan = o.deliverDate ? `・${kibouText(o.deliverDate)} 届ける予定` : "";
+  if (o.supState === "sent") return "アプリに送った（まだ受けていない）";
+  if (o.supState === "accepted") return (o.supVia === "line" ? "LINE・電話で受けた注文（アプリに出ています）" : "材料屋が受けた") + plan;
+  if (o.supState === "delivered") return `材料屋が届けた${o.supDeliveredAt ? `（${new Date(o.supDeliveredAt).getMonth() + 1}/${new Date(o.supDeliveredAt).getDate()}）` : ""}`;
+  return o.slips && o.slips.sup ? "材料屋が金額を入れた" : "材料屋が金額をたしかめた";   // たしかめた＝事務所が先に入れていた（2-4）
+}
+/** 届く予定（材料屋が受けて、まだ届いていない注文。なければ ""）。例「10/20（火）」（2-3） */
+export const deliverPlan = o => (o.deliverDate && o.status === "wait" && o.supState === "accepted" ? kibouText(o.deliverDate) : "");
+
 /** 材料屋に送った（加工品の「まだ送っていない」を消す。Gmail で送信したあとに押す。10/15） */
 export async function markSent(o, me) {
   await update(ref(db, `zairyo/orders/${o.id}`), { unsent: null, sentAt: serverTimestamp(), sentBy: me.name });
@@ -202,6 +229,53 @@ export async function removeSlip(o, sid) {
     [`slips/${sid}`]: null,
     nouhin: rest.length ? rest.reduce((s, [, x]) => s + (Number(x.amount) || 0), 0) : null,
   });
+}
+
+/* ---------- 材料屋のアプリで入れた納品書の金額（2-4。10/16 持ち主 4A） ----------
+   - 材料屋が入れる納品書は1枚だけ（slips/sup）。「材料屋が入れた」の印（src:"sup"）。事務所が先に入れていたら、材料屋は入れない（たしかめるだけ）
+   - 事務所は「直す」で直せる。もとの金額（supAmount）・直した人（fixBy・fixAt）を残す
+   - 単価は単価の記録（/zairyo/prices）にも残す（slip:"sup"。事務所が直したら入れかえる） */
+const supPriceRecs = (upd, o, slip) => {
+  for (const [lid, r] of Object.entries(slip.rows || {})) {
+    if (r.price == null) continue;
+    const line = (o.lines || {})[lid] || {};
+    upd[`zairyo/prices/${push(ref(db, "zairyo/prices")).key}`] = {
+      spec: r.spec, price: r.price, unit: r.unit || "", sup: o.supplier, supName: o.supplierName, key: line.key || "",
+      date: slip.date, orderId: o.id, chuban: o.chuban, slip: "sup", at: serverTimestamp(),
+    };
+  }
+};
+/** 材料屋のアプリから納品書の金額を入れる。me = 材料屋の端末 {supName, name}。注文は supState:"priced"（「終わった」へ） */
+export async function supAddSlip(o, slip, me) {
+  const base = `zairyo/orders/${o.id}`;
+  const upd = {
+    [`${base}/slips/sup`]: { ...slip, src: "sup", by: `${me.supName || o.supplierName}（${me.name}）`.slice(0, 40), at: serverTimestamp() },
+    [`${base}/nouhin`]: slip.amount,
+    [`${base}/supState`]: "priced",
+    [`${base}/supPricedAt`]: serverTimestamp(),
+    [`${base}/supPricedBy`]: me.name,
+  };
+  supPriceRecs(upd, o, slip);
+  await update(ref(db), upd);
+}
+/** 事務所が先に納品書の金額を入れていたとき：材料屋は金額をたしかめて「わかりました」（「終わった」へ） */
+export async function supSeePrice(o, me) {
+  await update(ref(db, `zairyo/orders/${o.id}`), { supState: "priced", supPricedAt: serverTimestamp(), supPricedBy: me.name });
+}
+/** 材料屋が入れた納品書を、事務所が直す。me = 事務所の端末 {name} */
+export async function fixSupSlip(o, slip, me) {
+  const old = (o.slips || {}).sup;
+  if (!old) throw new Error("材料屋が入れた納品書がありません");
+  const base = `zairyo/orders/${o.id}`;
+  const upd = {
+    [`${base}/slips/sup`]: { ...slip, src: "sup", by: old.by, at: old.at, supAmount: old.supAmount != null ? old.supAmount : old.amount, fixBy: me.name, fixAt: serverTimestamp() },
+    [`${base}/nouhin`]: slipsOf(o).reduce((s, [id, x]) => s + (id === "sup" ? 0 : Number(x.amount) || 0), 0) + slip.amount,
+  };
+  // 単価の記録：この納品書の分を入れかえる
+  const ps = (await get(ref(db, "zairyo/prices"))).val() || {};
+  for (const [pid, pr] of Object.entries(ps)) if (pr && pr.orderId === o.id && pr.slip === "sup") upd[`zairyo/prices/${pid}`] = null;
+  supPriceRecs(upd, o, slip);
+  await update(ref(db), upd);
 }
 
 /** 請求が来た（請求書の金額）。「請求ずみ」にする */

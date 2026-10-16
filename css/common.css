@@ -198,6 +198,13 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .kyo .owners{margin-top:4px}
 .ok-note{color:var(--blue);font-weight:700;margin:8px 0 0}
 .sendby button{flex:1 1 auto;white-space:nowrap}   /* せまいときは字を切らずに2段にする（10/15 送り方が5つになった） */
+/* 材料屋のアプリ（2回目）：⚙ 設定の材料屋のカードの、専用リンク・合言葉 */
+.supapp{display:flex;flex-direction:column;gap:10px;padding:10px 12px;border:1px dashed var(--line);border-radius:10px;background:var(--surface2)}
+.supurl{display:block;font-size:12px;font-family:ui-monospace,Consolas,monospace;word-break:break-all;padding:6px 8px;border-radius:6px;background:var(--surface);border:1px solid var(--line);color:var(--fg);font-weight:400}
+/* 材料屋のアプリ（2回目・2-2）：つぎにやることのタブ（① 受ける など）。せまいときは字を切らずに2段に */
+.sup-head{gap:8px}
+.sup-tabs{flex-wrap:wrap}
+.sup-tabs button{flex:1 1 auto;white-space:nowrap;min-height:44px}
 .send-note{margin:0 0 6px;padding:8px 12px;border-radius:8px;background:var(--surface2);color:var(--fg);font-weight:700;border-left:4px solid var(--amber)}
 .send-note[hidden]{display:none}
 ul.plain{margin:0;padding-left:1.2em}
@@ -447,6 +454,13 @@ ul.plain{margin:0;padding-left:1.2em}
 .slips li{border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--surface);display:flex;flex-direction:column;gap:4px}
 .sl-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .sl-lab{font-weight:700}
+/* 材料屋のアプリで入れた納品書の印（2-4） */
+.suptag{display:inline-block;font-size:12px;font-weight:700;color:var(--on-amber);background:var(--amber-btn);border-radius:4px;padding:0 6px}
+.slips .slipform{margin-top:6px}
+/* 金額の欄（js/kingaku.js）：スマホでは見出しの行がかくれるので、欄の上に小さな名前・金額の前に「金額」 */
+.slipform .a-cell{display:flex;flex-direction:column;gap:2px;min-width:0}
+.slipform .a-lab{display:none;font-size:12px;font-weight:700;color:var(--muted)}
+@media (max-width:640px){.slipform .a-lab{display:block}.slipform .a-amt:not(:empty)::before{content:"金額　";font-size:12px;color:var(--muted)}}
 .sl-rows summary{cursor:pointer;font-size:13px;color:var(--muted);font-weight:700;min-height:32px;display:flex;align-items:center}
 .sl-rows ul{margin:4px 0 0;padding-left:1.2em;font-size:13px}
 .prows{display:flex;flex-direction:column;gap:8px}
@@ -585,6 +599,7 @@ ul.plain{margin:0;padding-left:1.2em}
 .ph-img{display:block;border:1px solid var(--line);border-radius:8px;padding:0;overflow:hidden;background:var(--surface);width:72px;height:72px}
 .ph-img img{width:100%;height:100%;object-fit:cover;display:block}
 .ph-img.ng{display:grid;place-items:center;font-size:11px;color:var(--muted)}
+.g-lines .photos{margin:6px 0 4px}   /* 材料屋のアプリ：品物の下の写真（2-5） */
 .ph-x{position:absolute;top:-10px;right:-10px;width:32px;height:32px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--fg);font-weight:800;line-height:1;padding:0}
 .ph-add{display:inline-flex;align-items:center;justify-content:center;width:72px;height:72px;border:1px dashed var(--muted);border-radius:8px;font-weight:700;font-size:13px;color:var(--muted);cursor:pointer}
 .ph-add:focus-within{outline:2px solid var(--amber)}

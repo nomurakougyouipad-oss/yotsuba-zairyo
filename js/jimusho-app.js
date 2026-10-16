@@ -11,7 +11,7 @@ import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet } from "./common.js";
 import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
-import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, markBilled, backToArrived, billMany } from "./chumon.js";
+import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel, shopOf, pageLink, SHOPS } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
@@ -20,11 +20,12 @@ import { openReqEdit, openOrderEdit } from "./naosu.js";
 import { printFax } from "./fax.js";
 import { fileBlockHTML, wireFiles, filesOf, downloadFiles } from "./fairu.js";
 import { openKakouOrder } from "./kakou.js";
+import { slipFormHTML, wireSlipForm, readSlipForm, slipRowText } from "./kingaku.js";
 import { quoteState, isOpenQuote, quoteCard, openQuoteForm, quoteHTML, wireQuote, qLines } from "./mitsumori.js";
 
 /** 一覧・注文の画面の小さい印（加工品・見積から。10/15） */
 const KIND_TAG = { kakou: "加工品", mekki: "めっき", mitsumori: "見積から" };
-const kindTag = o => (KIND_TAG[o.kind] ? ` <span class="tag">${KIND_TAG[o.kind]}</span>` : "");
+const kindTag = o => (KIND_TAG[o.kind] ? ` <span class="tag">${KIND_TAG[o.kind]}</span>` : "") + (o.supState ? ' <span class="tag">アプリ</span>' : "");   // アプリ＝材料屋のアプリに送った注文（2-2）
 /** 事務所で入れて、あとで「送った」を押す注文（加工品・めっき・見積から） */
 const officeKind = o => o.kind === "kakou" || o.kind === "mekki" || o.kind === "mitsumori";
 
@@ -310,9 +311,10 @@ export function startOfficeApp(main, me) {
           <div><dt>届け先</dt><dd>${esc(o.basho || "—")}</dd></div>
           <div><dt>注文者</dt><dd>${esc(o.chumonsha || "—")}</dd></div>
           <div><dt>注文した</dt><dd>${md(o.orderedAt)}</dd></div>
+          ${deliverPlan(o) ? `<div><dt>届く予定</dt><dd>${esc(deliverPlan(o))}</dd></div>` : ""}
         </dl>
         <div class="card-foot">${amtHTML(o)}
-          ${unsent ? '<span class="hint warn">開いて「メールで送る」→ 送信したら「送った」</span>'
+          ${unsent ? (isAppSup(st.sups && st.sups[o.supplier]) ? '<span class="hint warn">開いて「アプリに送る」</span>' : '<span class="hint warn">開いて「メールで送る」→ 送信したら「送った」</span>')
             : o.status === "wait" ? `<button type="button" class="btn primary" data-next="${esc(o.id)}">届いた</button>`
             : o.status === "arrived" ? `<button type="button" class="btn" data-bill="${esc(o.id)}">請求が来た</button>` : ""}</div>
       </article>`;
@@ -513,6 +515,18 @@ export function startOfficeApp(main, me) {
               <button type="button" class="btn primary" data-gorder="${esc(sid)}">注文した</button></div>
             <p class="hint">お店のページで買ってから、「注文した」を押してください。注番は、お店の備考などの欄にはりつけておくと、あとで納品書と合わせやすくなります。</p>
           </div>`;
+        // 材料屋のアプリで受ける材料屋（2回目・2-2）：「アプリに送る」で注文がとどく（持ち主 B）
+        if (isAppSup(s)) return `
+          <div class="group">
+            <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">材料屋のアプリ</span><span class="hint g-n">${ids.length}点</span></div>
+            <ul class="g-lines">${ids.map(id => { const l = r.lines[id], n = Object.keys(l.photos || {}).length;
+              return `<li>${esc(lineText(l))}${n ? ` <span class="tag">写真${n}枚</span>` : ""}${l.link ? ` <span class="tag">リンクつき</span>` : ""}</li>`; }).join("")}</ul>
+            <div class="row"><button type="button" class="btn primary" data-gapp="${esc(sid)}">アプリに送る（注文する）</button>
+              <button type="button" class="btn" data-gcopy="${esc(sid)}">注文の文をコピー</button></div>
+            <div class="field" data-gfb="${esc(sid)}" hidden><p class="send-note" role="status" hidden></p><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
+              <textarea class="inp ta copybox" rows="12" readonly></textarea></div>
+            <p class="hint">押すと、${esc(s.name)} のアプリに注文がとどいて「注文した」になります。</p>
+          </div>`;
         return `
           <div class="group">
             <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">${esc(s.to || "御中")}</span><span class="hint g-n">${ids.length}点</span></div>
@@ -525,7 +539,7 @@ export function startOfficeApp(main, me) {
               <textarea class="inp ta copybox" rows="12" readonly></textarea></div>
           </div>`;
       }).join("")}</div>
-      ${groups.some(([sid]) => st.sups[sid].send !== "net") ? '<p class="hint">「注文の文をコピー」（または「メールで送る」「LINE で送る」）で材料屋に送ってから、「注文した」を押してください。</p>' : ""}`;
+      ${groups.some(([sid]) => st.sups[sid].send !== "net" && !isAppSup(st.sups[sid])) ? '<p class="hint">「注文の文をコピー」（または「メールで送る」「LINE で送る」）で材料屋に送ってから、「注文した」を押してください。</p>' : ""}`;
     }
     if (none.length) h += `<p class="err">材料屋が決まっていない品物が ${none.length}点 あります（上の 1. でえらんでください）</p>`;
     if (!groups.length && !none.length) h += "<p>この依頼は、すべて注文しました。</p>";
@@ -573,7 +587,7 @@ export function startOfficeApp(main, me) {
 
   /** 中身の画面で押したとき */
   async function onPanelClick(e, w) {
-    const t = e.target.closest("[data-redit],[data-gcopy],[data-gsend],[data-gorder],[data-ocancel],[data-ocyes],[data-ocno],[data-chuban]");
+    const t = e.target.closest("[data-redit],[data-gcopy],[data-gsend],[data-gorder],[data-gapp],[data-ocancel],[data-ocyes],[data-ocno],[data-chuban]");
     if (!t || t.disabled) return;
     const r = (st.reqs || []).find(x => x.id === st.openId);
     if (!r) return;
@@ -590,19 +604,22 @@ export function startOfficeApp(main, me) {
       const sid = d.gcopy || d.gsend, dr = draftFor(sid);
       if (!dr) return;
       await copyOrSend(dr, d.gsend ? st.sups[sid] : null, w.querySelector(`[data-gfb="${CSS.escape(sid)}"]`), st.info);
-    } else if (d.gorder) {
-      const dr = draftFor(d.gorder);
-      if (!dr) return;
+    } else if (d.gorder || d.gapp) {
+      const dr0 = draftFor(d.gorder || d.gapp);
+      if (!dr0) return;
+      // アプリに送る（2-2）：注文に、アプリに送った印もつける
+      const dr = d.gapp ? { ...dr0, ...appSentFields(me) } : dr0;
+      const label = t.textContent;
       t.disabled = true;
       t.textContent = "しまっています…";
       try {
         await placeOrder(r, dr, me);
       } catch (ex) {
         t.disabled = false;
-        t.textContent = "注文した";
+        t.textContent = label;
         throw ex;
       }
-      toast(`${dr.supplierName} に注文しました（材料がまだ届いていない に入りました）`);
+      toast(d.gapp ? `${dr.supplierName} のアプリに送りました（材料がまだ届いていない に入りました）` : `${dr.supplierName} に注文しました（材料がまだ届いていない に入りました）`);
       afterSave(w);
     } else if (d.ocancel) {
       const box = w.querySelector(`#ocx-${CSS.escape(d.ocancel)}`);
@@ -634,61 +651,42 @@ export function startOfficeApp(main, me) {
   function amtHTML(o) {
     const c = cost(o);
     return c != null
-      ? `<span class="amt"><span>材料費</span><span class="num">${yen(c)}</span><span class="yen">円</span><span>（${o.seikyu != null ? "請求" : "納品書"}）</span></span>`
+      ? `<span class="amt"><span>材料費</span><span class="num">${yen(c)}</span><span class="yen">円</span><span>（${o.seikyu != null ? "請求" : o.slips && o.slips.sup ? "納品書・材料屋" : "納品書"}）</span></span>`
       : '<span class="amt"><span>金額はまだ</span></span>';
   }
 
   /* ---------- 納品書の金額（1つの注文に何枚でも） ---------- */
   function slipBlockHTML(o) {
-    const sl = slipsOf(o), lines = Object.entries(o.lines || {});
+    const sl = slipsOf(o);
+    // 欄は js/kingaku.js（材料屋のアプリと同じ。Kg・¥/kg つき。2-4）
     const form = `
-      <p class="hint">品物ごとに単価を入れると、合計が出ます。合計だけでもかまいません。${o.status === "wait" ? "入れると「届いた」になります。" : ""}${lines.some(([, l]) => l.qprice != null) ? "見積の単価を入れてあります。納品書とちがえば直してください。" : ""}</p>
-      <div class="prows">${lines.map(([lid, l]) => `
-        <div class="prow">
-          <div class="p-spec">${esc(l.spec)}${l.note ? " " + esc(l.note) : ""}<span class="hint">　×${esc(fmtQty(l.qty))}${esc(l.unit)}</span></div>
-          <div class="yen-in"><input class="inp" data-mpi="${esc(lid)}" inputmode="decimal" placeholder="単価" aria-label="${esc(l.spec)} の単価"${l.qprice != null ? ` value="${esc(String(l.qprice))}"` : ""}><span>円 ×${esc(fmtQty(l.qty))}</span></div>
-          <div class="p-sum num" data-mps="${esc(lid)}"></div>
-        </div>`).join("")}</div>
-      <div class="ptotal"><label for="mTotal">合計（税抜）</label><div class="yen-in"><input id="mTotal" class="inp" inputmode="numeric" placeholder="0"><span>円</span></div></div>
-      <div class="two">
-        <div class="field"><label for="mSlipNo">納品書の番号（あれば）</label><input id="mSlipNo" class="inp" maxlength="40" autocomplete="off"></div>
-        <div class="field"><label for="mDate">日付</label><input id="mDate" class="inp" type="date" value="${ymd(0)}"></div>
-      </div>
-      <p class="err" id="eSlip"></p>
+      ${o.status === "wait" ? '<p class="hint">入れると「届いた」になります。</p>' : ""}
+      ${slipFormHTML(o)}
       <div class="row"><button type="button" class="btn primary" data-slipsave>納品書の金額を入れる</button></div>`;
+    const dayText = s => s.slice(5).replace("-", "/").replace(/^0/, "");   // 2026-10-20 → 10/20
     return `
       <div class="block" id="slipBlock"><h3>納品書の金額</h3>
-        ${sl.length ? `<ul class="slips">${sl.map(([sid, s]) => `
+        ${sl.length ? `<ul class="slips">${sl.map(([sid, s]) => st.slipFix === `${o.id}/${sid}` ? `
+          <li><div class="sl-top"><span class="sl-lab">納品書を直す</span><span class="suptag">材料屋が入れた</span></div>
+            <div data-fixbox>${slipFormHTML(o, { slip: s })}</div>
+            <div class="row"><button type="button" class="btn primary" data-slipfixsave>直して入れる</button><button type="button" class="btn" data-slipfixno>やめる</button></div>
+          </li>` : `
           <li>
-            <div class="sl-top"><span class="sl-lab">納品書${s.no ? "　No." + esc(s.no) : ""}${s.date ? "　" + esc(s.date.slice(5).replace("-", "/").replace(/^0/, "")) : ""}</span>
+            <div class="sl-top"><span class="sl-lab">納品書${s.no ? "　No." + esc(s.no) : ""}${s.date ? "　" + esc(dayText(s.date)) : ""}</span>
+              ${s.src === "sup" ? `<span class="suptag">${s.fixBy ? "材料屋が入れた → 事務所が直した" : "材料屋が入れた"}</span>` : ""}
               ${s.amount != null ? `<span class="money">${yen(s.amount)}</span><span>円</span>` : '<span class="hint">金額なし</span>'}
+              ${s.src === "sup" ? `<button type="button" class="linkbtn" data-slipfix="${esc(sid)}">直す</button>` : ""}
               <button type="button" class="linkbtn muted" data-slipdel="${esc(sid)}">消す</button></div>
             ${s.scan ? `<button type="button" class="linkbtn" data-phview="${esc(s.scan)}">納品書のスキャンを見る</button>` : ""}
             ${s.rows && Object.keys(s.rows).length ? `<details class="sl-rows"><summary>明細（${Object.keys(s.rows).length}行）</summary><ul>${Object.values(s.rows).map(r =>
-              `<li>${esc(r.spec)}${r.qty != null ? "　×" + esc(fmtQty(r.qty)) + esc(r.unit || "") : ""}${r.price != null ? "　@" + yen(r.price) : ""}　${yen(r.amount)}円</li>`).join("")}</ul></details>` : ""}
-            <span class="hint">入れた人：${esc(s.by || "")}${s.imp ? "（納品書の取りこみ）" : ""}</span>
+              `<li>${esc(slipRowText(r))}</li>`).join("")}</ul></details>` : ""}
+            <span class="hint">入れた人：${esc(s.by || "")}${s.imp ? "（納品書の取りこみ）" : ""}${s.src === "sup" ? "・材料屋のアプリから" : ""}</span>
+            ${s.fixBy ? `<span class="hint">直した人：${esc(s.fixBy)}${s.fixAt ? `（${md(s.fixAt)}）` : ""}。材料屋が入れた金額は ${yen(s.supAmount)}円</span>` : ""}
           </li>`).join("")}</ul>
           ${sl.length > 1 ? `<p class="ptotal"><span>納品書の合計</span><span class="money">${yen(o.nouhin)}</span><span>円</span></p>` : ""}
           <div class="row"><button type="button" class="linkbtn" data-slipmore>＋ 納品書をもう1枚入れる</button></div>` : ""}
         <div id="slipFormBox"${sl.length ? " hidden" : ""}>${form}</div>
       </div>`;
-  }
-
-  /** 単価を入れたら、品物ごとの金額と合計を出す（合計を手で直したら、そのまま） */
-  function calcSlip(w) {
-    const sb = w.querySelector("#slipBlock");
-    if (!sb) return;
-    const o = (st.orders || []).find(x => x.id === st.openOrderId);
-    if (!o) return;
-    let tot = 0, any = false;
-    for (const [lid, l] of Object.entries(o.lines || {})) {
-      const v = toPrice(sb.querySelector(`[data-mpi="${CSS.escape(lid)}"]`).value);
-      const a = v == null ? null : Math.round(v * Number(l.qty));
-      sb.querySelector(`[data-mps="${CSS.escape(lid)}"]`).textContent = a != null ? yen(a) + "円" : "";
-      if (a != null) { tot += a; any = true; }
-    }
-    const t = sb.querySelector("#mTotal");
-    if (!t.dataset.manual) t.value = any ? yen(tot) : "";
   }
 
   /* ---------- 注文の中身（右から出る）：届いた・もどす・コピー・取り消して依頼にもどす ---------- */
@@ -706,7 +704,15 @@ export function startOfficeApp(main, me) {
         <div class="field" id="oCopyFb" hidden><p class="send-note" role="status" hidden></p><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
           <textarea class="inp ta copybox" rows="12" readonly></textarea></div>`;
     let act = "";
-    if (unsent) {   // まだ送っていない（加工品。10/15）：送ってから「送った」
+    const app = isAppSup(osup) && !cx;   // 材料屋のアプリで受ける材料屋（2回目・2-2）
+    const appPending = app && (unsent || (o.status === "wait" && !o.supState));
+    if (appPending) {   // まだアプリに送っていない：「アプリに送る」でとどく（持ち主 B）
+      act = `<div class="block act" style="--c:var(--amber)"><h3>つぎにやること</h3>
+          <p class="warn">まだ材料屋のアプリに送っていません。</p>
+          <p>「アプリに送る」を押すと、${esc(osup.name)} のアプリに注文がとどきます。</p>
+          <button type="button" class="btn primary big" data-oapp="${esc(o.id)}">アプリに送る</button>
+          <details class="hidbox"><summary>注文の文（コピー・メール）</summary>${sendArea}</details></div>`;
+    } else if (unsent) {   // まだ送っていない（加工品。10/15）：送ってから「送った」
       act = `<div class="block act" style="--c:var(--amber)"><h3>つぎにやること</h3>
           <p class="warn">まだ材料屋に送っていません。</p>
           <p>${net ? "お店のページで買ってから" : osup && osup.send === "mail" ? "「メールで送る」で Gmail を開いて、ファイルをつけて送信してから" : "注文の文を送ってから"}、「送った」を押してください。</p>
@@ -714,7 +720,9 @@ export function startOfficeApp(main, me) {
           <button type="button" class="btn primary big" data-osent="${esc(o.id)}">送った</button></div>`;
     } else if (o.status === "wait") {
       act = `<div class="block act" style="--c:${s.color}"><h3>つぎにやること</h3>
-          <p>材料は届きましたか？<br><span class="hint">納品書が来ていれば、下の「納品書の金額」で入れると「届いた」になります。</span></p>
+          ${app && o.supState === "sent" ? '<p class="hint">材料屋のアプリで、まだ受けていません。</p>' : ""}
+          ${deliverPlan(o) ? `<p>材料屋が受けました：<b>${esc(deliverPlan(o))}</b> に届ける予定です。</p>` : ""}
+          <p>材料は届きましたか？<br><span class="hint">${app ? "材料屋がアプリで「届けました」を押すと、自動で「届いた」になります。" : ""}納品書が来ていれば、下の「納品書の金額」で入れると「届いた」になります。</span></p>
           <button type="button" class="btn primary big" data-arrive="${esc(o.id)}">届いた（金額はあとで）</button></div>`;
     } else if (o.status === "arrived") {
       act = `<div class="block act" style="--c:${s.color}"><h3>つぎにやること</h3>
@@ -752,7 +760,8 @@ export function startOfficeApp(main, me) {
           <dt>届け先</dt><dd>${esc(o.basho || "—")}</dd>
           <dt>注文者</dt><dd>${esc(o.chumonsha || "—")}</dd>
           <dt>担当者</dt><dd>${esc(o.tantou || "—")}</dd>
-          <dt>来たところ</dt><dd>${o.reqId ? `現場のスマホ（${esc(o.chumonsha)}さん）` : o.kind === "kakou" ? "事務所（加工品）" : o.kind === "mekki" ? "事務所（めっき）" : o.kind === "mitsumori" ? `見積から（事務所）${o.quoteId ? ` <button type="button" class="linkbtn" data-oquote="${esc(o.quoteId)}">もとの見積を開く</button>` : ""}` : "LINE・電話"}</dd>
+          ${o.supState ? `<dt>材料屋のアプリ</dt><dd>${esc(supStateText(o))}${o.supSentAt ? `（${md(o.supSentAt)} ${hm(o.supSentAt)} 送った）` : ""}</dd>` : ""}
+          <dt>来たところ</dt><dd>${o.reqId ?`現場のスマホ（${esc(o.chumonsha)}さん）` : o.kind === "kakou" ? "事務所（加工品）" : o.kind === "mekki" ? "事務所（めっき）" : o.kind === "mitsumori" ? `見積から（事務所）${o.quoteId ? ` <button type="button" class="linkbtn" data-oquote="${esc(o.quoteId)}">もとの見積を開く</button>` : ""}` : "LINE・電話"}</dd>
           ${o.quoteTotal != null ? `<dt>見積の金額</dt><dd>${yen(o.quoteTotal)} 円（税抜）</dd>` : ""}
           <dt>${officeKind(o) ? "入れた" : "注文した"}</dt><dd>${md(o.orderedAt)} ${hm(o.orderedAt)}（${esc(o.orderedBy || "")}）</dd>
           ${o.sentAt ? `<dt>送った</dt><dd>${md(o.sentAt)} ${hm(o.sentAt)}（${esc(o.sentBy || "")}）</dd>` : ""}
@@ -763,7 +772,7 @@ export function startOfficeApp(main, me) {
           ${o.memo ? `<dt>メモ</dt><dd>${esc(o.memo)}</dd>` : ""}
         </dl></div>
         ${o.src ? `<details class="block hidbox"><summary>LINE の元の文</summary><pre class="src-text">${esc(o.src)}</pre></details>` : ""}
-        ${unsent ? "" : sendArea}
+        ${unsent || appPending ? "" : sendArea}
         ${o.status === "wait" ? `
           <div class="cx-start" id="ocx-${esc(o.id)}">
             <button type="button" class="btn danger" data-ocancel="${esc(o.id)}">${o.reqId ? "注文を取り消して依頼にもどす" : "注文を取り消す"}</button>
@@ -826,6 +835,7 @@ export function startOfficeApp(main, me) {
     if (!o) return;
     const panel = document.getElementById("panel");
     const y = keepScroll && panel ? panel.scrollTop : 0;
+    if (!keepScroll) st.slipFix = "";   // 新しく開いたら、納品書を直す欄は閉じておく
     st.openOrderId = id;
     st.openId = "";
     st.openQuoteId = "";
@@ -836,11 +846,9 @@ export function startOfficeApp(main, me) {
       w.addEventListener("click", e => onOrderClick(e, w).catch(ex => toast(errorText(ex))));
       // ファイル（注文書・図面）をつける・出す・消す（10/15。js/fairu.js）
       wireFiles(w, () => (st.orders || []).find(x => x.id === id), me, { onErr: ex => toast(errorText(ex)), redraw: () => openOrder(id, true) });
-      if (w.querySelector("[data-mpi][value]")) calcSlip(w);   // 見積の単価を入れてあるとき、合計を出しておく（10/15）
+      // 納品書の金額の欄（js/kingaku.js）：入れたら計算。入れかけの欄は、データが変わっても、かきなおさない（data-dirty）
+      w.querySelectorAll("[data-slipform]").forEach(box => wireSlipForm(box, () => { box.dataset.dirty = "1"; }));
       w.addEventListener("input", e => {
-        if (e.target.matches("[data-mpi]")) calcSlip(w);
-        if (e.target.id === "mTotal") { if (e.target.value.trim()) e.target.dataset.manual = "1"; else delete e.target.dataset.manual; }
-        if (e.target.matches("[data-mpi], #mTotal")) w.querySelector("#eSlip").textContent = "";
         if (e.target.id === "amtS") w.querySelector("#eBill").textContent = "";
       });
       if (focusSel) {
@@ -851,7 +859,7 @@ export function startOfficeApp(main, me) {
   }
 
   async function onOrderClick(e, w) {
-    const t = e.target.closest("[data-oquote],[data-oedit],[data-arrive],[data-osent],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-slipmore],[data-billgo],[data-unbill],[data-chuban]");
+    const t = e.target.closest("[data-oquote],[data-oedit],[data-arrive],[data-osent],[data-oapp],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-slipmore],[data-slipfix],[data-slipfixsave],[data-slipfixno],[data-billgo],[data-unbill],[data-chuban]");
     if (!t || t.disabled) return;
     const d = t.dataset, o = (st.orders || []).find(x => x.id === st.openOrderId);
     if (!o) return;
@@ -866,12 +874,16 @@ export function startOfficeApp(main, me) {
       t.disabled = true;
       t.textContent = label;
       try { await fn(); } catch (ex) { t.disabled = false; t.textContent = old; throw ex; }
-      // しまい終わったら、欄にカーソルが残っていても（Safari など）、中身をかきなおす
+      // しまい終わったら、欄にカーソルが残っていても（Safari など）・入れかけの印があっても、中身をかきなおす
+      w.querySelectorAll("[data-dirty]").forEach(x => { delete x.dataset.dirty; });
       const a = document.activeElement;
       if (a && w.contains(a)) a.blur();
       refreshPanel();
     };
-    if (d.osent) {   // 加工品：材料屋に送った（10/15）
+    if (d.oapp) {   // 材料屋のアプリに送る（2-2）
+      await busy("送っています…", () => sendToApp(o, me));
+      toast(`${o.supplierName} のアプリに送りました`);
+    } else if (d.osent) {   // 加工品：材料屋に送った（10/15）
       await busy("しまっています…", () => markSent(o, me));
       toast("「送った」にしました（材料がまだ届いていない）");
     } else if (d.arrive) {
@@ -883,23 +895,29 @@ export function startOfficeApp(main, me) {
     } else if ("slipmore" in d) {
       w.querySelector("#slipFormBox").hidden = false;
       t.hidden = true;
-      const f = w.querySelector("[data-mpi]") || w.querySelector("#mTotal");
+      const f = w.querySelector("#slipFormBox [data-slipform] input");
       f.focus({ preventScroll: true });
       f.scrollIntoView({ block: "nearest" });
     } else if ("slipsave" in d) {
-      const sb = w.querySelector("#slipBlock"), err = sb.querySelector("#eSlip");
-      const total = toPrice(sb.querySelector("#mTotal").value);
-      if (total == null) { err.textContent = "金額を入れてください（品物ごとの単価か、合計）"; return; }
-      const date = sb.querySelector("#mDate").value || ymd(0);
-      const rows = {};
-      for (const [lid, l] of Object.entries(o.lines || {})) {
-        const v = toPrice(sb.querySelector(`[data-mpi="${CSS.escape(lid)}"]`).value);
-        if (v == null) continue;
-        rows[lid] = { spec: l.spec + (l.note ? " " + l.note : ""), qty: Number(l.qty), unit: l.unit, price: v, amount: Math.round(v * Number(l.qty)) };
-      }
+      const box = w.querySelector("#slipFormBox [data-slipform]"), r = readSlipForm(box, o);
+      if (r.err) { box.querySelector('[data-s="err"]').textContent = r.err; r.focus.focus(); return; }
       const was = o.status;
-      await busy("しまっています…", () => addSlip(o, { no: sb.querySelector("#mSlipNo").value.trim(), date, amount: Math.round(total), rows }, me));
+      await busy("しまっています…", () => addSlip(o, r.slip, me));
       toast("納品書の金額を入れました" + (was === "wait" ? "（「届いた」にしました）" : ""));
+    } else if (d.slipfix) {   // 材料屋が入れた納品書を直す（2-4。持ち主 4A）
+      st.slipFix = `${o.id}/${d.slipfix}`;
+      openOrder(o.id, true);
+      const f = document.querySelector("#orderWrap [data-fixbox] input");
+      if (f) { f.focus({ preventScroll: true }); f.scrollIntoView({ block: "nearest" }); }
+    } else if ("slipfixno" in d) {
+      st.slipFix = "";
+      openOrder(o.id, true);
+    } else if ("slipfixsave" in d) {
+      const box = w.querySelector("[data-fixbox] [data-slipform]"), r = readSlipForm(box, o);
+      if (r.err) { box.querySelector('[data-s="err"]').textContent = r.err; r.focus.focus(); return; }
+      st.slipFix = "";
+      await busy("しまっています…", () => fixSupSlip(o, r.slip, me)).catch(ex => { st.slipFix = `${o.id}/sup`; throw ex; });
+      toast("材料屋が入れた納品書の金額を直しました");
     } else if (d.slipdel) {
       if (t.dataset.armed !== "1") { t.dataset.armed = "1"; t.textContent = "もう一度押すと消えます"; return; }   // 消すときは2回押す
       await busy("消しています…", () => removeSlip(o, d.slipdel));
@@ -1083,6 +1101,7 @@ export function startOfficeApp(main, me) {
     } else if (st.openOrderId && document.getElementById("orderWrap")) {
       if (a && a.closest && a.closest("#orderWrap") && a.matches("input, textarea")) return;   // 金額などを入れている途中
       if (document.querySelector("#orderWrap .confirm")) return;   // 「本当に？」を出している途中はかきなおさない
+      if (document.querySelector("#orderWrap [data-dirty]")) return;   // 納品書の金額を入れかけ（2-4）
       openOrder(st.openOrderId, true);
     } else if (st.openQuoteId && document.getElementById("quoteWrap")) {   // 見積（10/15）
       const w = document.getElementById("quoteWrap");

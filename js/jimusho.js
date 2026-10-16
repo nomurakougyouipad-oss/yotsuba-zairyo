@@ -33,6 +33,7 @@ function showCode(me) {
       ${me && me.removed ? '<p class="warn">このパソコンの登録は消されています。もう一度登録してください。</p>' : ""}
       ${me && me.lost ? '<p class="warn">このパソコンに覚えていた登録が、消えていました。もう一度登録してください。</p>' : ""}
       ${me && me.role === "genba" ? '<p class="warn">この端末は、現場のスマホとして登録されています。事務所の合言葉で登録すると、事務所のパソコンに変わります。</p>' : ""}
+      ${me && me.role === "sup" ? '<p class="warn">この端末は、材料屋のアプリで登録されています。事務所の合言葉で登録すると、事務所のパソコンに変わります。</p>' : ""}
       <form id="codeForm" class="form" novalidate>
         <div class="field">
           <label for="code">事務所の合言葉</label>

@@ -256,7 +256,8 @@ export async function openOrderEdit({ o, r, places, units, me, onDone }) {
       <div class="panel-head"><div><span class="eyebrow">注文を直す（${esc(o.supplierName)}）</span>
         <h2 id="panelTitle">${esc(o.chuban)} ${esc(zenkana(o.kenmei || ""))}</h2></div>
         <button type="button" class="x" data-close aria-label="閉じる">×</button></div>
-      <p class="warn">材料屋には、アプリから知らせません。もう送った注文なら、直したあとに「注文の文をコピー」（または「メールで送る」）で、もう一度送ってください。</p>
+      ${o.supState ? '<p class="warn">この注文は材料屋のアプリに送ってあります。保存すると、材料屋のアプリに「事務所が直しました」と出ます。</p>'
+        : '<p class="warn">材料屋には、アプリから知らせません。もう送った注文なら、直したあとに「注文の文をコピー」（または「メールで送る」）で、もう一度送ってください。</p>'}
       <div class="block">${headHTML(o, places, staff)}
         <p class="hint">注番を直すと、この注文の金額（納品書・単価の記録）は、新しい注番の材料費に入ります。${o.reqId ? "注番・希望日などは、この注文だけが変わります（現場の依頼は品物だけそろえます）。" : ""}</p></div>
       <div class="block"><h3>品物</h3>
@@ -300,6 +301,7 @@ export async function openOrderEdit({ o, r, places, units, me, onDone }) {
       }
       const by = me.name || "事務所";
       upd[`${base}/log/${logKey(`${base}/log`)}`] = { at: serverTimestamp(), by, what: ("直した：" + words.join("・")).slice(0, 2000) };
+      if (o.supState && o.status !== "cancelled") upd[`${base}/supEditedAt`] = serverTimestamp();   // 材料屋のアプリに「事務所が直しました」（2回目・2-3）
       if (r && reqWords.length) {
         upd[`zairyo/requests/${r.id}/log/${logKey(`zairyo/requests/${r.id}/log`)}`] = { at: serverTimestamp(), by, what: (`注文（${o.supplierName}）を直した：` + reqWords.join("・")).slice(0, 2000) };
       }

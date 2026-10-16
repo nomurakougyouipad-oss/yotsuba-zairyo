@@ -9,6 +9,9 @@ import { getAuth } from "firebase-admin/auth";
 import { ServerValue } from "firebase-admin/database";
 import { verifyCode, hashCode, normalizeCode, MIN_LEN } from "./code.js";
 import { db, requireOffice } from "./lib.js";
+import { supIdByKey } from "./sup.js";
+// 材料屋のアプリ（2回目）：専用リンクの鍵・材料屋ごとの合言葉・図面と写真のダウンロード（2-5）は sup.js
+export { zairyoSupLink, zairyoSupCode, zairyoSupFiles } from "./sup.js";
 // 自動の保存（毎日の夜中3時・データは毎日・写真は週1回）は backup.js
 export { zairyoBackup } from "./backup.js";
 // AI（Claude）の入口は ai.js（11章 7-3）
@@ -68,12 +71,14 @@ async function staffNames() {
 
 /** 端末を登録する。data = { kind: "genba" | "office", code, name? }
  *  現場：name がないときは、合言葉が合っているかだけ見て、注文する人の一覧を返す（まだ登録しない）
- *  返り値：{ needName: true, staff: [名前…] } または { role, name } */
+ *  材料屋（2回目）：data = { kind: "sup", key（専用リンクの鍵）, code（その材料屋の合言葉）, name（だれの端末か）}
+ *  返り値：{ needName: true, staff: [名前…] } または { role, name }（材料屋は supName も） */
 // invoker: "public" … 入口はだれでも通す（ページから呼ぶため）。だれが呼んだかは、中で request.auth と合言葉でたしかめる
 export const zairyoRegisterDevice = onCall({ invoker: "public" }, async request => {
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "ログインできていません。ページを開きなおしてください");
   const data = request.data || {};
+  if (data.kind === "sup") return registerSup(uid, data);
   const kind = KINDS[data.kind];
   if (!kind) throw new HttpsError("invalid-argument", "登録の種類がちがいます");
 
@@ -97,7 +102,8 @@ export const zairyoRegisterDevice = onCall({ invoker: "public" }, async request 
 
   const auth = getAuth();
   const user = await auth.getUser(uid);
-  await auth.setCustomUserClaims(uid, { ...(user.customClaims || {}), zr_role: kind, zr_name: name });
+  const { zr_sup, ...others } = user.customClaims || {};   // 材料屋の印（2回目）は外す
+  await auth.setCustomUserClaims(uid, { ...others, zr_role: kind, zr_name: name });
   const kiki = String(data.kiki ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, KIKI_MAX);
   await db().ref(`zairyo/devices/${uid}`).set({
     role: kind, name, registeredAt: ServerValue.TIMESTAMP, seenAt: ServerValue.TIMESTAMP, ...(kiki ? { kiki } : {}),
@@ -105,6 +111,38 @@ export const zairyoRegisterDevice = onCall({ invoker: "public" }, async request 
   await db().ref(`config/tries/uid/${uid}`).remove();
   return { role: kind, name };
 });
+
+/** 材料屋の端末を登録する（専用リンクの鍵＋その材料屋の合言葉）。鍵がちがう・合言葉がちがうは、まちがいの回数に数える */
+async function registerSup(uid, data) {
+  await checkLock(uid);
+  const supId = await supIdByKey(data.key);
+  if (!supId) {
+    await countFail(uid);
+    throw new HttpsError("permission-denied", "このリンクは使えません。よつば建設工業の事務所から届いた、新しいリンクで開いてください");
+  }
+  const sup = (await db().ref(`zairyo/master/suppliers/${supId}`).get()).val();
+  if (!sup || !sup.app) throw new HttpsError("failed-precondition", "まだアプリで受ける準備ができていません。よつば建設工業の事務所に知らせてください");
+  const saved = (await db().ref(`config/supCodes/${supId}`).get()).val();
+  if (!saved) throw new HttpsError("failed-precondition", "合言葉がまだ決まっていません。よつば建設工業の事務所に知らせてください");
+  if (!verifyCode(data.code, saved)) {
+    await countFail(uid);
+    throw new HttpsError("permission-denied", "合言葉がちがいます");
+  }
+  const name = String(data.name ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  if (!name) throw new HttpsError("invalid-argument", "この端末の名前（だれの端末か）を入れてください");
+  if ([...name].length > NAME_MAX) throw new HttpsError("invalid-argument", `名前は${NAME_MAX}文字までにしてください`);
+
+  const auth = getAuth();
+  const user = await auth.getUser(uid);
+  await auth.setCustomUserClaims(uid, { ...(user.customClaims || {}), zr_role: "sup", zr_name: name, zr_sup: supId });
+  const kiki = String(data.kiki ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, KIKI_MAX);
+  await db().ref(`zairyo/devices/${uid}`).set({
+    role: "sup", name, sup: supId, supName: String(sup.name || ""),
+    registeredAt: ServerValue.TIMESTAMP, seenAt: ServerValue.TIMESTAMP, ...(kiki ? { kiki } : {}),
+  });
+  await db().ref(`config/tries/uid/${uid}`).remove();
+  return { role: "sup", name, supName: String(sup.name || "") };
+}
 
 /* ---------- 事務所だけ：登録した端末を消す・合言葉を変える（11章 8。事務所かのたしかめは lib.js の requireOffice） ---------- */
 
@@ -128,6 +166,7 @@ export const zairyoRemoveDevice = onCall({ invoker: "public" }, async request =>
     const claims = { ...(user.customClaims || {}) };
     delete claims.zr_role;
     delete claims.zr_name;
+    delete claims.zr_sup;   // 材料屋の端末（2回目）
     if (Object.keys(claims).length) {
       await auth.setCustomUserClaims(uid, claims);
       await auth.revokeRefreshTokens(uid);

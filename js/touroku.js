@@ -38,7 +38,20 @@ export async function whoAmI() {
   if (!claims.zr_role) return null;
   saveUid(user.uid);
   touch(user.uid, snap.val());
+  // 材料屋の端末（2回目）は、どの材料屋か（id と名前）も返す
+  if (claims.zr_role === "sup") return { role: "sup", name: claims.zr_name || "", sup: claims.zr_sup || "", supName: snap.val().supName || "" };
   return { role: claims.zr_role, name: claims.zr_name || "" };
+}
+
+/** 材料屋の端末を登録する（2回目）。key＝専用リンクの鍵、code＝その材料屋の合言葉、name＝だれの端末か */
+export async function registerSup(key, code, name) {
+  if (!auth.currentUser) await signInAnonymously(auth);
+  const res = await call("zairyoRegisterDevice")({ kind: "sup", key, code, name, kiki: kikiName() });
+  if (res.data && res.data.role) {
+    await auth.currentUser.getIdToken(true);
+    saveUid(auth.currentUser.uid);
+  }
+  return res.data;
 }
 
 /** 合言葉で登録する。現場で name がないときは { needName, staff } が返る（まだ登録していない） */

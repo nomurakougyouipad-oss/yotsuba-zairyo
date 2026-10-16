@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0F1418">
+<title>よつば資材便｜材料屋</title>
+<!-- 材料屋のアプリ（2回目）。manifest には start_url を書かない（開いた住所＝専用リンクの ?k= をそのまま使うため） -->
+<link rel="manifest" href="zairyoya.webmanifest">
+<link rel="icon" href="icons/zairyo-192.png?v=2">
+<link rel="apple-touch-icon" href="icons/zairyo-180.png?v=2">
+<meta name="apple-mobile-web-app-title" content="よつば資材便">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+1p:wght@400;500;700;800&family=Oswald:wght@500;600&display=swap">
+<link rel="stylesheet" href="css/common.css">
+<script>/* 覚えた明るい／暗いを、画面が出る前に当てる（ちらつかないように） */try{var t=localStorage.getItem("yotsuba-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<script type="module" src="js/zairyoya.js"></script>
+</head>
+<body>
+<div class="wrap narrow">
+  <header class="top">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+      <div>
+        <h1>よつば資材便</h1>
+        <p class="sub" id="who">材料屋のアプリ</p>
+      </div>
+    </div>
+    <div class="theme" role="group" aria-label="明るい／暗い">
+      <button id="thLight" type="button" aria-label="明るい画面">☀</button>
+      <button id="thDark" type="button" aria-label="暗い画面">☾</button>
+    </div>
+  </header>
+
+  <main id="main" class="stack"></main>
+</div>
+</body>
+</html>

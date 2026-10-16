@@ -22,6 +22,7 @@ async function start() {
   }
   if (me && me.role === "genba") return showHome(me);
   if (me && me.role === "office") return showOfficeDevice();
+  if (me && me.role === "sup") return showSupDevice(me);
   showCode(me);
 }
 
@@ -121,6 +122,17 @@ function showHome(me) {
 }
 
 /** 事務所で登録した端末が、現場の画面を開いたとき */
+/** 材料屋のアプリ（2回目）で登録した端末で、現場のページを開いたとき */
+function showSupDevice(me) {
+  $("#who").textContent = "現場のスマホ";
+  main.innerHTML = `
+    <section class="card">
+      <h2>この端末は、材料屋のアプリで登録されています</h2>
+      <p class="muted">${esc(me.supName || "")} の注文の画面を開いてください。</p>
+      <a class="btn primary big full" href="zairyoya.html">注文の画面へ</a>
+    </section>`;
+}
+
 function showOfficeDevice() {
   $("#who").textContent = "現場のスマホ";
   main.innerHTML = `

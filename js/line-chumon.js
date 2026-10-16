@@ -17,6 +17,7 @@ import { photoPicker, deletePhoto } from "./shashin.js";
 import { errorText } from "./touroku.js";
 import { parseLineText, parseKibou, findPlace, matchSupplier, aliasToLearn, maskTel } from "./line-parse.js";
 import { createMatcher } from "./line-match.js";
+import { isAppSup } from "./chumon.js";
 
 const SRC_MAX = 5000;   // はりつけた元の文は、ここまでのこす
 
@@ -337,6 +338,8 @@ export function openLineOrder({ sups, places, catalog, me, onPlaced }) {
         orderedAt: serverTimestamp(), orderedBy: me.name, orderedByUid: auth.currentUser.uid,
       };
       if (f.src) order.src = f.src;   // はりつけた LINE の元の文
+      // 材料屋のアプリで受ける材料屋（2回目・2-2）：もう LINE・電話で受けているので、アプリでは「② 届ける」から（持ち主 5A）
+      if (isAppSup(sup)) Object.assign(order, { supState: "accepted", supVia: "line", supSentAt: serverTimestamp(), supSentBy: me.name, supAcceptedAt: serverTimestamp() });
       go.disabled = true;
       go.textContent = "入れています…";
       try {
