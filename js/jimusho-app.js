@@ -47,6 +47,18 @@ const linesOf = r => Object.values(r.lines || {});
 const isCancelled = r => r.status === "cancelled";
 /** まだ注文しきっていない依頼（status "sent"。一部だけ注文したものも入る） */
 const isNew = r => r.status === "sent";
+/* ---------- 2-6（10/17 持ち主）：事務所の印。① 新しい（注文するまで）② 取り消し（現場が取り消した依頼。「わかりました」まで）
+   ③ 返事なし（アプリに送った日のつぎの日（土日はのぞく）になっても、材料屋が受けていない）。④ 受けたは、知らせでわかるのでつけない ---------- */
+const CX_MARK_FROM = Date.parse("2026-10-17T00:00:00+09:00");   // これより前の取り消しは、もう見たことにする
+const genbaCxUnseen = r => r.status === "cancelled" && !r.cancelledBy && !r.officeCxSeenAt && (r.cancelledAt || 0) >= CX_MARK_FROM;
+/** その日のつぎの、土日でない日の 0時 */
+function nextWorkday(ts) {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  do { d.setDate(d.getDate() + 1); } while (d.getDay() === 0 || d.getDay() === 6);
+  return d.getTime();
+}
+const noReply = o => o.status === "wait" && o.supState === "sent" && typeof o.supSentAt === "number" && Date.now() >= nextWorkday(o.supSentAt);
 
 /** スマホ・タブレットか（LINE の「送る」画面を文入りで開けるのは、スマホの LINE だけ） */
 const isPhone = () => /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -212,10 +224,10 @@ export function startOfficeApp(main, me) {
       ["wait", "arrived", "billed"].map(s => box("", ST[s].color, ST[s].label.replace("材料が", "材料が<wbr>").replace("・", "・<wbr>"),
         st.orders ? base.filter(o => o.status === s).length : "…",
         `data-filter="${s}" aria-pressed="${ordersView && st.filter === s}"`)).join("");
-    const all = (st.reqs || []).filter(isNew).length;
+    const all = (st.reqs || []).filter(isNew).length, cxn = (st.reqs || []).filter(genbaCxUnseen).length;
     main.querySelectorAll("#seg [data-view]").forEach(b => {
       b.setAttribute("aria-selected", b.dataset.view === st.view);
-      if (b.dataset.view === "irai") b.innerHTML = "依頼" + (all ? `<span class="badge">${all}</span>` : "");
+      if (b.dataset.view === "irai") b.innerHTML = "依頼" + (all ? `<span class="badge">${all}</span>` : "") + (cxn ? `<span class="badge hot" title="現場が取り消した依頼（まだ見ていない）">取消${cxn}</span>` : "");
       if (b.dataset.view === "mitsu") b.innerHTML = "見積" + (qOpen.length ? `<span class="badge">${qOpen.length}</span>` : "");
     });
     const parts = [];
@@ -266,21 +278,30 @@ export function startOfficeApp(main, me) {
     if (!r || !isCancelled(r)) return;
     btn.disabled = true;
     await update(ref(db, `zairyo/requests/${id}`), {
-      status: "sent", cancelledAt: null, cancelledBy: null, cancelReason: null,
+      status: "sent", cancelledAt: null, cancelledBy: null, cancelReason: null, officeCxSeenAt: null, officeCxSeenBy: null,
       ...logEntry(id, `取り消しをもどした（${r.cancelledBy ? "事務所" : "現場"}が取り消していた）`),
     });
     st.rsAsk = "";
     toast(`${r.chumonsha}さんの依頼（${r.chuban}）を、新しい依頼にもどしました`);
   }
 
+  /** 現場が取り消した依頼を見た（「わかりました」。2-6） */
+  async function seeCx(id, btn) {
+    btn.disabled = true;
+    await update(ref(db, `zairyo/requests/${id}`), { officeCxSeenAt: serverTimestamp(), officeCxSeenBy: me.name || "事務所" });
+    toast("見ました（下の「取り消した依頼」に入りました）");
+  }
+
   /* ---------- 一覧 ---------- */
   function reqCard(r) {
     const ls = linesOf(r), cx = isCancelled(r);
     const chip = cx ? "取り消された" : r.ordered ? "一部注文ずみ" : "新しい依頼";
+    const mk = genbaCxUnseen(r) ? "cx" : !cx && !r.ordered ? "new" : "";   // 印（2-6）
     return `
-      <article class="ocard${cx ? " cx" : ""}" tabindex="0" data-req="${esc(r.id)}" style="--c:${cx ? "var(--grey)" : "var(--amber)"}">
+      <article class="ocard${cx && !mk ? " cx" : ""}${mk ? ` mark-${mk}` : ""}" tabindex="0" data-req="${esc(r.id)}" style="--c:${cx ? "var(--grey)" : "var(--amber)"}">
+        ${mk ? `<span class="bigmark">${mk === "cx" ? "取り消し" : "新しい"}</span>` : ""}
         <div class="card-head"><span class="sup">${esc(r.chumonsha)}さんから</span>
-          <span class="ochip${cx || r.ordered ? "" : " solid"}">${chip}</span></div>
+          ${mk ? "" : `<span class="ochip${cx || r.ordered ? "" : " solid"}">${chip}</span>`}</div>
         <div class="kouji"><span class="chuban">${esc(r.chuban)}</span><span class="kenmei">${esc(zenkana(r.kenmei))}</span></div>
         <div class="items">${esc(ls.map(lineText).join("\n"))}</div>
         <dl class="meta">
@@ -291,7 +312,8 @@ export function startOfficeApp(main, me) {
           ${cx ? `<div><dt>取り消し</dt><dd>${r.cancelledAt ? `${md(r.cancelledAt)} ${hm(r.cancelledAt)}・` : ""}${r.cancelledBy ? `事務所（${esc(r.cancelledBy)}）` : "現場"}${r.cancelReason ? `・${esc(r.cancelReason)}` : ""}</dd></div>` : ""}
         </dl>
         <div class="card-foot"><span class="amt"><span class="num">${ls.length}</span><span>点</span></span>
-          <span class="row">${cx ? `<button type="button" class="btn" data-rrs="${esc(r.id)}">取り消しをもどす</button>` : `<button type="button" class="btn danger" data-rcx="${esc(r.id)}">取り消し</button>`}
+          <span class="row">${genbaCxUnseen(r) ? `<button type="button" class="btn primary" data-rcxseen="${esc(r.id)}">わかりました</button>`
+            : cx ? `<button type="button" class="btn" data-rrs="${esc(r.id)}">取り消しをもどす</button>` : `<button type="button" class="btn danger" data-rcx="${esc(r.id)}">取り消し</button>`}
           <button type="button" class="btn${cx ? "" : " primary"}" data-reqopen="${esc(r.id)}">${cx ? "中身を見る" : "材料屋を決める"}</button></span></div>
         ${st.cxAsk === r.id && !cx ? cxBoxHTML(r) : ""}${st.rsAsk === r.id && cx ? rsBoxHTML(r) : ""}
       </article>`;
@@ -299,11 +321,12 @@ export function startOfficeApp(main, me) {
 
   /* 注文のカード（試作の cardHTML と同じ） */
   function orderCard(o) {
-    const s = ST[o.status] || ST.wait, late = isLate(o, ymd(0)), cx = o.status === "cancelled", unsent = isUnsent(o);
+    const s = ST[o.status] || ST.wait, late = isLate(o, ymd(0)), cx = o.status === "cancelled", unsent = isUnsent(o), nr = noReply(o);
     return `
-      <article class="ocard${cx ? " cx" : ""}${unsent ? " unsent" : ""}" tabindex="0" data-open="${esc(o.id)}" style="--c:${s.color}">
+      <article class="ocard${cx ? " cx" : ""}${unsent ? " unsent" : ""}${nr ? " mark-late" : ""}" tabindex="0" data-open="${esc(o.id)}" style="--c:${s.color}">
+        ${nr ? '<span class="bigmark">返事なし</span>' : ""}
         <div class="card-head"><span class="sup">${esc(o.supplierName)}${kindTag(o)}</span>
-          <span class="ochip${o.status === "wait" ? " solid" : o.status === "arrived" ? " blue" : ""}">${unsent ? "まだ送っていない" : s.chip}</span></div>
+          ${nr ? "" : `<span class="ochip${o.status === "wait" ? " solid" : o.status === "arrived" ? " blue" : ""}">${unsent ? "まだ送っていない" : s.chip}</span>`}</div>
         <div class="kouji"><span class="chuban">${esc(o.chuban)}</span><span class="kenmei">${esc(zenkana(o.kenmei))}</span></div>
         <div class="items">${esc(Object.values(o.lines || {}).map(lineText).join("\n"))}</div>
         <dl class="meta">
@@ -312,7 +335,9 @@ export function startOfficeApp(main, me) {
           <div><dt>注文者</dt><dd>${esc(o.chumonsha || "—")}</dd></div>
           <div><dt>注文した</dt><dd>${md(o.orderedAt)}</dd></div>
           ${deliverPlan(o) ? `<div><dt>届く予定</dt><dd>${esc(deliverPlan(o))}</dd></div>` : ""}
+          ${nr ? `<div><dt>アプリに送った</dt><dd>${md(o.supSentAt)} ${hm(o.supSentAt)}</dd></div>` : ""}
         </dl>
+        ${nr ? '<p class="hint warn nr-note">材料屋がまだ受けていません。電話して、たしかめてください。</p>' : ""}
         <div class="card-foot">${amtHTML(o)}
           ${unsent ? (isAppSup(st.sups && st.sups[o.supplier]) ? '<span class="hint warn">開いて「アプリに送る」</span>' : '<span class="hint warn">開いて「メールで送る」→ 送信したら「送った」</span>')
             : o.status === "wait" ? `<button type="button" class="btn primary" data-next="${esc(o.id)}">届いた</button>`
@@ -324,6 +349,7 @@ export function startOfficeApp(main, me) {
   function sortOrders(list) {
     const rank = { wait: 0, arrived: 1, billed: 2, cancelled: 3 }, today = ymd(0);
     return list.slice().sort((a, b) => (rank[a.status] - rank[b.status]) || ((isUnsent(b) ? 1 : 0) - (isUnsent(a) ? 1 : 0))   // まだ送っていない加工品がいちばん上
+      || ((noReply(b) ? 1 : 0) - (noReply(a) ? 1 : 0))   // 返事なし（2-6）もその上のほう
       || ((isLate(b, today) ? 1 : 0) - (isLate(a, today) ? 1 : 0)) || ((b.orderedAt || 0) - (a.orderedAt || 0)));
   }
 
@@ -390,8 +416,10 @@ export function startOfficeApp(main, me) {
     if (st.view === "mitsu") return drawQuotes(list);
     if (!st.reqs) { list.innerHTML = '<p class="muted">読んでいます…</p>'; return; }
     const news = newReqs();
-    const cxs = st.reqs.filter(r => isCancelled(r) && matchReq(r));
+    const cxNew = st.reqs.filter(r => genbaCxUnseen(r) && matchReq(r));   // 2-6
+    const cxs = st.reqs.filter(r => isCancelled(r) && !genbaCxUnseen(r) && matchReq(r));
     list.innerHTML =
+      (cxNew.length ? `<h3 class="sec-h">現場が取り消した依頼（見たら「わかりました」）</h3><div class="ocards">${cxNew.map(reqCard).join("")}</div>` : "") +
       (news.length
         ? `<div class="ocards">${news.map(reqCard).join("")}</div>`
         : `<p class="empty">${st.q.trim() ? "あてはまる依頼はありません。" : "新しい依頼はありません。<br>現場のスマホから送られた注文が、ここに来ます。"}</p>`) +
@@ -720,7 +748,7 @@ export function startOfficeApp(main, me) {
           <button type="button" class="btn primary big" data-osent="${esc(o.id)}">送った</button></div>`;
     } else if (o.status === "wait") {
       act = `<div class="block act" style="--c:${s.color}"><h3>つぎにやること</h3>
-          ${app && o.supState === "sent" ? '<p class="hint">材料屋のアプリで、まだ受けていません。</p>' : ""}
+          ${app && o.supState === "sent" ? (noReply(o) ? '<p class="warn">材料屋のアプリで、まだ受けていません（送った日のつぎの日になりました。土日はのぞく）。電話して、たしかめてください。</p>' : '<p class="hint">材料屋のアプリで、まだ受けていません。</p>') : ""}
           ${deliverPlan(o) ? `<p>材料屋が受けました：<b>${esc(deliverPlan(o))}</b> に届ける予定です。</p>` : ""}
           <p>材料は届きましたか？<br><span class="hint">${app ? "材料屋がアプリで「届けました」を押すと、自動で「届いた」になります。" : ""}納品書が来ていれば、下の「納品書の金額」で入れると「届いた」になります。</span></p>
           <button type="button" class="btn primary big" data-arrive="${esc(o.id)}">届いた（金額はあとで）</button></div>`;
@@ -1115,7 +1143,7 @@ export function startOfficeApp(main, me) {
   main.addEventListener("click", e => {
     // カードの中の「取り消し」のたしかめの所（理由の欄など）は、押してもカードを開かない
     if (e.target.closest(".rcx-box") && !e.target.closest("[data-rcxyes],[data-rcxno],[data-rrsyes]")) return;
-    const t = e.target.closest("[data-rcx],[data-rcxyes],[data-rcxno],[data-rrs],[data-rrsyes],[data-newbox],[data-mitsubox],[data-filter],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],[data-quote],#billBtn,#lineBtn,#kakouBtn,#mitsuBtn,#impBtn,#setBtn,#setBack,#clearQ");
+    const t = e.target.closest("[data-rcx],[data-rcxyes],[data-rcxno],[data-rcxseen],[data-rrs],[data-rrsyes],[data-newbox],[data-mitsubox],[data-filter],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],[data-quote],#billBtn,#lineBtn,#kakouBtn,#mitsuBtn,#impBtn,#setBtn,#setBack,#clearQ");
     if (!t || t.disabled) return;
     const d = t.dataset;
     if (d.rcx || d.rrs || "rcxno" in d) {
@@ -1126,6 +1154,7 @@ export function startOfficeApp(main, me) {
     }
     else if (d.rcxyes) cancelReq(d.rcxyes, t).catch(ex => { t.disabled = false; toast(errorText(ex)); });
     else if (d.rrsyes) restoreReq(d.rrsyes, t).catch(ex => { t.disabled = false; toast(errorText(ex)); });
+    else if (d.rcxseen) seeCx(d.rcxseen, t).catch(ex => { t.disabled = false; toast(errorText(ex)); });
     else if ("newbox" in d) { st.view = "irai"; st.filter = "all"; draw(); }
     else if ("mitsubox" in d) { st.view = "mitsu"; st.filter = "all"; draw(); }
     else if (d.filter) {
@@ -1192,6 +1221,7 @@ export function startOfficeApp(main, me) {
     draw();
     refreshPanel();
   }, ex => { st.orders = []; toast("注文を読めませんでした（" + errorText(ex) + "）"); });
+  setInterval(() => { if (!document.hidden) draw(); }, 30 * 60 * 1000);   // 返事なし（日がかわると出る。2-6）を、ときどきかきなおす
   // 見積（10/15）：事務所だけが読める
   onValue(ref(db, "zairyo/quotes"), s => {
     st.quotes = Object.entries(s.val() || {}).map(([id, q]) => ({ id, ...q }));

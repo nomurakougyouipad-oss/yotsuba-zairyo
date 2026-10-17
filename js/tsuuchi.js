@@ -3,6 +3,7 @@
 //   /zairyo/notify/tokens/{トークン} = {uid, name, ua, at} にしまう。送るのはサーバー（functions/notify.js）、出すのは sw.js
 // - 公開鍵（VAPID）は Firebase の「プロジェクトの設定 → Cloud Messaging → ウェブプッシュ証明書」のもの。秘密ではない
 // - 通知の部品（firebase-messaging）は、使うときだけ読む
+// - 材料屋のアプリ（2-6）：材料屋の端末は /zairyo/notify/supTokens/{トークン} = {uid, sup, name, ua, at} にしまう（同じ部品を使う）
 import { ref, set, remove, push, onValue, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { app, db, auth } from "./firebase.js";
 import { kikiName } from "./touroku.js";
@@ -11,6 +12,15 @@ const VAPID_KEY = "BDBrg9wtNVmj_WVissoEiIWmGtqUYQTNd9nlodJ_X1SncSgAo4LyUz5c8iOR9
 const MESSAGING_SDK = "https://www.gstatic.com/firebasejs/12.19.0/firebase-messaging.js";   // ほかの Firebase の部品と同じ版
 const TOKEN_KEY = "yotsuba-zairyo-push-token";   // このパソコンのトークン
 const TOKENS = "zairyo/notify/tokens";
+const SUP_TOKENS = "zairyo/notify/supTokens";   // 材料屋の端末（2-6）
+
+/** この端末のしまう場所と、そえる中身（材料屋の端末なら材料屋の id も） */
+async function where() {
+  const { claims } = await auth.currentUser.getIdTokenResult();
+  return claims.zr_role === "sup"
+    ? { path: SUP_TOKENS, name: claims.zr_name || "材料屋", extra: { sup: String(claims.zr_sup || "") } }
+    : { path: TOKENS, name: claims.zr_name || "事務所", extra: {} };
+}
 const WAIT = { sdk: 20000, sw: 20000, token: 30000, test: 30000 };   // 返事が来ないときに打ち切る長さ
 
 const lsGet = () => { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (err) { return ""; } };
@@ -51,13 +61,12 @@ async function saveToken() {
   const { m, reg, sdk } = await messaging();
   const token = await inTime(sdk.getToken(m, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg }), WAIT.token, "通知の番号");
   if (!token) throw new Error("通知の番号がもらえませんでした");
-  const user = auth.currentUser;
-  const { claims } = await user.getIdTokenResult();
-  await set(ref(db, `${TOKENS}/${token}`), {
-    uid: user.uid, name: String(claims.zr_name || "事務所").slice(0, 60), ua: kikiName().slice(0, 80), at: serverTimestamp(),
+  const user = auth.currentUser, w = await where();
+  await set(ref(db, `${w.path}/${token}`), {
+    uid: user.uid, ...w.extra, name: String(w.name).slice(0, 60), ua: kikiName().slice(0, 80), at: serverTimestamp(),
   });
   const old = lsGet();
-  if (old && old !== token) await remove(ref(db, `${TOKENS}/${old}`)).catch(() => { });
+  if (old && old !== token) await remove(ref(db, `${w.path}/${old}`)).catch(() => { });
   lsSet(token);
   return token;
 }
@@ -76,7 +85,7 @@ export async function enablePush() {
 /** 「オフにする」：このパソコンにはもう送らない */
 export async function disablePush() {
   const token = lsGet();
-  if (token) await remove(ref(db, `${TOKENS}/${token}`));
+  if (token) await remove(ref(db, `${(await where()).path}/${token}`));
   lsSet("");
   try { const { m, sdk } = await messaging(); await sdk.deleteToken(m); } catch (err) { }
 }

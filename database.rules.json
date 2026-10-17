@@ -78,10 +78,22 @@
             "$other": { ".validate": false }
           }
         },
+        "supTokens": {
+          "$token": {
+            ".write": "auth != null && auth.token.zr_role == 'sup' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'sup' && root.child('zairyo/devices/' + auth.uid + '/sup').val() == auth.token.zr_sup && ((!data.exists() && newData.child('uid').val() == auth.uid) || data.child('uid').val() == auth.uid)",
+            ".validate": "$token.matches(/^[A-Za-z0-9_:-]+$/) && $token.length >= 20 && $token.length <= 4096 && newData.hasChildren(['uid', 'sup', 'name', 'at'])",
+            "uid": { ".validate": "newData.val() == auth.uid" },
+            "sup": { ".validate": "newData.val() == auth.token.zr_sup" },
+            "name": { ".validate": "newData.isString() && newData.val().length <= 60" },
+            "ua": { ".validate": "newData.isString() && newData.val().length <= 80" },
+            "at": { ".validate": "newData.val() == now" },
+            "$other": { ".validate": false }
+          }
+        },
         "tests": {
           "$id": {
-            ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office' && data.child('uid').val() == auth.uid",
-            ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office' && ((!data.exists() && newData.child('uid').val() == auth.uid) || (data.child('uid').val() == auth.uid && !newData.exists()))",
+            ".read": "auth != null && ((auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office') || (auth.token.zr_role == 'sup' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'sup' && root.child('zairyo/devices/' + auth.uid + '/sup').val() == auth.token.zr_sup)) && data.child('uid').val() == auth.uid",
+            ".write": "auth != null && ((auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office') || (auth.token.zr_role == 'sup' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'sup' && root.child('zairyo/devices/' + auth.uid + '/sup').val() == auth.token.zr_sup)) && ((!data.exists() && newData.child('uid').val() == auth.uid) || (data.child('uid').val() == auth.uid && !newData.exists()))",
             ".validate": "newData.hasChildren(['token', 'uid', 'at'])",
             "token": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_:-]+$/) && newData.val().length >= 20 && newData.val().length <= 4096" },
             "uid": { ".validate": "newData.val() == auth.uid" },
@@ -181,6 +193,8 @@
           "ordered": { ".validate": "newData.isBoolean() && (newData.val() == false || data.parent().child('status').val() != 'cancelled')" },
           "cancelledBy": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" },
           "cancelReason": { ".validate": "newData.isString() && newData.val().length <= 100" },
+          "officeCxSeenAt": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
+          "officeCxSeenBy": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" },
           "log": {
             "$k": {
               ".validate": "$k.length <= 40 && newData.hasChildren(['at', 'by', 'what'])",
@@ -455,6 +469,13 @@
           "supEditSeenAt": { ".write": "auth != null && auth.token.zr_role == 'sup' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'sup' && root.child('zairyo/devices/' + auth.uid + '/sup').val() == auth.token.zr_sup && data.parent().child('supplier').val() == auth.token.zr_sup", ".validate": "newData.isNumber()" },
           "supPricedAt": { ".write": "auth != null && auth.token.zr_role == 'sup' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'sup' && root.child('zairyo/devices/' + auth.uid + '/sup').val() == auth.token.zr_sup && data.parent().child('supplier').val() == auth.token.zr_sup", ".validate": "newData.isNumber()" },
           "supPricedBy": { ".write": "auth != null && auth.token.zr_role == 'sup' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'sup' && root.child('zairyo/devices/' + auth.uid + '/sup').val() == auth.token.zr_sup && data.parent().child('supplier').val() == auth.token.zr_sup", ".validate": "newData.isString() && newData.val().length <= 40" },
+          "supPrev": {
+            "head": { "$f": { ".validate": "$f.matches(/^(chuban|kenmei|kibou|basho|chumonsha|tantou|memo)$/) && newData.isString() && newData.val().length <= 500" } },
+            "lines": {
+              "$lid": { ".validate": "$lid.length <= 40", "$f": { ".validate": "$f.matches(/^(spec|note|qty|unit)$/) && ((newData.isString() && newData.val().length <= 300) || newData.isNumber())" } }
+            },
+            "$other": { ".validate": false }
+          },
           "files": {
             "$f": {
               ".validate": "$f.length <= 40 && newData.hasChildren(['name', 'path', 'size', 'at', 'by'])",

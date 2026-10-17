@@ -13,6 +13,7 @@ import { normalizeChuban } from "./kouji.js";
 import { watchJobs, CHUBAN_RE } from "./nippo.js";
 import { errorText } from "./touroku.js";
 import { okFiles, uploadFile, removeUploaded, sizeText } from "./fairu.js";
+import { isAppSup } from "./chumon.js";
 
 export const byOrder = ([, a], [, b]) => (a.order ?? 999) - (b.order ?? 999);
 const MATS = ["SS400", "SUS304", "SUS316L", "SPHC", "SPCC", "SECC", "A5052", "SGP", "STK400", "STKR400"];   // 材質の候補（ほかも書ける）
@@ -200,7 +201,8 @@ export function openKakouOrder({ sups, places, units, me, onPlaced }) {
         <div class="field"><label for="kSup">注文先<span class="req">必ず</span></label>
           <select id="kSup" class="inp" data-autofocus>
             <option value="">えらんでください</option>
-            ${supList.map(([id, s]) => `<option value="${esc(id)}">${esc(s.name)}${sendWord(s) ? `（${sendWord(s)}）` : ""}</option>`).join("")}
+            ${supList.map(([id, s]) => { const w = isAppSup(s) ? "アプリ" : sendWord(s);   // 材料屋のアプリで受ける材料屋は「（アプリ）」（2-6 持ち主）
+              return `<option value="${esc(id)}">${esc(s.name)}${w ? `（${w}）` : ""}</option>`; }).join("")}
           </select>
           <span class="hint">送り方が「メール」の材料屋なら、送るときにファイルを「ダウンロード」に出します。一覧にない材料屋は、⚙ 設定 →「材料屋」で足してください。</span>
           <p class="err" id="eSup"></p></div>
@@ -320,7 +322,7 @@ export function openKakouOrder({ sups, places, units, me, onPlaced }) {
       }
       busy = false;
       closeSheet();
-      toast(`${sup.name} への${f.kind === "mekki" ? "めっき" : "加工品"}の注文を入れました。「メールで送る」で送ってください`);
+      toast(`${sup.name} への${f.kind === "mekki" ? "めっき" : "加工品"}の注文を入れました。${isAppSup(sup) ? "「アプリに送る」で送ってください" : "「メールで送る」で送ってください"}`);   // アプリで受ける材料屋（2-6 持ち主）
       if (onPlaced) onPlaced(key);
     }
   }, {

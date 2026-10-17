@@ -277,6 +277,10 @@ export async function openOrderEdit({ o, r, places, units, me, onDone }) {
       if (typeof head === "string") { err.textContent = head; return; }
       const hd = headDiff(o, head, ["chuban", "kenmei", "kibou", "basho", "chumonsha", "tantou", "memo"]);
       const base = `zairyo/orders/${o.id}`, upd = {}, words = [...hd.words], reqWords = [];
+      // 材料屋のアプリに「4枚 → 5枚」と出すための、直す前の値（2-6）。材料屋がまだ「わかりました」を押していない直しがあれば、その前の値をのこす
+      const unseen = !!(o.supPrev && o.supEditedAt && !(o.supEditSeenAt >= o.supEditedAt));
+      const prev = unseen ? { head: { ...(o.supPrev.head || {}) }, lines: JSON.parse(JSON.stringify(o.supPrev.lines || {})) } : { head: {}, lines: {} };
+      for (const f of Object.keys(hd.set)) if (!(f in prev.head)) prev.head[f] = o[f] ?? "";
       for (const [f, v] of Object.entries(hd.set)) upd[`${base}/${f}`] = v;
       if ("basho" in hd.set) upd[`${base}/bashoText`] = head.bashoText;
       for (const row of w.querySelectorAll(".erow[data-lid]")) {
@@ -287,6 +291,7 @@ export async function openOrderEdit({ o, r, places, units, me, onDone }) {
         if (!ld.words.length) continue;
         for (const [f, v] of Object.entries(ld.set)) upd[`${base}/lines/${lid}/${f}`] = v;
         words.push(...ld.words);
+        for (const f of ["spec", "note", "qty", "unit"]) if (f in ld.set && !(prev.lines[lid] && f in prev.lines[lid])) (prev.lines[lid] ||= {})[f] = old[f] ?? "";
         // 依頼から来た品物は、依頼の品物も同じに直す
         if (r && r.lines && r.lines[lid]) {
           for (const [f, v] of Object.entries(ld.set)) upd[`zairyo/requests/${r.id}/lines/${lid}/${f}`] = v;
@@ -301,7 +306,10 @@ export async function openOrderEdit({ o, r, places, units, me, onDone }) {
       }
       const by = me.name || "事務所";
       upd[`${base}/log/${logKey(`${base}/log`)}`] = { at: serverTimestamp(), by, what: ("直した：" + words.join("・")).slice(0, 2000) };
-      if (o.supState && o.status !== "cancelled") upd[`${base}/supEditedAt`] = serverTimestamp();   // 材料屋のアプリに「事務所が直しました」（2回目・2-3）
+      if (o.supState && o.status !== "cancelled") {
+        upd[`${base}/supEditedAt`] = serverTimestamp();   // 材料屋のアプリに「事務所が直しました」（2回目・2-3）
+        upd[`${base}/supPrev`] = prev;   // 直す前の値（2-6）
+      }
       if (r && reqWords.length) {
         upd[`zairyo/requests/${r.id}/log/${logKey(`zairyo/requests/${r.id}/log`)}`] = { at: serverTimestamp(), by, what: (`注文（${o.supplierName}）を直した：` + reqWords.join("・")).slice(0, 2000) };
       }

@@ -600,6 +600,24 @@ ul.plain{margin:0;padding-left:1.2em}
 .ph-img img{width:100%;height:100%;object-fit:cover;display:block}
 .ph-img.ng{display:grid;place-items:center;font-size:11px;color:var(--muted)}
 .g-lines .photos{margin:6px 0 4px}   /* 材料屋のアプリ：品物の下の写真（2-5） */
+/* 材料屋のアプリ（2-6）：通知・新しい／直した／取り消しの印（色だけでなく言葉も）・直したところ・取り消しの注文 */
+.sup-push .push-row{align-items:center;gap:8px;flex-wrap:wrap}
+.badge.hot{background:var(--danger);color:var(--bg)}
+.ocard.mark-new{--mk:var(--amber-btn)}
+.ocard.mark-edit{--mk:var(--blue)}
+.ocard.mark-cx{--mk:var(--danger)}
+.ocard.mark-late{--mk:var(--danger)}   /* 事務所：返事なし（2-6） */
+.ocard.mark-new,.ocard.mark-edit,.ocard.mark-cx,.ocard.mark-late{border-left:8px solid var(--mk);border-top-color:var(--mk)}
+.ocard.mark-cx .items{text-decoration:line-through;color:var(--muted)}
+.ocard .nr-note{margin:0}
+.sec-h{margin:4px 0 8px;font-size:15px;color:var(--danger)}
+.bigmark{align-self:flex-start;font-size:16px;font-weight:800;line-height:1.5;padding:2px 12px;border-radius:6px;background:var(--mk);color:var(--bg)}
+.ocard.mark-new .bigmark{color:var(--on-amber)}
+.chg del{color:var(--muted)}
+.chg mark{background:color-mix(in srgb,var(--amber-btn) 32%,transparent);color:inherit;font-weight:800;border-radius:3px;padding:0 3px}
+.g-lines li.chg-line::marker{color:var(--amber)}
+.cxsheet .block:not(.act){opacity:.55;filter:grayscale(1)}
+.cxsheet .g-lines li,.cxsheet #panelTitle,.cxsheet .kouji .kenmei{text-decoration:line-through;color:var(--muted)}
 .ph-x{position:absolute;top:-10px;right:-10px;width:32px;height:32px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--fg);font-weight:800;line-height:1;padding:0}
 .ph-add{display:inline-flex;align-items:center;justify-content:center;width:72px;height:72px;border:1px dashed var(--muted);border-radius:8px;font-weight:700;font-size:13px;color:var(--muted);cursor:pointer}
 .ph-add:focus-within{outline:2px solid var(--amber)}

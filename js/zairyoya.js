@@ -3,12 +3,13 @@
 //   その材料屋の合言葉と、この端末の名前（だれの端末か）を入れて登録（最初の1回だけ）。端末は何台でも（10/14 持ち主）
 // - 鍵は、ホーム画面に追加したアプリでも使えるように、住所の ?k= に入れる（iPhone はホーム画面のアプリと Safari で保存場所が別のため、
 //   ホーム画面のアプリを開いてから登録する。そのとき鍵が住所に残っている必要がある）
-// - 2-2：注文を見る（4つのタブ・注文の中身）。2-3：受けました・届ける日・届けました・事務所が直した／取り消した知らせ。2-4：金額を入れる（納品書の金額になる）。2-5：図面・写真のダウンロード
+// - 2-2：注文を見る（4つのタブ・注文の中身）。2-3：受けました・届ける日・届けました・事務所が直した／取り消した知らせ。2-4：金額を入れる（納品書の金額になる）。2-5：図面・写真のダウンロード。2-6：通知と、新しい・直した・取り消しの印
 import { ref, query, orderByChild, equalTo, onValue, update, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, call } from "./firebase.js";
 import { $, esc, zenkana, toast, initTheme, registerSW, openSheet } from "./common.js";
 import { whoAmI, registerSup, errorText, isIPhoneBrowser } from "./touroku.js";
-import { lineText, kibouText } from "./tanomu.js";
+import { lineText, kibouText, fmtQty } from "./tanomu.js";
+import { pushState, enablePush, disablePush, refreshPush, testPush } from "./tsuuchi.js";
 import { yen, slipsOf, supAddSlip, supSeePrice } from "./chumon.js";
 import { slipFormHTML, wireSlipForm, readSlipForm } from "./kingaku.js";
 import { sizeText } from "./fairu.js";
@@ -111,7 +112,10 @@ function showCode(me) {
    - 2-4：「③ 金額を入れる」で、品物ごとの単価（Kg・¥/kg でも）と合計を入れて送る → よつば建設工業の「納品書の金額」（材料屋が入れた の印）。
      事務所が先に納品書の金額を入れていたら、入れずに、金額をたしかめて「わかりました」（持ち主 3A）。送ったあとは直せない（電話。持ち主 2A）
    - 2-5：図面・写真は、サーバーの係（zairyoSupFiles）が「自分あての注文か・取り消しでないか」を調べてから渡すリンクで出す。
-     写真は品物の下に小さく（持ち主 1A）。リンクは事務所と同じ形（2A）。取り消しのほかは「終わった」注文でも出す（3A） */
+     写真は品物の下に小さく（持ち主 1A）。リンクは事務所と同じ形（2A）。取り消しのほかは「終わった」注文でも出す（3A）
+   - 2-6：通知をオンにすると、新しい注文・直した・取り消しが届く（サーバーの係 zairyoNotifyOrder）。押すと zairyoya.html?o=注文 で、その注文を開く。
+     一覧のカードは色の帯と大きな印（新しい・直した・取り消し）、「① 受ける」の数は赤。印は「受けました」「わかりました」を押すまで消えない。
+     直した注文は、直したところに色をつけて「4枚 → 5枚」（事務所が直す前の値 supPrev とくらべる）。取り消しの注文は全体を灰色に、品物に線 */
 const TAB_KEY = "yotsuba-zairyoya-tab";
 const isCx = o => o.status === "cancelled";
 /** 事務所が取り消した（まだ「わかりました」を押していない） */
@@ -150,15 +154,31 @@ function showHome(me) {
   const ui = {};   // 注文の画面だけの状態 { 注文: { changeDate, askDeliver, dirty（金額を入れかけ）, pending（送る前のたしかめ）, draft（やめたときの入れかけ） } }
   main.innerHTML = `
     <section class="card sup-head"><span class="eyebrow">よつば建設工業さまからの注文</span>
+      <div class="sup-push" id="supPush"></div>
       <div class="seg sup-tabs" role="tablist" aria-label="注文のようす" id="supTabs"></div></section>
     <p class="hint" id="supHint"></p>
     <div id="supList"></div>`;
   const live = () => (orders || []).filter(o => o.supState);   // 事務所が「アプリに送る」を押した注文だけ
+  let wantOpen = new URLSearchParams(location.search).get("o") || "";   // 通知を押して開いた注文（2-6）
+  /** 通知（2-6）：オフ・オン・使えない */
+  const drawPush = (busy = "") => {
+    const st = pushState(), el = $("#supPush");
+    el.innerHTML = st === "on" ? `<div class="row push-row"><span>通知：<b>オン</b></span>
+        <button type="button" class="btn" data-push="test"${busy ? " disabled" : ""}>${busy === "test" ? "送っています…" : "ためしに送る"}</button>
+        <button type="button" class="linkbtn muted" data-push="off"${busy ? " disabled" : ""}>オフにする</button></div>`
+      : st === "off" ? `<div class="row push-row"><span>通知：<b>まだオフ</b></span>
+        <button type="button" class="btn primary" data-push="on"${busy ? " disabled" : ""}>${busy === "on" ? "オンにしています…" : "通知をオンにする"}</button></div>
+        <p class="hint">新しい注文・直した・取り消しを、この端末に知らせます。</p>`
+      : st === "blocked" ? '<p class="hint">通知が止められています。ブラウザ（またはスマホ）の設定で、このページの通知を許可してください。</p>'
+      : '<p class="hint">この端末・このブラウザでは、通知を使えません。iPhone は「ホーム画面に追加」したアプリで開くと使えます。</p>';
+  };
+  drawPush();
+  refreshPush().catch(() => { });   // オンのときは、だまって受け取り番号を新しくする
   const draw = (force = false) => {   // force＝しまい終わったあと（欄にカーソルが残っていても、かきなおす）
     const ls = live();
     $("#supTabs").innerHTML = TABS.map(t => {
       const n = ls.filter(t.has).length;
-      return `<button type="button" role="tab" data-tab="${t.id}" aria-selected="${t.id === tab}">${t.label}${n ? `<span class="badge">${n}</span>` : ""}</button>`;
+      return `<button type="button" role="tab" data-tab="${t.id}" aria-selected="${t.id === tab}">${t.label}${n ? `<span class="badge${t.id === "uke" ? " hot" : ""}"${t.id === "uke" ? ' title="まだ見ていない注文があります"' : ""}>${n}</span>` : ""}</button>`;
     }).join("");
     const t = TABS.find(x => x.id === tab);
     $("#supHint").textContent = t.hint;
@@ -283,7 +303,19 @@ function showHome(me) {
       draw();
     }
   }
-  main.addEventListener("click", e => {
+  main.addEventListener("click", async e => {
+    const pb = e.target.closest("[data-push]");
+    if (pb) {   // 通知（2-6）
+      const act = pb.dataset.push;
+      drawPush(act);
+      try {
+        if (act === "on") { await enablePush(); toast("通知をオンにしました。「ためしに送る」で、届くかたしかめられます"); }
+        else if (act === "off") { await disablePush(); toast("通知をオフにしました"); }
+        else { const r = await testPush(); toast(r.ok ? "ためしの通知を送りました（数秒で届きます）" : `送れませんでした（${r.error}）`); }
+      } catch (ex) { toast(`うまくいきませんでした（${errorText(ex)}）`); }
+      drawPush();
+      return;
+    }
     const b = e.target.closest("[data-tab]");
     if (b) {
       tab = b.dataset.tab;
@@ -302,6 +334,16 @@ function showHome(me) {
   onValue(query(ref(db, "zairyo/orders"), orderByChild("supplier"), equalTo(me.sup)), s => {
     orders = Object.entries(s.val() || {}).map(([id, o]) => ({ id, ...o }));
     draw();
+    if (wantOpen) {   // 通知を押して開いた（2-6）：その注文のタブにして開く
+      const o = live().find(x => x.id === wantOpen);
+      wantOpen = "";
+      try { const u = new URL(location.href); u.searchParams.delete("o"); history.replaceState(null, "", u.href); } catch (err) { }
+      if (o) {
+        const t = TABS.find(x => x.has(o));
+        if (t) { tab = t.id; try { localStorage.setItem(TAB_KEY, tab); } catch (err) { } draw(); }
+        openOrder(o);
+      }
+    }
   }, ex => { $("#supList").innerHTML = `<p class="err">注文を読めませんでした（${esc(errorText(ex))}）</p>`; });
 }
 
@@ -312,10 +354,12 @@ function cardHTML(o) {
   const chip = needCx(o) ? "取り消しになりました" : cx ? "取り消し" : edited(o) ? "事務所が直しました"
     : o.supState === "sent" ? "新しい注文" : o.supState === "accepted" ? (o.supVia === "line" ? "LINE・電話で受けた" : "受けた") : o.supState === "delivered" ? "届けた" : "おわり";
   const solid = needCx(o) || edited(o) || (!cx && o.supState === "sent");
+  const mk = markOf(o);   // 新しい・直した・取り消し（2-6。「受けました」「わかりました」まで消えない）
   return `
-    <article class="ocard${cx && !needCx(o) ? " cx" : ""}" tabindex="0" data-o="${esc(o.id)}" style="--c:${color}">
+    <article class="ocard${cx && !needCx(o) ? " cx" : ""}${mk ? ` mark-${mk}` : ""}" tabindex="0" data-o="${esc(o.id)}" style="--c:${color}">
+      ${mk ? `<span class="bigmark">${MARK[mk]}</span>` : ""}
       <div class="card-head"><span class="kouji"><span class="chuban">${esc(o.chuban)}</span><span class="kenmei">${esc(zenkana(o.kenmei || ""))}</span></span>
-        <span class="ochip${solid ? " solid" : ""}">${chip}</span></div>
+        ${mk ? "" : `<span class="ochip${solid ? " solid" : ""}">${chip}</span>`}</div>
       <div class="items">${esc(Object.values(o.lines || {}).map(lineText).join("\n"))}</div>
       <dl class="meta">
         <div><dt>希望日</dt><dd>${esc(kibouText(o.kibou))}</dd></div>
@@ -331,15 +375,15 @@ function cardHTML(o) {
 function actHTML(o, u) {
   const err = '<p class="err act-err" role="alert"></p>';
   if (needCx(o)) return `
-    <div class="block act" style="--c:var(--grey)"><h3>取り消しになりました</h3>
+    <div class="block act" style="--c:var(--danger)"><h3>取り消しになりました</h3>
       <p class="warn">この注文は、よつば建設工業が取り消しました${o.cancelledAt ? `（${md(o.cancelledAt)} ${hm(o.cancelledAt)}）` : ""}。届けないでください。</p>
       <button type="button" class="btn primary big" data-act="cxseen">わかりました</button>${err}</div>`;
   if (isCx(o)) return '<div class="block"><p class="warn">この注文は、よつば建設工業が取り消しました。</p></div>';
   if (edited(o)) {
     const last = Object.values(o.log || {}).sort((a, b) => (b.at || 0) - (a.at || 0))[0];
     return `
-    <div class="block act" style="--c:var(--amber)"><h3>事務所が注文を直しました</h3>
-      <p>${md(o.supEditedAt)} ${hm(o.supEditedAt)} に、よつば建設工業が直しました。下の中身を見なおしてください。</p>
+    <div class="block act" style="--c:var(--blue)"><h3>事務所が注文を直しました</h3>
+      <p>${md(o.supEditedAt)} ${hm(o.supEditedAt)} に、よつば建設工業が直しました。下の中身を見なおしてください。${o.supPrev ? "<b>色がついている所</b>が、直したところです。" : ""}</p>
       ${last && last.what ? `<p class="hint">${esc(last.what.replace(/^直した：/, "直したところ："))}</p>` : ""}
       <button type="button" class="btn primary big" data-act="editseen">わかりました</button>${err}</div>`;
   }
@@ -391,21 +435,21 @@ function orderHTML(o, u) {
   const photos = ls.reduce((n, l) => n + Object.keys(l.photos || {}).length, 0);
   const links = [...new Set(ls.map(l => l.link).filter(Boolean))];
   return `
-    <div class="pw" id="supOrderWrap">
+    <div class="pw${isCx(o) ? " cxsheet" : ""}" id="supOrderWrap">
       <div class="panel-head"><div><span class="eyebrow">よつば建設工業さまからの注文</span>
-        <h2 id="panelTitle" class="mt6">${esc(o.chuban)}</h2>
-        <div class="kouji"><span class="kenmei">${esc(zenkana(o.kenmei || ""))}</span></div></div>
+        <h2 id="panelTitle" class="mt6">${hv(o, "chuban")}</h2>
+        <div class="kouji"><span class="kenmei">${hv(o, "kenmei", v => zenkana(v || ""))}</span></div></div>
         <button type="button" class="x" data-close aria-label="閉じる">×</button></div>
       ${actHTML(o, u)}
-      <div class="block"><h3>品名・数量</h3><ul class="g-lines">${Object.entries(o.lines || {}).map(([lid, l]) => `<li>${esc(lineText(l))}${photosHTML(o, lid, l)}</li>`).join("")}</ul>
+      <div class="block"><h3>品名・数量</h3><ul class="g-lines">${Object.entries(o.lines || {}).map(([lid, l]) => { const p = prevOf(o).lines[lid]; return `<li${p ? ' class="chg-line"' : ""}>${lineHTML(l, p)}${photosHTML(o, lid, l)}</li>`; }).join("")}</ul>
         ${photos && !isCx(o) ? '<p class="hint">写真を押すと、大きく見られます。</p>' : ""}</div>
       <div class="block"><dl class="dl">
-        <dt>希望日</dt><dd>${esc(kibouText(o.kibou))}</dd>
+        <dt>希望日</dt><dd>${hv(o, "kibou", kibouText)}</dd>
         ${o.deliverDate && !isCx(o) ? `<dt>届ける日</dt><dd>${esc(kibouText(o.deliverDate))}</dd>` : ""}
-        <dt>届け先</dt><dd>${esc(o.basho || "—")}${o.bashoText ? `<br><span class="hint">${esc(o.bashoText)}</span>` : ""}</dd>
-        <dt>注文者</dt><dd>${esc(o.chumonsha || "—")}</dd>
-        ${o.tantou ? `<dt>担当者</dt><dd>${esc(o.tantou)}</dd>` : ""}
-        ${o.memo ? `<dt>メモ</dt><dd>${esc(o.memo)}</dd>` : ""}
+        <dt>届け先</dt><dd>${hv(o, "basho", v => v || "—")}${o.bashoText ? `<br><span class="hint">${esc(o.bashoText)}</span>` : ""}</dd>
+        <dt>注文者</dt><dd>${hv(o, "chumonsha", v => v || "—")}</dd>
+        ${o.tantou || "tantou" in prevOf(o).head ? `<dt>担当者</dt><dd>${hv(o, "tantou", v => v || "（なし）")}</dd>` : ""}
+        ${o.memo || "memo" in prevOf(o).head ? `<dt>メモ</dt><dd>${hv(o, "memo", v => v || "（なし）")}</dd>` : ""}
         <dt>注文日</dt><dd>${o.supSentAt ? `${md(o.supSentAt)} ${hm(o.supSentAt)}` : o.orderedAt ? md(o.orderedAt) : ""}${o.supVia === "line" ? "（LINE・電話で受けた注文）" : ""}</dd>
         ${o.supAcceptedAt && o.supVia !== "line" ? `<dt>受けた</dt><dd>${md(o.supAcceptedAt)} ${hm(o.supAcceptedAt)}${o.supAcceptedBy ? `（${esc(o.supAcceptedBy)}）` : ""}</dd>` : ""}
         ${o.supDeliveredAt ? `<dt>届けた</dt><dd>${md(o.supDeliveredAt)} ${hm(o.supDeliveredAt)}${o.supDeliveredBy ? `（${esc(o.supDeliveredBy)}）` : ""}</dd>` : ""}
@@ -475,4 +519,28 @@ function saveFiles(urls) {
     a.click();
     a.remove();
   }, i * 400));
+}
+
+/* ---------- 2-6：新しい・直した・取り消しの印と、直したところ ---------- */
+const MARK = { new: "新しい", edit: "直した", cx: "取り消し" };
+/** 印（「受けました」「わかりました」を押すまで消えない）。LINE・電話の注文は、もう知っているので「新しい」にしない */
+const markOf = o => (needCx(o) ? "cx" : edited(o) ? "edit" : !isCx(o) && o.supState === "sent" ? "new" : "");
+/** 直す前の値（材料屋がまだ「わかりました」を押していない直しだけ） */
+const prevOf = o => (edited(o) && o.supPrev ? { head: o.supPrev.head || {}, lines: o.supPrev.lines || {} } : { head: {}, lines: {} });
+/** 「前 → 後」（前は線、後は色） */
+const chgHTML = (a, b) => `<span class="chg"><del>${esc(String(a ?? "") || "（なし）")}</del> → <mark>${esc(String(b ?? "") || "（なし）")}</mark></span>`;
+/** 上の欄の1つ（直していれば「前 → 後」） */
+function hv(o, f, fmt = v => v ?? "") {
+  const p = prevOf(o).head;
+  if (f in p && String(p[f] ?? "") !== String(o[f] ?? "")) return chgHTML(fmt(p[f]), fmt(o[f]));
+  return esc(String(fmt(o[f]) ?? ""));
+}
+/** 品物の1行（直していれば、直したところだけ「前 → 後」） */
+function lineHTML(l, p) {
+  if (!p) return esc(lineText(l));
+  const spec = "spec" in p && p.spec !== l.spec ? chgHTML(p.spec, l.spec) : esc(l.spec);
+  const note = "note" in p && (p.note || "") !== (l.note || "") ? " " + chgHTML(p.note, l.note) : l.note ? " " + esc(l.note) : "";
+  const oq = "qty" in p ? p.qty : l.qty, ou = "unit" in p ? p.unit : l.unit;
+  const qty = Number(oq) !== Number(l.qty) || ou !== l.unit ? chgHTML(fmtQty(oq) + ou, fmtQty(l.qty) + l.unit) : esc(fmtQty(l.qty) + l.unit);
+  return `${spec}${note}　×${qty}`;
 }
