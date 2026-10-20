@@ -7,7 +7,7 @@
 import { ref, get, update } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, call } from "./firebase.js";
 import { esc } from "./common.js";
-import { buildSpec, fmtQty } from "./tanomu.js";
+import { buildSpec, fmtQty, rowShown } from "./tanomu.js";
 import { errorText } from "./touroku.js";
 import { memoDbKey } from "./line-parse.js";
 
@@ -26,7 +26,7 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
     const r = {
       lines: ls, raw: ls.map(i => match.raws[i]).join(" ／ "), body, orig: body,   // orig＝覚えるときの元の書き方（なおしても変えない）
       key: it ? key : null, vals: { ...(vals || {}) }, qty: qty == null ? null : qty, unit: unit || (it ? it.unit : ""), how,
-      ask: [...(guess || [])].filter(k => it && it.opts.some(o => o[0] === k && !o[2])),   // 「えらばなくてもよい」行は聞かない
+      ask: [...(guess || [])].filter(k => it && it.opts.some(o => o[0] === k && !o[2]) && rowShown(it, k, vals || {})),   // 「えらばなくてもよい」行・出さない行（10/21）は聞かない
     };
     if (r.qty == null) r.ask.push("数");
     return r;

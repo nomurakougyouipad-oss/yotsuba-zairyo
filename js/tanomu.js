@@ -11,6 +11,7 @@ const arr = v => (Array.isArray(v) ? v : Object.values(v || {})).filter(x => x !
 /** データベースの品物一覧を使いやすい形にする → { units, cats, item: Map(キー → 品物) }（キーは "種類:品物" 例 "bolt:hex"） */
 //   ⚙ 設定で「かくす」にした品物（hidden）は、種類のタブには出さない。前のカート・★いつもの で使えるように、item には入れておく（10/14）
 //   行は [行の名前, [ボタン…], えらばなくてもよいか]。3つめが true の行は、えらばなくてもカートに入れられる（10/14。ほかの行は必ずえらぶ）
+//   品物の when（この行を出すとき）・def（はじめからえらんでおくボタン）は、行の名前ごと（10/21。rowShown・rowDef）
 export function normCatalog(raw) {
   const units = arr(raw && raw.units);
   const cats = arr(raw && raw.cats).map(c => {
@@ -20,6 +21,28 @@ export function normCatalog(raw) {
   const item = new Map();
   cats.forEach(c => c.all.forEach(it => item.set(`${c.id}:${it.id}`, { ...it, cat: c.id, catName: c.name, key: `${c.id}:${it.id}` })));
   return { units, cats, item };
+}
+
+/** 行を出すか（⚙ 設定の「この行を出すとき」。10/21）。it.when[行の名前] = { row: 決める行, vals: [ボタン…], not: true なら「そのボタンのときは出さない」 }
+ *  決める行をえらぶまでは出さない（えらんでから出す。画面をすっきりさせるため）。ボタンが1つもない決まりは、いつも出す
+ *  「のときは出さない」は、「ほか…」で書いた値（SUS316 など）のときも出す（10/21：SUS のときは全部出すため） */
+export function rowShown(it, k, vals) {
+  const w = it && it.when && it.when[k];
+  const list = arr(w && w.vals);
+  if (!w || !w.row || !list.length) return true;
+  const v = vals[w.row];
+  if (!v) return false;
+  return w.not ? !list.includes(v) : list.includes(v);
+}
+/** はじめからえらんでおくボタン（⚙ 設定。10/21）。it.def[行の名前] = ボタン */
+export const rowDef = (it, k) => (it && it.def && typeof it.def[k] === "string" ? it.def[k] : "");
+/** 出さない行のえらんだ値を消す（品名に入れない）。消すと、ほかの行が出なくなることもあるので、変わらなくなるまでくりかえす */
+export function dropHidden(it, vals) {
+  for (let n = 0; n <= it.opts.length; n++) {
+    const gone = it.opts.filter(([k]) => vals[k] && !rowShown(it, k, vals)).map(([k]) => k);
+    if (!gone.length) return;
+    gone.forEach(k => delete vals[k]);
+  }
 }
 
 /** えらんだ値から品名を作る（例 "SUS304 六角ボルト M12×50(B,N)"）。えらんでいない所は詰める */
@@ -80,6 +103,10 @@ export function openItem(catalog, key, src, onSave, draft = null) {
   if (!it) { toast("この品物は、もう一覧にありません"); clearDraft(); return; }
   const from = draft || src;
   const vals = from ? { ...from.vals } : {};
+  // 新しくえらぶときは「はじめからえらんでおくボタン」を入れておく。出さない行の値は消す（10/21）
+  if (!from && !it.free) it.opts.forEach(([k]) => { if (rowDef(it, k)) vals[k] = rowDef(it, k); });
+  if (!it.free) dropHidden(it, vals);
+  let shown = new Set(it.free ? [] : it.opts.filter(([k]) => rowShown(it, k, vals)).map(([k]) => k));
   const qty0 = from ? from.qty : 1, unit0 = (from && from.unit) || it.unit, note0 = from ? from.note || "" : "";
   const units = catalog.units.includes(unit0) ? catalog.units : [...catalog.units, unit0];
   const web = !!(it.free || it.id === "kanamono");   // ネットで探す・写真・リンクをつけられる品物
@@ -92,7 +119,7 @@ export function openItem(catalog, key, src, onSave, draft = null) {
   const optHTML = it.opts.map(([k, choices, optional]) => {
     const v = vals[k] || "", other = !!v && !choices.includes(v);
     return `
-      <div class="opt" data-opt="${esc(k)}"><span class="lab">${esc(k)}${optional ? '<small class="opt-free">（えらばなくてもよい）</small>' : ""}</span>
+      <div class="opt" data-opt="${esc(k)}"${shown.has(k) ? "" : " hidden"}><span class="lab">${esc(k)}${optional ? '<small class="opt-free">（えらばなくてもよい）</small>' : ""}</span>
         <p class="opt-need" hidden>${esc(k)}をえらんでください</p>
         <div class="opt-chips">
           ${choices.map(c => `<button type="button" data-v="${esc(c)}" aria-pressed="${v === c}">${esc(c)}</button>`).join("")}
@@ -149,6 +176,31 @@ export function openItem(catalog, key, src, onSave, draft = null) {
       grp.querySelector(".opt-need").hidden = true;
       const left = [...w.querySelectorAll(".opt.need")].map(x => x.dataset.opt);
       g("#iErr").textContent = left.length ? `えらんでいない行があります（${left.join("・")}）` : "";
+    };
+    // えらびなおしたら、出す行・出さない行を決めなおす（⚙ 設定の「この行を出すとき」。10/21）
+    //   出さなくなった行は、えらんだ値と「ほか…」の字を消す。新しく出た行に「はじめからえらんでおくボタン」があれば入れる
+    const refreshRows = () => {
+      if (it.free) return;
+      for (let n = 0; n <= it.opts.length; n++) {
+        dropHidden(it, vals);
+        const now = it.opts.filter(([k]) => rowShown(it, k, vals)).map(([k]) => k);
+        const add = now.filter(k => !shown.has(k) && !vals[k] && rowDef(it, k));
+        add.forEach(k => { vals[k] = rowDef(it, k); });
+        shown = new Set(now);
+        if (!add.length) break;
+      }
+      w.querySelectorAll("[data-opt]").forEach(grp => {
+        const k = grp.dataset.opt, on = shown.has(k);
+        if (grp.hidden !== !on) grp.hidden = !on;
+        grp.querySelectorAll("[data-v]").forEach(b => b.setAttribute("aria-pressed", vals[k] === b.dataset.v));
+        if (!on) {
+          const inp = grp.querySelector("[data-othin]");
+          inp.hidden = true;
+          inp.value = "";
+          grp.querySelector("[data-oth]").setAttribute("aria-pressed", "false");
+          clearNeed(grp);
+        }
+      });
     };
     const readQty = () => { const n = parseFloat(String(g("#iQty").value).normalize("NFKC")); return Number.isFinite(n) && n > 0 ? n : 0; };
     const preview = () => {
@@ -223,6 +275,7 @@ export function openItem(catalog, key, src, onSave, draft = null) {
         grp.querySelectorAll("[data-v]").forEach(b => b.setAttribute("aria-pressed", vals[k] === b.dataset.v));
         grp.querySelector("[data-oth]").setAttribute("aria-pressed", !inp.hidden);
         if (vals[k]) clearNeed(grp);
+        refreshRows();
         preview();
         return;
       }
@@ -235,7 +288,7 @@ export function openItem(catalog, key, src, onSave, draft = null) {
         if (it.free && !spec) { err.textContent = "品名・寸法を書いてください"; g("#iFree").focus(); return; }
         // えらんでいない行（「えらばなくてもよい」でない行）があれば入れない。その行をオレンジにして「○○をえらんでください」（10/14）
         if (!it.free) {
-          const need = it.opts.filter(([k, , optional]) => !optional && !vals[k]).map(([k]) => k);
+          const need = it.opts.filter(([k, , optional]) => !optional && !vals[k] && rowShown(it, k, vals)).map(([k]) => k);   // 出していない行は聞かない
           if (need.length) {
             markNeed(need);
             err.textContent = `えらんでいない行があります（${need.join("・")}）`;
@@ -264,6 +317,7 @@ export function openItem(catalog, key, src, onSave, draft = null) {
       if (inp) {
         const k = inp.closest("[data-opt]").dataset.opt, v = inp.value.trim();
         if (v) { vals[k] = v; clearNeed(inp.closest("[data-opt]")); } else delete vals[k];
+        refreshRows();
       }
       if (e.target.id === "iFree") vals.__free = e.target.value;
       if (e.target.id === "iLink") upLink();

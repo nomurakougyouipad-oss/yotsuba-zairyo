@@ -11,7 +11,7 @@ import { BACKUP_PATHS, countText, readAll, saveBackup, lastBackup } from "./back
 import { pushState, enablePush, disablePush, testPush } from "./tsuuchi.js";
 import { printFax } from "./fax.js";
 import { SHOPS } from "./shashin.js";
-import { normCatalog, buildSpec } from "./tanomu.js";
+import { normCatalog, buildSpec, rowDef, dropHidden } from "./tanomu.js";
 
 const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["memo", "覚えた当て方"], ["notify", "通知"], ["company", "会社・注文書"], ["backup", "バックアップ"], ["ai", "AI"]];
 const TAB_KEY = "yotsuba-zairyo-settab";
@@ -453,13 +453,57 @@ async function addItem(ci, name, unit) {
   await set(ref(db, `${PATH.catalog}/cats/${ci}/items/${next}`), { id: "u" + Date.now().toString(36), name, tpl: name, unit: unit || "個" });
 }
 
-/** 品物の「ボタンを直す」：行（材質・サイズなど）ごとにボタンを足す・外す、行を足す、品物の下の小さい字、かくす（10/14） */
+/** 品物の例の品名（行ごとに、はじめからえらぶボタンか1つめのボタン。出さない行は入れない）。「品名の形」の下に出す（10/21） */
+function exampleSpec(it, rows) {
+  const nit = { ...it, opts: rows.map(([l, v, f]) => [l, v, f]) }, vals = {};
+  rows.forEach(([l, v]) => { const x = rowDef(nit, l) || v[0]; if (x) vals[l] = x; });
+  dropHidden(nit, vals);
+  return buildSpec(nit, vals);
+}
+
+/** 品物の「ボタンを直す」：行（材質・サイズなど）ごとにボタンを足す・外す、行を足す、品物の下の小さい字、かくす（10/14）
+ *  10/21：品名の形（tpl）、行ごとの「この行を出すとき」（when）と「はじめからえらんでおくボタン」（def） */
 function btnEditor(ci, ii, it) {
   const opts = entries(it.opts).map(([oi, o]) => [oi, o[0], entries(o[1]).map(([, v]) => v), o[2] === true]);
+  const at = `data-ci="${ci}" data-ii="${ii}"`;
+  // 「この行を出すとき」と「はじめからえらんでおくボタン」
+  const condHTML = (oi, label, vals) => {
+    const w = (it.when && it.when[label]) || {}, def = (it.def && it.def[label]) || "";
+    const others = opts.filter(([, l]) => l !== label), src = others.find(([, l]) => l === w.row);
+    const on = src ? entries(w.vals).map(([, v]) => v) : [];
+    const now = !src || !on.length ? "いつも出ます"
+      : `「${src[1]}」が ${on.join("・")} のとき${w.not ? "は出しません（ほかのボタンや「ほか…」で書いたときは出します）" : "だけ出します"}。「${src[1]}」をえらぶまでは出ません`;
+    return `
+      <div class="cond">
+        <div class="row">
+          <label class="mini">この行を出すとき
+            <select class="inp" data-edit="whenrow" ${at} data-oi="${oi}">
+              <option value="">いつも出す</option>
+              ${others.map(([, l]) => `<option value="${esc(l)}"${l === w.row ? " selected" : ""}>「${esc(l)}」のボタンで決める</option>`).join("")}
+            </select></label>
+          ${vals.length ? `<label class="mini">はじめからえらんでおくボタン
+            <select class="inp" data-edit="def" ${at} data-oi="${oi}">
+              <option value="">えらばない</option>
+              ${vals.map(v => `<option${v === def ? " selected" : ""}>${esc(v)}</option>`).join("")}
+            </select></label>` : ""}
+        </div>
+        ${src ? `
+          <div class="chips">${src[2].map(v => `<button type="button" class="ctgl" data-whenv="${ci}" data-ii="${ii}" data-oi="${oi}" data-v="${esc(v)}" aria-pressed="${on.includes(v)}">${esc(v)}</button>`).join("")}</div>
+          <label class="mini">上でえらんだボタンのとき
+            <select class="inp" data-edit="whennot" ${at} data-oi="${oi}">
+              <option value=""${w.not ? "" : " selected"}>この行を出す（ほかのときは出さない）</option>
+              <option value="1"${w.not ? " selected" : ""}>この行を出さない（ほかのときは出す）</option>
+            </select></label>` : ""}
+        ${src || def ? `<span class="hint">いま：${esc(now)}${def ? `。はじめから「${esc(def)}」がえらばれています` : ""}</span>` : ""}
+      </div>`;
+  };
   return `
     <details class="ibtns" id="ib-${ci}-${ii}"><summary>ボタンを直す</summary>
       <label class="mini">品物の下の小さい字
-        <input class="inp" data-edit="isub" data-ci="${ci}" data-ii="${ii}" value="${esc(it.sub || "")}" maxlength="30" placeholder="（書かない）"></label>
+        <input class="inp" data-edit="isub" ${at} value="${esc(it.sub || "")}" maxlength="30" placeholder="（書かない）"></label>
+      <label class="mini">品名の形（{ } の所に、その行でえらんだボタンが入ります）
+        <input class="inp" data-edit="itpl" ${at} value="${esc(it.tpl || "")}" maxlength="80"></label>
+      <span class="hint">例：${esc(exampleSpec(it, opts.map(([, l, v, f]) => [l, v, f])) || "（まだボタンがありません）")}</span>
       ${opts.map(([oi, label, vals, free]) => `
         <div class="mini">${esc(label)}
           <button type="button" class="sw sm" data-optfree="${ci}" data-ii="${ii}" data-oi="${oi}" aria-pressed="${free}"><span class="knob" aria-hidden="true"></span>えらばなくてもよい</button>
@@ -470,6 +514,7 @@ function btnEditor(ci, ii, it) {
               <button class="btn">足す</button>
             </form>
           </div>
+          ${condHTML(oi, label, vals)}
           ${vals.length ? "" : `<button type="button" class="linkbtn" data-rowdel="${ci}" data-ii="${ii}" data-oi="${oi}">「${esc(label)}」の行を外す</button>`}
         </div>`).join("")}
       <form class="chip-add" data-form="rowadd" data-ci="${ci}" data-ii="${ii}">
@@ -848,16 +893,36 @@ async function onClick(e) {
     const { it, base } = itemOf(d.optfree, d.ii), [label, , free] = optRows(it)[Number(d.oi)];
     await set(ref(db, `${base}/opts/${d.oi}/2`), free ? null : true);
     toast(free ? `${it.name} の「${label}」を、必ずえらぶ行にしました` : `${it.name} の「${label}」を、えらばなくてもよい行にしました`);
+  } else if (d.whenv) {
+    // 「この行を出すとき」のボタンを入れる・外す（10/21）
+    const { it, base } = itemOf(d.whenv, d.ii), [label] = optRows(it)[Number(d.oi)];
+    const list = entries(it.when && it.when[label] && it.when[label].vals).map(([, v]) => v);
+    const next = list.includes(d.v) ? list.filter(v => v !== d.v) : [...list, d.v];
+    await set(ref(db, `${base}/when/${label}/vals`), next.length ? next : null);
+    toast(`${it.name} の「${label}」を出すときを直しました`);
   } else if (d.optdel) {
     const { it, base } = itemOf(d.optdel, d.ii), [label, vals] = optRows(it)[Number(d.oi)];
     const gone = vals.splice(Number(d.k), 1)[0];
-    await set(ref(db, `${base}/opts/${d.oi}/1`), vals.length ? vals : null);
+    // 外したボタンを使っている「はじめからえらぶ」「この行を出すとき」からも外す（10/21）
+    const up = { [`opts/${d.oi}/1`]: vals.length ? vals : null };
+    if (it.def && it.def[label] === gone) up[`def/${label}`] = null;
+    for (const [k, w] of Object.entries(it.when || {})) {
+      if (!w || w.row !== label) continue;
+      const l = entries(w.vals).map(([, v]) => v).filter(v => v !== gone);
+      up[`when/${k}/vals`] = l.length ? l : null;
+    }
+    await update(ref(db, base), up);
     toast(`${it.name} の「${label}」から「${gone}」を外しました`);
   } else if (d.rowdel) {
     const { it, base } = itemOf(d.rowdel, d.ii), rows = optRows(it);
     const [label] = rows.splice(Number(d.oi), 1)[0];
     const tpl = String(it.tpl || "").replace(`{${label}}`, "").replace(/\s{2,}/g, " ").trim();
-    await update(ref(db, base), { opts: rows.length ? rowsForDb(rows) : null, tpl });
+    // その行の「出すとき」「はじめから」と、その行で決めていたほかの行の「出すとき」も消す（10/21）
+    const when = { ...(it.when || {}) }, def = { ...(it.def || {}) };
+    delete when[label]; delete def[label];
+    for (const [k, w] of Object.entries(when)) if (!w || w.row === label) delete when[k];
+    await update(ref(db, base), { opts: rows.length ? rowsForDb(rows) : null, tpl,
+      when: Object.keys(when).length ? when : null, def: Object.keys(def).length ? def : null });
     toast(`${it.name} の「${label}」の行を外しました`);
   } else if (d.ihide) {
     const { it, base } = itemOf(d.ihide, d.ii);
@@ -969,6 +1034,25 @@ async function onChange(e) {
     const { it, base } = itemOf(d.ci, d.ii);
     await set(ref(db, `${base}/sub`), v || null);
     toast(`${it.name} の下の小さい字を直しました`);
+  } else if (d.edit === "itpl") {
+    // 品名の形：{ } の中は、いまある行の名前だけ。行は全部 { } に入っていること（えらんだボタンが品名に入らないと困るので）（10/21）
+    const { it, base } = itemOf(d.ci, d.ii), rows = optRows(it).map(([l]) => l);
+    const used = [...v.matchAll(/\{(.+?)\}/g)].map(m => m[1]);
+    const unknown = used.filter(l => !rows.includes(l)), missing = rows.filter(l => !used.includes(l));
+    const back = msg => { t.value = it.tpl || ""; toast(msg); };
+    if (!v) return back("品名の形は空にできません");
+    if (unknown.length) return back(`「${unknown.join("・")}」という行はありません（{ } の中は行の名前）`);
+    if (missing.length) return back(`「${missing.join("・")}」の行が入っていません（{${missing[0]}} を入れてください）`);
+    await set(ref(db, `${base}/tpl`), v);
+    toast(`${it.name} の品名の形を直しました`);
+  } else if (d.edit === "whenrow" || d.edit === "whennot" || d.edit === "def") {
+    // 行ごとの「この行を出すとき」「はじめからえらんでおくボタン」（10/21）
+    const { it, base } = itemOf(d.ci, d.ii), [label] = optRows(it)[Number(d.oi)];
+    if (d.edit === "whenrow") await set(ref(db, `${base}/when/${label}`), v ? { row: v } : null);
+    else if (d.edit === "whennot") await set(ref(db, `${base}/when/${label}/not`), v ? true : null);
+    else await set(ref(db, `${base}/def/${label}`), v || null);
+    toast(d.edit === "def" ? (v ? `${it.name} の「${label}」は、はじめから「${v}」をえらびます` : `${it.name} の「${label}」は、はじめから えらばないようにしました`)
+      : `${it.name} の「${label}」を出すときを直しました${d.edit === "whenrow" && v ? `（「${v}」のボタンをえらんでください）` : ""}`);
   } else if (d.edit === "lineto") {
     const s = S.sup[d.id];
     await update(ref(db, `${PATH.sup}/${d.id}`), { lineTo: v || null });
