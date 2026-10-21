@@ -11,7 +11,7 @@ import { BACKUP_PATHS, countText, readAll, saveBackup, lastBackup } from "./back
 import { pushState, enablePush, disablePush, testPush } from "./tsuuchi.js";
 import { printFax } from "./fax.js";
 import { SHOPS } from "./shashin.js";
-import { normCatalog, buildSpec, rowDef, dropHidden } from "./tanomu.js";
+import { normCatalog, buildSpec, rowDef, dropHidden, chipHint } from "./tanomu.js";
 
 const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["memo", "覚えた当て方"], ["notify", "通知"], ["company", "会社・注文書"], ["backup", "バックアップ"], ["ai", "AI"]];
 const TAB_KEY = "yotsuba-zairyo-settab";
@@ -453,6 +453,9 @@ async function addItem(ci, name, unit) {
   await set(ref(db, `${PATH.catalog}/cats/${ci}/items/${next}`), { id: "u" + Date.now().toString(36), name, tpl: name, unit: unit || "個" });
 }
 
+/** 行のボタンの下の小さい字 → [[ボタン, 字], …]（10/21） */
+const hintsOf = (it, label) => entries(it.hints && it.hints[label]).map(([, p]) => entries(p).map(([, x]) => x)).filter(p => p[0] && p[1]);
+
 /** 品物の例の品名（行ごとに、はじめからえらぶボタンか1つめのボタン。出さない行は入れない）。「品名の形」の下に出す（10/21） */
 function exampleSpec(it, rows) {
   const nit = { ...it, opts: rows.map(([l, v, f]) => [l, v, f]) }, vals = {};
@@ -515,6 +518,12 @@ function btnEditor(ci, ii, it) {
             </form>
           </div>
           ${condHTML(oi, label, vals)}
+          ${vals.length ? `
+          <details class="chint" id="ch-${ci}-${ii}-${oi}"><summary>ボタンの下の小さい字${hintsOf(it, label).length ? `（${hintsOf(it, label).length}つ）` : ""}</summary>
+            <span class="hint">スマホのボタンの下に小さく出ます（注文の文には入りません）。例　350℃まで</span>
+            ${vals.map((v, k) => `<label class="mini">${esc(v)}
+              <input class="inp" data-edit="chint" ${at} data-oi="${oi}" data-k="${k}" value="${esc(chipHint(it, label, v))}" maxlength="30" placeholder="（書かない）"></label>`).join("")}
+          </details>` : ""}
           ${vals.length ? "" : `<button type="button" class="linkbtn" data-rowdel="${ci}" data-ii="${ii}" data-oi="${oi}">「${esc(label)}」の行を外す</button>`}
         </div>`).join("")}
       <form class="chip-add" data-form="rowadd" data-ci="${ci}" data-ii="${ii}">
@@ -906,6 +915,8 @@ async function onClick(e) {
     // 外したボタンを使っている「はじめからえらぶ」「この行を出すとき」からも外す（10/21）
     const up = { [`opts/${d.oi}/1`]: vals.length ? vals : null };
     if (it.def && it.def[label] === gone) up[`def/${label}`] = null;
+    const hs = hintsOf(it, label);
+    if (hs.some(([c]) => c === gone)) { const l = hs.filter(([c]) => c !== gone); up[`hints/${label}`] = l.length ? l : null; }
     for (const [k, w] of Object.entries(it.when || {})) {
       if (!w || w.row !== label) continue;
       const l = entries(w.vals).map(([, v]) => v).filter(v => v !== gone);
@@ -918,11 +929,11 @@ async function onClick(e) {
     const [label] = rows.splice(Number(d.oi), 1)[0];
     const tpl = String(it.tpl || "").replace(`{${label}}`, "").replace(/\s{2,}/g, " ").trim();
     // その行の「出すとき」「はじめから」と、その行で決めていたほかの行の「出すとき」も消す（10/21）
-    const when = { ...(it.when || {}) }, def = { ...(it.def || {}) };
-    delete when[label]; delete def[label];
+    const when = { ...(it.when || {}) }, def = { ...(it.def || {}) }, hints = { ...(it.hints || {}) };
+    delete when[label]; delete def[label]; delete hints[label];
     for (const [k, w] of Object.entries(when)) if (!w || w.row === label) delete when[k];
     await update(ref(db, base), { opts: rows.length ? rowsForDb(rows) : null, tpl,
-      when: Object.keys(when).length ? when : null, def: Object.keys(def).length ? def : null });
+      when: Object.keys(when).length ? when : null, def: Object.keys(def).length ? def : null, hints: Object.keys(hints).length ? hints : null });
     toast(`${it.name} の「${label}」の行を外しました`);
   } else if (d.ihide) {
     const { it, base } = itemOf(d.ihide, d.ii);
@@ -1045,6 +1056,15 @@ async function onChange(e) {
     if (missing.length) return back(`「${missing.join("・")}」の行が入っていません（{${missing[0]}} を入れてください）`);
     await set(ref(db, `${base}/tpl`), v);
     toast(`${it.name} の品名の形を直しました`);
+  } else if (d.edit === "chint") {
+    // ボタンの下の小さい字（10/21）。行ごとに [[ボタン, 字], …] で入れなおす（ボタンの順）
+    const { it, base } = itemOf(d.ci, d.ii), [label, vals] = optRows(it)[Number(d.oi)], chip = vals[Number(d.k)];
+    if (!chip) return;
+    const cur = new Map(hintsOf(it, label));
+    if (v) cur.set(chip, v); else cur.delete(chip);
+    const pairs = vals.filter(x => cur.has(x)).map(x => [x, cur.get(x)]);
+    await set(ref(db, `${base}/hints/${label}`), pairs.length ? pairs : null);
+    toast(v ? `${it.name} の「${chip}」の下に「${v}」と出します` : `${it.name} の「${chip}」の下の字を消しました`);
   } else if (d.edit === "whenrow" || d.edit === "whennot" || d.edit === "def") {
     // 行ごとの「この行を出すとき」「はじめからえらんでおくボタン」（10/21）
     const { it, base } = itemOf(d.ci, d.ii), [label] = optRows(it)[Number(d.oi)];

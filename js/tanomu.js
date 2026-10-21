@@ -11,7 +11,7 @@ const arr = v => (Array.isArray(v) ? v : Object.values(v || {})).filter(x => x !
 /** データベースの品物一覧を使いやすい形にする → { units, cats, item: Map(キー → 品物) }（キーは "種類:品物" 例 "bolt:hex"） */
 //   ⚙ 設定で「かくす」にした品物（hidden）は、種類のタブには出さない。前のカート・★いつもの で使えるように、item には入れておく（10/14）
 //   行は [行の名前, [ボタン…], えらばなくてもよいか]。3つめが true の行は、えらばなくてもカートに入れられる（10/14。ほかの行は必ずえらぶ）
-//   品物の when（この行を出すとき）・def（はじめからえらんでおくボタン）は、行の名前ごと（10/21。rowShown・rowDef）
+//   品物の when（この行を出すとき）・def（はじめからえらんでおくボタン）・hints（ボタンの下の小さい字）は、行の名前ごと（10/21。rowShown・rowDef・chipHint）
 export function normCatalog(raw) {
   const units = arr(raw && raw.units);
   const cats = arr(raw && raw.cats).map(c => {
@@ -36,6 +36,12 @@ export function rowShown(it, k, vals) {
 }
 /** はじめからえらんでおくボタン（⚙ 設定。10/21）。it.def[行の名前] = ボタン */
 export const rowDef = (it, k) => (it && it.def && typeof it.def[k] === "string" ? it.def[k] : "");
+/** ボタンの下の小さい字（⚙ 設定。注文の文には入れない。10/21）。it.hints[行の名前] = [[ボタン, 字], …]
+ *  （ボタンの字には # や / があるので、データベースの名前にはしない） */
+export function chipHint(it, k, c) {
+  const p = arr(it && it.hints && it.hints[k]).find(x => x && x[0] === c);
+  return p && typeof p[1] === "string" ? p[1] : "";
+}
 /** 出さない行のえらんだ値を消す（品名に入れない）。消すと、ほかの行が出なくなることもあるので、変わらなくなるまでくりかえす */
 export function dropHidden(it, vals) {
   for (let n = 0; n <= it.opts.length; n++) {
@@ -122,7 +128,7 @@ export function openItem(catalog, key, src, onSave, draft = null) {
       <div class="opt" data-opt="${esc(k)}"${shown.has(k) ? "" : " hidden"}><span class="lab">${esc(k)}${optional ? '<small class="opt-free">（えらばなくてもよい）</small>' : ""}</span>
         <p class="opt-need" hidden>${esc(k)}をえらんでください</p>
         <div class="opt-chips">
-          ${choices.map(c => `<button type="button" data-v="${esc(c)}" aria-pressed="${v === c}">${esc(c)}</button>`).join("")}
+          ${choices.map(c => { const h = chipHint(it, k, c); return `<button type="button" data-v="${esc(c)}" aria-pressed="${v === c}">${esc(c)}${h ? `<small class="chip-hint">${esc(h)}</small>` : ""}</button>`; }).join("")}
           <button type="button" class="oth" data-oth aria-pressed="${other}">ほか…</button>
         </div>
         <input class="inp" data-othin placeholder="${esc(k)}を書く" aria-label="${esc(k)}を書く" value="${other ? esc(v) : ""}"${other ? "" : " hidden"}>

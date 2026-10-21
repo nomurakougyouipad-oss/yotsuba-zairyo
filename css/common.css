@@ -184,6 +184,8 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .ctgl{border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:8px;padding:4px 12px;font-weight:700;min-height:40px}
 .ctgl[aria-pressed="true"]{border-color:var(--amber);color:var(--amber);background:var(--surface2);box-shadow:inset 0 -2px 0 var(--amber)}
 .ibtns > div.mini{border-top:1px solid var(--line);padding-top:10px}
+.chint summary{cursor:pointer;font-weight:700;color:var(--blue);min-height:32px;display:flex;align-items:center}
+.chint[open]{display:flex;flex-direction:column;gap:6px;padding-left:10px;border-left:3px solid var(--line)}
 @media (max-width:640px){
   .krow{grid-template-columns:5.8em minmax(0,1fr)}
   .kname-wrap{flex-wrap:wrap}
@@ -533,6 +535,7 @@ ul.plain{margin:0;padding-left:1.2em}
 .opt-chips button{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 13px;font-weight:700;font-size:15px;min-height:44px;min-width:44px}
 .opt-chips button[aria-pressed="true"]{background:var(--surface2);border-color:var(--amber);color:var(--amber);box-shadow:inset 0 -2px 0 var(--amber)}
 .opt-chips .oth{border-style:dashed;color:var(--muted)}
+.opt-chips button .chip-hint{display:block;font-size:11px;font-weight:500;color:var(--muted);line-height:1.3;margin-top:1px}   /* ボタンの下の小さい字（10/21。注文の文には入らない） */
 /* 事務所が依頼を取り消す・もどす（10/14） */
 .rcx-box{margin-top:10px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface2);display:flex;flex-direction:column;gap:8px;cursor:default}
 .rcx-box .confirm-q{margin:0}
