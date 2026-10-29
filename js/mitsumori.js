@@ -1,6 +1,6 @@
 // 見積依頼（10/15 事務所の相談「見積依頼 → 注文」の3。4 の相見積もりは、このあと材料屋を足せるようにする）
 // - データは /zairyo/quotes/{番号}（事務所だけが読み書き）。最初から、いくつかの材料屋に出せる形（sups/{材料屋の番号}）
-//   { chuban, kenmei, tantou（文の「担当者」＝見積を出す事務所の人）, kojiTantou（工事の担当。日報から）, memo（事務所だけ）,
+//   { chuban, kenmei, tantou（文の「担当者」＝見積を出す事務所の人）, kojiTantou（文の「工事担当」＝工事の担当。日報から。直せる）, memo（事務所だけ）,
 //     kibou（"" 書かない／"最短"／日付）, lines, files（図面など。置き場は zairyo/files/{見積の番号}/）,
 //     sups: { 材料屋: { name, to, unsent（まだ送っていない）, sentAt, sentBy,
 //             answer: { rows: { 品物: { kg, perKg, price, amount } }, total, nouki, memo, file（見積書）, at, by } } },
@@ -58,7 +58,9 @@ export function mitsumoriText(q, supId, info = {}) {
   const who = n => (n && tels[n] ? `${n}(${tels[n]})` : n || "");
   const L = ["------------------------------------------", "　　　　　　　 見　積　依　頼", "------------------------------------------", ""];
   L.push(`見積先　${s.name || ""}　${s.to || "御中"}`, "");
-  L.push(`工事件名　${zenkana(q.kenmei || "")}`, `工事番号　${q.chuban || ""}`, "");
+  L.push(`工事件名　${zenkana(q.kenmei || "")}`, `工事番号　${q.chuban || ""}`);
+  if (q.kojiTantou) L.push(`工事担当　${who(q.kojiTantou)}`);   // 注番の工事の担当（10/29 事務員さん。空なら行を入れない）
+  L.push("");
   L.push("品名", ...qLines(q).map(([, l]) => lineText(l)));
   const fl = filesOf(q).map(([, f]) => f.name).filter(Boolean);
   if (fl.length) L.push(`※添付ファイル：${fl.join("、")}`);
@@ -139,7 +141,6 @@ export function openQuoteForm({ q = null, sups, units, me, onSaved }) {
           <div class="field"><label for="kKenmei">工事件名<span class="req">必ず</span></label>
             <textarea id="kKenmei" class="inp oneline" rows="1" maxlength="100" autocomplete="off" data-oneline>${esc(edit ? q.kenmei : "")}</textarea><p class="err" id="eKenmei"></p></div>
         </div>
-        <input type="hidden" id="kKoji" value="${esc(edit ? q.kojiTantou || "" : "")}">
         ${itemsFieldHTML(us, "品物", edit ? linesToRows(q.lines) : [])}
         ${edit ? '<p class="hint">ファイル（図面など）は、見積の画面の「ファイル」の欄で、足す・消すができます。</p>'
           : filePickHTML("ファイル（図面など）", "DXF・DWG・JWW・PDF・Excel など。1つ 200MB まで。「見積依頼を作る」を押したときに上げます。")}
@@ -151,11 +152,14 @@ export function openQuoteForm({ q = null, sups, units, me, onSaved }) {
           <input id="qDate" class="inp" type="date" aria-label="希望の納期"${kSel(f.kibou) === "__date" ? ` value="${esc(f.kibou)}"` : " hidden"}>
           <span class="hint">えらんだときだけ、見積依頼の文に「希望納期」が入ります。</span></div>
         <div class="two">
-          <div class="field"><label for="qTan">担当者（文の「担当者」）</label>
+          <div class="field"><label for="kKoji">工事担当（工事の担当）</label>
+            <input id="kKoji" class="inp" list="kKojiList" maxlength="20" autocomplete="off" value="${esc(edit ? q.kojiTantou || "" : "")}"><datalist id="kKojiList"></datalist>
+            <span class="hint" id="hKoji" role="status"></span></div>
+          <div class="field"><label for="qTan">担当者（事務所の人）</label>
             <input id="qTan" class="inp" list="kStaffList" maxlength="20" autocomplete="off" value="${esc(edit ? q.tantou || "" : me.name || "")}"><datalist id="kStaffList"></datalist>
             <span class="hint">⚙ 設定の電話番号があれば、名前のうしろに入ります。</span></div>
-          <div class="field"><label for="qMemo">メモ（事務所だけ）</label><textarea id="qMemo" class="inp ta" rows="2" maxlength="500">${esc(edit ? q.memo || "" : "")}</textarea></div>
         </div>
+        <div class="field"><label for="qMemo">メモ（事務所だけ）</label><textarea id="qMemo" class="inp ta" rows="2" maxlength="500">${esc(edit ? q.memo || "" : "")}</textarea></div>
         <p class="hint ok" id="kProg" role="status" hidden></p>
         <p class="err" id="eAll"></p>
         <div class="row"><button type="submit" class="btn primary big" id="qGo">${edit ? "直したところを保存" : "見積依頼を作る"}</button>
@@ -166,7 +170,8 @@ export function openQuoteForm({ q = null, sups, units, me, onSaved }) {
   openSheet(html, panel => {
     const p = panel.querySelector("#qformWrap");
     const g = s => p.querySelector(s);
-    stopJobs = wireChuban(p, { chuban: "#kChuban", kenmei: "#kKenmei", tantou: "#kKoji", hint: "#hChuban", list: "#kJobList", kerr: "#eKenmei" });
+    stopJobs = wireChuban(p, { chuban: "#kChuban", kenmei: "#kKenmei", tantou: "#kKoji", hint: "#hChuban", list: "#kJobList", kerr: "#eKenmei",
+      koji: { hint: "#hKoji", list: "#kKojiList" } });
     fillStaff(g("#kStaffList"));
     wireItems(p, us);
     if (!edit) wireFilePick(p, picked);
@@ -319,6 +324,7 @@ export function quoteHTML(q, ctx) {
         ${open ? '<div class="row"><button type="button" class="btn" data-qedit>見積依頼を直す</button></div>' : ""}</div>
       <div class="block"><dl class="dl">
         <dt>希望の納期</dt><dd>${esc(kibouWord(q.kibou) || "書かない")}</dd>
+        <dt>工事担当</dt><dd>${esc(q.kojiTantou || "—")}</dd>
         <dt>担当者</dt><dd>${esc(q.tantou || "—")}</dd>
         ${q.memo ? `<dt>メモ</dt><dd>${esc(q.memo)}</dd>` : ""}
         <dt>作った</dt><dd>${q.createdAt ? `${md(q.createdAt)} ${hm(q.createdAt)}` : ""}（${esc(q.createdBy || "")}）</dd>

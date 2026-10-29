@@ -10,7 +10,7 @@ import { db, auth } from "./firebase.js";
 import { esc, zenkana, toast, openSheet, closeSheet } from "./common.js";
 import { ymd } from "./tanomu.js";
 import { normalizeChuban } from "./kouji.js";
-import { watchJobs, CHUBAN_RE } from "./nippo.js";
+import { watchJobs, CHUBAN_RE, NOT_PERSON } from "./nippo.js";
 import { errorText } from "./touroku.js";
 import { okFiles, uploadFile, removeUploaded, sizeText } from "./fairu.js";
 import { isAppSup } from "./chumon.js";
@@ -142,11 +142,23 @@ export async function uploadPicked(owner, picked, me, prog) {
   return { files, paths };
 }
 
-/** 注番の欄：日報の工事なら、件名・担当を入れる（日報は読むだけ）。sel＝{ chuban, kenmei, tantou?, hint, list, kerr }。返り値 stop() */
+/** 注番の欄：日報の工事なら、件名・担当を入れる（日報は読むだけ）。sel＝{ chuban, kenmei, tantou?, hint, list, kerr, koji? }。返り値 stop()
+ *  koji＝{ hint, list }：見積依頼の「工事担当」（10/29）。人の名前でない担当（なし・よつば・その他）は入れない。担当が入らないときは
+ *  hint に「書かなければ文に入らない」と出す。日報にない注番に変えたら、自動で入れた担当は消す。list（datalist）に日報の担当者（工事の多い順） */
 export function wireChuban(p, sel) {
   const g = s => p.querySelector(s);
   let jobs = null, autoKenmei = "", autoTantou = "";
-  const check = () => {
+  const koji = sel.koji ? { hint: g(sel.koji.hint), list: g(sel.koji.list) } : null;
+  let kojiFrom = null;   // 日報から分かった工事担当 { who（人の名前。なければ ""）, job（日報にある注番か） }。null＝まだ分からない
+  const kojiNote = () => {
+    if (!koji) return;
+    const v = g(sel.tantou).value.trim(), f = kojiFrom;
+    koji.hint.className = "hint" + (f && !v ? " warn" : f && v === f.who ? " ok" : "");
+    koji.hint.textContent = !f ? "" : !v ? `${f.job && !f.who ? "日報に担当がない注番です。" : ""}書かなければ、文に「工事担当」の行は入りません`
+      : v === f.who ? "日報から入りました。直すこともできます" : "";
+  };
+  const check = () => { kojiFrom = null; look(); kojiNote(); };
+  const look = () => {
     const el = g(sel.chuban), h = g(sel.hint);
     const v = normalizeChuban(el.value);
     if (el.value && el.value !== v) el.value = v;
@@ -155,22 +167,37 @@ export function wireChuban(p, sel) {
     if (!v) return;
     if (!CHUBAN_RE.test(v)) { h.textContent = "形がちがうかも（例 AB26123）"; h.classList.add("bad"); return; }
     if (!jobs) { h.textContent = "日報を読んでいます…"; return; }
-    const j = jobs.all.get(v);
-    if (!j) { h.textContent = "日報にない注番です。たしかめてください"; h.classList.add("warn"); return; }
+    const j = jobs.all.get(v), t = sel.tantou ? g(sel.tantou) : null;
+    if (!j) {
+      h.textContent = "日報にない注番です。たしかめてください"; h.classList.add("warn");
+      if (koji) { kojiFrom = { who: "", job: false }; if (t.value === autoTantou) t.value = autoTantou = ""; }
+      return;
+    }
     h.textContent = j.closed ? "日報では終わった工事です。たしかめてください" : "日報の工事です";
     h.classList.add(j.closed ? "warn" : "ok");
-    const k = g(sel.kenmei), t = sel.tantou ? g(sel.tantou) : null;
+    const k = g(sel.kenmei);
     if (!k.value.trim() || k.value === autoKenmei) { k.value = autoKenmei = zenkana(j.kenmei); g(sel.kerr).textContent = ""; }
-    if (t && (!t.value.trim() || t.value === autoTantou)) t.value = autoTantou = j.tantou || "";
+    const jt = String(j.tantou || "").trim(), who = !koji ? j.tantou || "" : NOT_PERSON.test(jt) ? "" : jt;
+    if (koji) kojiFrom = { who, job: true };
+    if (t && (!t.value.trim() || t.value === autoTantou)) t.value = autoTantou = who;
   };
   const stop = watchJobs(d => {
     jobs = d;
     g(sel.list).innerHTML = [...d.open, ...d.fixed].map(j => `<option value="${esc(j.chuban)}">${esc(zenkana(j.kenmei))}</option>`).join("");
+    if (koji) {
+      const n = new Map();
+      for (const j of [...d.open, ...d.fixed]) { const w = String(j.tantou || "").trim(); if (w && !NOT_PERSON.test(w)) n.set(w, (n.get(w) || 0) + 1); }
+      koji.list.innerHTML = [...n].sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0], "ja")).map(([w]) => `<option value="${esc(w)}"></option>`).join("");
+    }
     check();
-  }, () => { g(sel.hint).textContent = "日報を読めませんでした。件名は手で書いてください"; });
+  }, () => {
+    g(sel.hint).textContent = "日報を読めませんでした。件名は手で書いてください";
+    if (koji) { kojiFrom = { who: "", job: false }; kojiNote(); }
+  });
   g(sel.chuban).addEventListener("change", check);
   g(sel.chuban).addEventListener("input", () => { if (CHUBAN_RE.test(normalizeChuban(g(sel.chuban).value))) check(); });
   g(sel.kenmei).addEventListener("input", () => { g(sel.kerr).textContent = ""; });
+  if (koji) g(sel.tantou).addEventListener("input", kojiNote);
   return stop;
 }
 /** 注文する人・事務所の人の候補（⚙ 設定の「注文する人」） */

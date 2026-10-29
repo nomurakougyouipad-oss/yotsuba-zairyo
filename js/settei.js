@@ -6,7 +6,7 @@ import { ref, onValue, set, update, remove, push, serverTimestamp } from "https:
 import { db, auth, call } from "./firebase.js";
 import { $, esc, toast } from "./common.js";
 import { errorText } from "./touroku.js";
-import { watchJobs, watchWorkers } from "./nippo.js";
+import { watchJobs, watchWorkers, NOT_PERSON } from "./nippo.js";
 import { BACKUP_PATHS, countText, readAll, saveBackup, lastBackup } from "./backup.js";
 import { pushState, enablePush, disablePush, testPush } from "./tsuuchi.js";
 import { printFax } from "./fax.js";
@@ -41,8 +41,6 @@ const LOADING = '<p class="muted">読んでいます…</p>';
 const BAD_KEY = /[.#$\[\]\/]/;
 const TEL_RE = /^[0-9()+\- ]{1,20}$/;   // 電話番号・FAX 番号（データベースのルールと同じ形）
 const EMAIL_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;   // 材料屋のメールアドレス（データベースのルールと同じ形）
-// 人の名前でないもの（日報の担当の欄の「その他」「なし」「よつば」など、数字やローマ字の入ったもの、会社や班の名前）は、足す候補に出さない
-const NOT_PERSON = /^(その他|そのた|他|ほか|なし|無し|ナシ|未定|不明|共通|全員|全体|全社|みんな|事務所|事務|会社|本社|営業|工務|現場|[ー－\-―]+)$|よつば|ヨツバ|四つ葉|四葉|テスト|[0-9０-９A-Za-zＡ-Ｚａ-ｚ]|(会社|工業|建設|産業|商事|商会|農園|工場|班|組|課|係)$/;
 const z2h = s => String(s ?? "").normalize("NFKC");
 const ja = (a, b) => String(a).localeCompare(String(b), "ja");
 const byOrder = ([, a], [, b]) => (a.order ?? 999) - (b.order ?? 999) || ja(a.name, b.name);

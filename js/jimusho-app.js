@@ -393,7 +393,7 @@ export function startOfficeApp(main, me) {
   function matchQuote(q) {
     const s = st.q.trim().normalize("NFKC").toLowerCase();
     if (!s) return true;
-    return [q.chuban, q.kenmei, q.tantou, q.memo, ...Object.values(q.sups || {}).map(x => x.name), ...qLines(q).map(([, l]) => l.spec)]
+    return [q.chuban, q.kenmei, q.kojiTantou, q.tantou, q.memo, ...Object.values(q.sups || {}).map(x => x.name), ...qLines(q).map(([, l]) => l.spec)]
       .some(v => String(v || "").normalize("NFKC").toLowerCase().includes(s));
   }
   function drawQuotes(list) {

@@ -71,7 +71,7 @@ export function mitsumoriFaxHTML(q, supId, sup, info = {}) {
   <div class="meta"><span></span><span>${sup && sup.fax ? `送り先 FAX：${esc(sup.fax)}` : "送り先 FAX：（⚙ 設定の材料屋で入れてください）"}</span></div>
   <div class="who"><div class="to">${esc(s.name || "")}　${esc(s.to || "御中")}</div>
     <div class="co">${c.name ? `<b>${esc(c.name)}</b><br>` : ""}${c.zip || c.addr ? `${c.zip ? `〒${esc(c.zip)} ` : ""}${esc(c.addr || "")}<br>` : ""}${c.tel || c.fax ? `${c.tel ? `TEL ${esc(c.tel)}` : ""}${c.tel && c.fax ? "　" : ""}${c.fax ? `FAX ${esc(c.fax)}` : ""}<br>` : ""}担当者　${esc(who(q.tantou))}</div></div>
-  <div>工事件名　${esc(q.kenmei || "")}</div>
+  <div>工事件名　${esc(q.kenmei || "")}${q.kojiTantou ? `　　工事担当　${esc(who(q.kojiTantou))}` : ""}</div>
   <div>下記の内容の見積金額と納期の回答をお願いいたします${k ? `（希望納期：${esc(k)}）` : ""}</div>
   <table>
     <tr><th style="width:14%">材質</th><th>品名</th><th style="width:10%">数量</th><th style="width:11%">単価</th><th style="width:12%">合計金額</th><th style="width:8%">Kg</th><th style="width:9%">¥/kg</th><th style="width:10%">納期</th></tr>
