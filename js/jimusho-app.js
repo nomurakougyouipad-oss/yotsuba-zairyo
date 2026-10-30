@@ -24,7 +24,7 @@ import { slipFormHTML, wireSlipForm, readSlipForm, slipRowText } from "./kingaku
 import { quoteState, isOpenQuote, quoteCard, openQuoteForm, quoteHTML, wireQuote, qLines } from "./mitsumori.js";
 
 /** 一覧・注文の画面の小さい印（加工品・見積から。10/15） */
-const KIND_TAG = { kakou: "加工品", mekki: "めっき", mitsumori: "見積から" };
+const KIND_TAG = { kakou: "加工品", mekki: "めっき", mitsumori: "見積から", nouhin: "納品書から" };   // nouhin＝納品書の取りこみで作った注文（アプリで注文していない。10/30）
 const kindTag = o => (KIND_TAG[o.kind] ? ` <span class="tag">${KIND_TAG[o.kind]}</span>` : "") + (o.supState ? ' <span class="tag">アプリ</span>' : "");   // アプリ＝材料屋のアプリに送った注文（2-2）
 /** 事務所で入れて、あとで「送った」を押す注文（加工品・めっき・見積から） */
 const officeKind = o => o.kind === "kakou" || o.kind === "mekki" || o.kind === "mitsumori";
@@ -146,6 +146,7 @@ function netLinesHTML(sup, lines) {
 export function startOfficeApp(main, me) {
   const st = {
     view: "irai", filter: "all", q: "", reqs: null, orders: null, catalog: null, sups: null, places: null,
+    src: "",   // "nouhin"＝納品書から作った注文だけ（「注文ごと」「工事ごと」。10/30）
     openOrderId: "",   // いま中身を出している注文
     settingsOpen: false,
     pick: {},        // 依頼ごとの、品物にえらんだ材料屋 {依頼id: {品物id: 材料屋id}}（「注文した」までは、この画面だけ）
@@ -206,7 +207,13 @@ export function startOfficeApp(main, me) {
     return [o.chuban, o.kenmei, o.supplierName, o.chumonsha, o.tantou, o.basho, o.memo, ...Object.values(o.lines || {}).map(l => l.spec + " " + (l.note || ""))]
       .some(v => String(v || "").normalize("NFKC").toLowerCase().includes(q));
   }
-  const liveOrders = () => (st.orders || []).filter(o => o.status !== "cancelled" && matchOrder(o));
+  const srcOk = o => !st.src || o.kind === st.src;
+  const liveOrders = () => (st.orders || []).filter(o => o.status !== "cancelled" && matchOrder(o) && srcOk(o));
+  /** 納品書から作った注文があるときだけ、一覧の上に出す（押すと、それだけの一覧。10/30） */
+  function srcBar() {
+    const n = st.src ? 0 : (st.orders || []).filter(o => o.status !== "cancelled" && o.kind === "nouhin").length;
+    return n ? `<div class="src-bar"><span>納品書から作った注文（アプリで注文していない）が ${n}件 あります</span><button type="button" class="btn" data-src="nouhin">それだけ見る</button></div>` : "";
+  }
 
   /* ---------- 上の箱・タブ ---------- */
   function drawTop() {
@@ -232,6 +239,7 @@ export function startOfficeApp(main, me) {
     });
     const parts = [];
     if (ordersView && st.filter !== "all") parts.push(`「<b>${ST[st.filter].label}</b>」だけ`);
+    if (ordersView && st.src) parts.push("「<b>納品書から作った注文</b>」だけ");
     if (st.q.trim()) parts.push(`「<b>${esc(st.q.trim())}</b>」でさがし中`);
     const note = $("#filterNote", main);
     note.hidden = !parts.length;
@@ -333,7 +341,7 @@ export function startOfficeApp(main, me) {
           <div><dt>希望日</dt><dd${late ? ' class="late"' : ""}>${esc(kibouText(o.kibou))}${late ? "（すぎています）" : ""}</dd></div>
           <div><dt>届け先</dt><dd>${esc(o.basho || "—")}</dd></div>
           <div><dt>注文者</dt><dd>${esc(o.chumonsha || "—")}</dd></div>
-          <div><dt>注文した</dt><dd>${md(o.orderedAt)}</dd></div>
+          <div><dt>${o.kind === "nouhin" ? "入れた" : "注文した"}</dt><dd>${md(o.orderedAt)}</dd></div>
           ${deliverPlan(o) ? `<div><dt>届く予定</dt><dd>${esc(deliverPlan(o))}</dd></div>` : ""}
           ${nr ? `<div><dt>アプリに送った</dt><dd>${md(o.supSentAt)} ${hm(o.supSentAt)}</dd></div>` : ""}
         </dl>
@@ -356,8 +364,8 @@ export function startOfficeApp(main, me) {
   function drawOrders(list) {
     if (!st.orders) { list.innerHTML = '<p class="muted">読んでいます…</p>'; return; }
     const shown = sortOrders(liveOrders().filter(o => st.filter === "all" || o.status === st.filter));
-    const cxs = st.filter === "all" ? sortOrders((st.orders || []).filter(o => o.status === "cancelled" && matchOrder(o))) : [];
-    list.innerHTML =
+    const cxs = st.filter === "all" ? sortOrders((st.orders || []).filter(o => o.status === "cancelled" && matchOrder(o) && srcOk(o))) : [];
+    list.innerHTML = srcBar() +
       (shown.length ? `<div class="ocards">${shown.map(orderCard).join("")}</div>` : '<p class="empty">あてはまる注文はありません。</p>') +
       (cxs.length ? `<details class="block hidbox" id="cxOrders"><summary>取り消した注文（${cxs.length}）</summary><div class="ocards">${cxs.map(orderCard).join("")}</div></details>` : "");
   }
@@ -370,7 +378,7 @@ export function startOfficeApp(main, me) {
       if (!groups.has(o.chuban)) groups.set(o.chuban, []);
       groups.get(o.chuban).push(o);
     });
-    if (!groups.size) { list.innerHTML = '<p class="empty">あてはまる工事はありません。</p>'; return; }
+    if (!groups.size) { list.innerHTML = srcBar() + '<p class="empty">あてはまる工事はありません。</p>'; return; }
     const cards = [...groups.entries()].sort((a, b) => b[0].slice(2).localeCompare(a[0].slice(2)) || a[0].localeCompare(b[0])).map(([cb, os]) => {
       const w = os.filter(o => o.status === "wait").length, a = os.filter(o => o.status === "arrived").length;
       const color = w ? "var(--amber)" : a ? "var(--blue)" : "var(--grey)";
@@ -386,7 +394,7 @@ export function startOfficeApp(main, me) {
             <span class="khint">${noAmt ? `金額が入っていない注文が ${noAmt} 件あります` : "全部の金額が入っています"}</span></span>
         </button>`;
     }).join("");
-    list.innerHTML = `<div class="ocards">${cards}</div>`;
+    list.innerHTML = srcBar() + `<div class="ocards">${cards}</div>`;
   }
 
   /* 見積（10/15）：やることがある順（まだ送っていない → 返事が来た → 返事待ちの古い順）。注文した・やめたものは下にたたむ */
@@ -789,9 +797,9 @@ export function startOfficeApp(main, me) {
           <dt>注文者</dt><dd>${esc(o.chumonsha || "—")}</dd>
           <dt>担当者</dt><dd>${esc(o.tantou || "—")}</dd>
           ${o.supState ? `<dt>材料屋のアプリ</dt><dd>${esc(supStateText(o))}${o.supSentAt ? `（${md(o.supSentAt)} ${hm(o.supSentAt)} 送った）` : ""}</dd>` : ""}
-          <dt>来たところ</dt><dd>${o.reqId ?`現場のスマホ（${esc(o.chumonsha)}さん）` : o.kind === "kakou" ? "事務所（加工品）" : o.kind === "mekki" ? "事務所（めっき）" : o.kind === "mitsumori" ? `見積から（事務所）${o.quoteId ? ` <button type="button" class="linkbtn" data-oquote="${esc(o.quoteId)}">もとの見積を開く</button>` : ""}` : "LINE・電話"}</dd>
+          <dt>来たところ</dt><dd>${o.reqId ?`現場のスマホ（${esc(o.chumonsha)}さん）` : o.kind === "kakou" ? "事務所（加工品）" : o.kind === "mekki" ? "事務所（めっき）" : o.kind === "mitsumori" ? `見積から（事務所）${o.quoteId ? ` <button type="button" class="linkbtn" data-oquote="${esc(o.quoteId)}">もとの見積を開く</button>` : ""}` : o.kind === "nouhin" ? "納品書から（アプリで注文していない）" : "LINE・電話"}</dd>
           ${o.quoteTotal != null ? `<dt>見積の金額</dt><dd>${yen(o.quoteTotal)} 円（税抜）</dd>` : ""}
-          <dt>${officeKind(o) ? "入れた" : "注文した"}</dt><dd>${md(o.orderedAt)} ${hm(o.orderedAt)}（${esc(o.orderedBy || "")}）</dd>
+          <dt>${officeKind(o) || o.kind === "nouhin" ? "入れた" : "注文した"}</dt><dd>${md(o.orderedAt)} ${hm(o.orderedAt)}（${esc(o.orderedBy || "")}）</dd>
           ${o.sentAt ? `<dt>送った</dt><dd>${md(o.sentAt)} ${hm(o.sentAt)}（${esc(o.sentBy || "")}）</dd>` : ""}
           ${o.arrivedAt ? `<dt>届いた</dt><dd>${md(o.arrivedAt)} ${hm(o.arrivedAt)}（${esc(o.arrivedBy || "")}）</dd>` : ""}
           ${o.billedAt ? `<dt>請求が来た</dt><dd>${md(o.billedAt)} ${hm(o.billedAt)}（${esc(o.billedBy || "")}）</dd>` : ""}
@@ -820,7 +828,7 @@ export function startOfficeApp(main, me) {
   function openMitsuForm(q) {
     openQuoteForm({
       q, sups: st.sups, units: unitsList(), me,
-      onSaved: id => { if (!q) { st.view = "mitsu"; st.filter = "all"; draw(); } waitQuote(id); },
+      onSaved: id => { if (!q) { st.view = "mitsu"; st.filter = "all"; st.src = ""; draw(); } waitQuote(id); },
     });
   }
   function waitQuote(id, tries = 0) {
@@ -851,7 +859,7 @@ export function startOfficeApp(main, me) {
         redraw: () => openQuote(id, true),
         onErr: ex => toast(errorText(ex)),
         copyOrSend: (x, sup, fb, pack) => copyOrSend(x, sup, fb, st.info, pack),
-        openOrder: oid => { st.view = "orders"; st.filter = "all"; draw(); waitOpen(oid); },
+        openOrder: oid => { st.view = "orders"; st.filter = "all"; st.src = ""; draw(); waitOpen(oid); },
         openForm: x => openMitsuForm(x),
       });
       wireFiles(w, getQuote, me, { base: "zairyo/quotes", onErr: ex => toast(errorText(ex)), redraw: () => openQuote(id, true) });
@@ -1143,7 +1151,7 @@ export function startOfficeApp(main, me) {
   main.addEventListener("click", e => {
     // カードの中の「取り消し」のたしかめの所（理由の欄など）は、押してもカードを開かない
     if (e.target.closest(".rcx-box") && !e.target.closest("[data-rcxyes],[data-rcxno],[data-rrsyes]")) return;
-    const t = e.target.closest("[data-rcx],[data-rcxyes],[data-rcxno],[data-rcxseen],[data-rrs],[data-rrsyes],[data-newbox],[data-mitsubox],[data-filter],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],[data-quote],#billBtn,#lineBtn,#kakouBtn,#mitsuBtn,#impBtn,#setBtn,#setBack,#clearQ");
+    const t = e.target.closest("[data-rcx],[data-rcxyes],[data-rcxno],[data-rcxseen],[data-rrs],[data-rrsyes],[data-newbox],[data-mitsubox],[data-filter],[data-src],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],[data-quote],#billBtn,#lineBtn,#kakouBtn,#mitsuBtn,#impBtn,#setBtn,#setBack,#clearQ");
     if (!t || t.disabled) return;
     const d = t.dataset;
     if (d.rcx || d.rrs || "rcxno" in d) {
@@ -1155,8 +1163,9 @@ export function startOfficeApp(main, me) {
     else if (d.rcxyes) cancelReq(d.rcxyes, t).catch(ex => { t.disabled = false; toast(errorText(ex)); });
     else if (d.rrsyes) restoreReq(d.rrsyes, t).catch(ex => { t.disabled = false; toast(errorText(ex)); });
     else if (d.rcxseen) seeCx(d.rcxseen, t).catch(ex => { t.disabled = false; toast(errorText(ex)); });
-    else if ("newbox" in d) { st.view = "irai"; st.filter = "all"; draw(); }
-    else if ("mitsubox" in d) { st.view = "mitsu"; st.filter = "all"; draw(); }
+    else if ("newbox" in d) { st.view = "irai"; st.filter = "all"; st.src = ""; draw(); }
+    else if ("mitsubox" in d) { st.view = "mitsu"; st.filter = "all"; st.src = ""; draw(); }
+    else if (d.src) { st.src = d.src; draw(); }   // 納品書から作った注文だけ（10/30）
     else if (d.filter) {
       // ようすの箱：その注文だけの一覧。もう一度押すと、しぼりこみをやめる
       const ov = st.view === "orders" || st.view === "kouji";
@@ -1164,7 +1173,7 @@ export function startOfficeApp(main, me) {
       if (!ov) st.view = "orders";
       draw();
     }
-    else if (d.view) { st.view = d.view; draw(); }
+    else if (d.view) { st.view = d.view; if (d.view !== "orders" && d.view !== "kouji") st.src = ""; draw(); }
     else if (d.next) {
       const o = (st.orders || []).find(x => x.id === d.next);
       if (!o) return;
@@ -1181,14 +1190,14 @@ export function startOfficeApp(main, me) {
     else if (t.id === "billBtn") { bulk.done = ""; openBulk(); }
     else if (t.id === "impBtn") openImport({ sups: st.sups, getOrders: () => st.orders, me });
     else if (t.id === "kakouBtn") {   // 加工品の注文（図面つき）（10/15）
-      openKakouOrder({ sups: st.sups, places: st.places, units: unitsList(), me, onPlaced: id => { st.view = "orders"; st.filter = "all"; draw(); waitOpen(id); } });
+      openKakouOrder({ sups: st.sups, places: st.places, units: unitsList(), me, onPlaced: id => { st.view = "orders"; st.filter = "all"; st.src = ""; draw(); waitOpen(id); } });
     }
     else if (t.id === "lineBtn") {
-      openLineOrder({ sups: st.sups, places: st.places, catalog: st.catalog, me, onPlaced: id => { st.view = "orders"; st.filter = "all"; draw(); openOrder(id); } });
+      openLineOrder({ sups: st.sups, places: st.places, catalog: st.catalog, me, onPlaced: id => { st.view = "orders"; st.filter = "all"; st.src = ""; draw(); openOrder(id); } });
     }
     else if (t.id === "setBtn") showSettings(true);
     else if (t.id === "setBack") showSettings(false);
-    else if (t.id === "clearQ") { st.q = ""; st.filter = "all"; $("#q", main).value = ""; draw(); }
+    else if (t.id === "clearQ") { st.q = ""; st.filter = "all"; st.src = ""; $("#q", main).value = ""; draw(); }
   });
   main.addEventListener("keydown", e => {
     const c = e.target.closest && e.target.closest("[data-req],[data-open],[data-quote]");

@@ -337,6 +337,8 @@ ul.plain{margin:0;padding-left:1.2em}
 .badge{font-family:var(--f-num);font-weight:600;font-size:12px;background:var(--amber-btn);color:var(--on-amber);border-radius:9px;min-width:18px;height:18px;padding:0 5px;display:inline-grid;place-items:center;margin-left:6px}
 .filter-note{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:14px;color:var(--muted)}
 .filter-note b{color:var(--fg)}
+/* 納品書から作った注文があるときだけ、一覧の上に出す（10/30） */
+.src-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;margin-bottom:12px;padding:8px 12px;border:1px solid var(--line);border-left:6px solid var(--blue);border-radius:10px;background:var(--surface);font-size:14px}
 .ocards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:12px}
 .ocard{background:var(--surface);border:1px solid var(--line);border-top:5px solid var(--c);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;cursor:pointer;min-width:0}
 .ocard:hover{border-color:var(--muted);border-top-color:var(--c)}
