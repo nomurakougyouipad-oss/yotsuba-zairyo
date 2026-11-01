@@ -243,7 +243,7 @@ export async function openReqEdit({ r, orders, places, units, me, onDone }) {
       toast("依頼を直しました。記録にも残しました");
       onDone();
     });
-  }, { side: true });
+  }, { side: true, guard: true });   // guard：書いたあとに閉じるときは「閉じますか？」（11/2）
 }
 
 /* ==================== 注文を直す ==================== */
@@ -325,5 +325,5 @@ export async function openOrderEdit({ o, r, places, units, me, onDone }) {
       toast(o.reqId && reqWords.length ? "注文を直しました。現場の依頼の品物も、同じに直しました" : "注文を直しました。記録にも残しました");
       onDone();
     });
-  }, { side: true });
+  }, { side: true, guard: true });   // guard：書いたあとに閉じるときは「閉じますか？」（11/2）
 }

@@ -354,6 +354,7 @@ export function openKakouOrder({ sups, places, units, me, onPlaced }) {
     }
   }, {
     side: true,
+    guard: true,   // 書いたあとに閉じるときは「閉じますか？」（11/2）
     onClose: () => { if (stopJobs) stopJobs(); },
   });
 }

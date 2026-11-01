@@ -257,7 +257,7 @@ export function openQuoteForm({ q = null, sups, units, me, onSaved }) {
       toast(`${pickedSups.map(id => sups[id].name).join("・")} への見積依頼を作りました。材料屋ごとに「メールで送る」などで送ってください`);
       if (onSaved) onSaved(key);
     }
-  }, { side: true, onClose: () => { if (stopJobs) stopJobs(); } });
+  }, { side: true, guard: true, onClose: () => { if (stopJobs) stopJobs(); } });   // guard：書いたあとに閉じるときは「閉じますか？」（11/2）
 }
 
 /* ---------- 見積の画面 ---------- */
@@ -332,9 +332,10 @@ export function quoteHTML(q, ctx) {
       ${ctx.fileBlock}
       <div class="qsups">${sups.map(supCard).join("")}</div>
       ${open ? addSupHTML(q, ui, ctx) : ""}
-      ${open ? (ui.askClose ? `<div class="confirm"><p class="confirm-q">この見積依頼をやめますか？（注文はしません。あとで、もとにもどせます）</p>
+      <button type="button" class="btn big full close-big" data-close>閉じる</button>
+      ${open ? (ui.askClose ? `<div class="confirm cxl"><p class="confirm-q">この見積依頼をやめますか？（注文はしません。あとで、もとにもどせます）</p>
           <div class="confirm-btns"><button type="button" class="btn danger" data-qcloseyes>やめる</button><button type="button" class="btn" data-qcloseno>やめない</button></div></div>`
-        : '<div class="row"><button type="button" class="linkbtn muted" data-qclose>この見積依頼をやめる（注文しない）</button></div>') : ""}
+        : '<div class="cx-low"><button type="button" class="linkbtn" data-qclose>この見積依頼をやめる（注文しない）</button></div>') : ""}
     </div>`;
 }
 

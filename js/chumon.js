@@ -12,7 +12,8 @@ const linesArr = o => Object.values(o.lines || {});
 
 /** 材料屋への注文の文（試作の orderText と同じ形。LINE・メール・FAX）。日報の件名の半角カナは全角にする
  *  info＝事務所の情報（⚙ 設定の「会社・注文書」と「注文する人」の電話番号。/zairyo/officeInfo）{ company, phrases, tels }
- *  - 納入希望日は「○○工場へ最短希望」の形の1行（届け先＋希望日＋希望）。「取りに行く」は今までどおり（希望日＋届け先の文「取りに伺います」）
+ *  - 「納入希望日／最短希望（日付なら 11/5（木）希望）」と「納入場所／届け先の文（⚙ 設定。例 松前工場まで納入お願いいたします・取りに伺います）」に分ける。
+ *    届け先の文が空なら届け先の名前、届け先がなければ納入場所は出さない。「○○さんに連絡済みです」は、その下（11/2 事務員さん）
  *  - 注文者・担当者の名前のうしろに電話番号（入れてある人だけ）。決まり文句は、いちばん下（LINE・メール・FAX ぜんぶ）
  *  - footer：会社の名前・住所など（メールだけ。FAX は印刷の紙の下に別に出す。LINE には出さない）（10/14 持ち主） */
 export function orderText(o, info = {}, { footer = false } = {}) {
@@ -29,10 +30,11 @@ export function orderText(o, info = {}, { footer = false } = {}) {
   const fl = Object.values(o.files || {}).sort((a, b) => (a.at || 0) - (b.at || 0)).map(f => f.name).filter(Boolean);
   if (fl.length) L.push(`※添付ファイル：${fl.join("、")}`);   // 注文につけた注文書・図面（10/15）
   L.push("");
-  const pickup = !o.basho || /^取りに/.test(o.basho);
-  L.push("納入希望日", pickup ? kibouText(o.kibou) : `${o.basho}へ${kibouText(o.kibou)}希望`);
+  // 前は「松前工場へ最短希望」＋届け先の文で、届け先が2回出ていた（11/2 事務員さん）
+  L.push("納入希望日", `${kibouText(o.kibou)}希望`);
+  const place = o.bashoText || o.basho || "";
+  if (place) L.push("納入場所", place);
   if (o.contacted) L.push(`${o.supplierName}さんに連絡済みです`);
-  if (o.bashoText) L.push(o.bashoText);
   L.push("");
   if (o.memo) L.push(o.memo, "");
   L.push("注文者", who(o.chumonsha));

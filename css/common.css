@@ -522,6 +522,18 @@ ul.plain{margin:0;padding-left:1.2em}
 .panel:has(.sheet-foot){scroll-padding-bottom:170px}
 .panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
 .panel-head h2{margin:0;font-size:20px;font-weight:800;line-height:1.35}
+/* 上の見出し（名前と ×）は、下にスクロールしても上に出す（11/2 事務員さん。事務所・現場・材料屋の画面ぜんぶ） */
+.panel .panel-head{position:sticky;top:-16px;z-index:3;background:var(--bg);margin:-16px -18px 0;padding:16px 18px 10px;border-bottom:1px solid var(--line)}
+.sheet.side .panel .panel-head{top:calc(-16px - env(safe-area-inset-top,0px));margin-top:calc(-16px - env(safe-area-inset-top,0px));padding-top:calc(env(safe-area-inset-top,0px) + 16px)}
+/* 入力の画面で、書いたあとに閉じるときの「閉じますか？」（11/2） */
+.sheet-ask{position:absolute;inset:0;z-index:30;display:grid;place-items:center;padding:16px;background:var(--scrim)}
+.sheet-ask-box{width:min(400px,100%);display:flex;flex-direction:column;gap:12px;padding:16px;border:1px solid var(--danger);border-radius:14px;background:var(--bg)}
+/* 中身の画面のいちばん下：大きな「閉じる」と、間をあけた小さい「取り消す」（11/2 事務員さん） */
+.close-big{min-height:56px;font-size:17px}
+.cx-low{margin-top:28px;padding-top:14px;border-top:1px dashed var(--line);display:flex;flex-direction:column;align-items:flex-start;gap:4px}
+.cx-low .linkbtn{color:var(--danger);font-size:14px}
+.confirm.cxl{margin-top:28px}
+.oitem .cx-low,.oitem .confirm.cxl{margin-top:8px}
 .x{flex:none;width:44px;height:44px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-size:20px;line-height:1}
 .sheet-foot{position:sticky;bottom:0;z-index:2;background:var(--bg);border-top:1px solid var(--line);margin-inline:-18px;padding:10px 18px calc(env(safe-area-inset-bottom,0px) + 16px);display:flex;flex-direction:column;gap:8px}
 /* 「本当に○○しますか？」：1行目に文字、2行目に大きいボタン2つ */

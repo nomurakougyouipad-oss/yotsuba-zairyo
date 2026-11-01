@@ -30,16 +30,38 @@ export function toast(msg) {
 /* ---------- 下から出る画面（シート） ----------
    openSheet(html, after, { side }) … after(panel) で中身に動きをつける。× や外側を押す・Esc で閉じる
    side: true … 右から出す（事務所のパソコン用。広い画面で、右に高さいっぱい）
-   onClose() … 閉じたとき（×・外側・Esc・closeSheet()。べつの中身に入れかえたときも）に1回だけ呼ぶ */
-let lastFocus = null, onCloseNow = null;
+   onClose() … 閉じたとき（×・外側・Esc・closeSheet()。べつの中身に入れかえたときも）に1回だけ呼ぶ
+   guard … 入力の画面（11/2 持ち主）。何か書いた（入力・えらぶ・ファイル）あとに ×・やめる・Esc・外側で閉じるときは
+           「書いたものが消えます。閉じますか？」と聞く。何も書いていなければ、そのまま閉じる。
+           true＝書いたかどうかを画面が見る。関数＝その答えが true のときだけ聞く。guardText＝聞く文（なければ上の文）
+           保存したあとの closeSheet() は、聞かずに閉じる */
+let lastFocus = null, onCloseNow = null, guardNow = null, dirtyNow = false;
 function runOnClose() {
   const f = onCloseNow;
   onCloseNow = null;
   if (f) { try { f(); } catch (err) { } }
 }
+/** 「閉じますか？」をしまう */
+function dropAsk(sh) {
+  const a = sh && sh.querySelector(".sheet-ask");
+  if (a) a.remove();
+}
+/** ×・やめる・Esc・外側で閉じるとき：入力の画面で何か書いてあれば、先に聞く */
+function askClose(sh) {
+  if (!guardNow || !guardNow.test()) { closeSheet(); return; }
+  if (sh.querySelector(".sheet-ask")) return;
+  const a = document.createElement("div");
+  a.className = "sheet-ask";
+  a.innerHTML = `<div class="sheet-ask-box" role="alertdialog" aria-modal="true" aria-labelledby="askQ"><p class="confirm-q" id="askQ">${esc(guardNow.text)}</p>
+    <div class="confirm-btns"><button type="button" class="btn danger" data-askyes>閉じる</button><button type="button" class="btn" data-askno>閉じない</button></div></div>`;
+  sh.append(a);
+  a.querySelector("[data-askno]").focus();
+}
 export function openSheet(html, after, opts = {}) {
   runOnClose();
   onCloseNow = opts.onClose || null;
+  dirtyNow = false;
+  guardNow = opts.guard ? { test: typeof opts.guard === "function" ? opts.guard : () => dirtyNow, text: opts.guardText || "書いたものが消えます。閉じますか？" } : null;
   let sh = document.getElementById("sheet");
   if (!sh) {
     sh = document.createElement("div");
@@ -48,9 +70,28 @@ export function openSheet(html, after, opts = {}) {
     sh.hidden = true;
     sh.innerHTML = '<div class="sheet-bg" data-close></div><div class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="panelTitle"></div>';
     document.body.append(sh);
-    sh.addEventListener("click", e => { if (e.target.closest("[data-close]")) closeSheet(); });
-    document.addEventListener("keydown", e => { if (e.key === "Escape" && !sh.hidden) closeSheet(); });
+    sh.addEventListener("click", e => {
+      const a = sh.querySelector(".sheet-ask");
+      if (a) {   // 「閉じますか？」が出ているあいだ
+        if (e.target.closest("[data-askyes]")) closeSheet();
+        else if (e.target.closest("[data-askno]") || e.target === a) { dropAsk(sh); sh.querySelector("#panel").focus(); }
+        return;
+      }
+      if (e.target.closest("[data-close]")) askClose(sh);
+    });
+    document.addEventListener("keydown", e => {
+      if (e.key !== "Escape" || sh.hidden) return;
+      if (sh.querySelector(".sheet-ask")) dropAsk(sh);   // 聞いているときの Esc は「閉じない」
+      else askClose(sh);
+    });
+    // 書いたかどうか（人が書いた・えらんだときだけ。プログラムが入れた字は数えない）
+    const p0 = sh.querySelector("#panel");
+    p0.tabIndex = -1;
+    const mark = e => { if (e.isTrusted) dirtyNow = true; };
+    for (const ev of ["input", "change", "drop"]) p0.addEventListener(ev, mark, true);
+    p0.addEventListener("click", e => { if (e.isTrusted && e.target.closest("button[aria-pressed]")) dirtyNow = true; }, true);
   }
+  dropAsk(sh);
   if (sh.hidden) lastFocus = document.activeElement;
   sh.classList.toggle("side", !!opts.side);
   const p = sh.querySelector("#panel");
@@ -66,6 +107,9 @@ export function closeSheet() {
   const sh = document.getElementById("sheet");
   if (!sh || sh.hidden) return;
   runOnClose();
+  dropAsk(sh);
+  guardNow = null;
+  dirtyNow = false;
   sh.hidden = true;
   sh.querySelector("#panel").innerHTML = "";
   document.body.style.overflow = "";

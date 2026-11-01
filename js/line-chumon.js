@@ -360,6 +360,7 @@ export function openLineOrder({ sups, places, catalog, me, onPlaced }) {
     preview();
   }, {
     side: true,
+    guard: true,   // 書いたあとに閉じるときは「閉じますか？」（11/2）
     onClose: () => {
       if (stopJobs) stopJobs();
       if (!saved) photos.forEach(deletePhoto);   // 入れずに閉じたら、つけた写真は消す

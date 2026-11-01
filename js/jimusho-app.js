@@ -534,6 +534,7 @@ export function startOfficeApp(main, me) {
         </div>
         ${cx ? "" : `<div class="block" id="groupsBox">${groupsHTML(r)}</div>`}
         ${os.length ? `<div class="block"><h3>この依頼から注文したもの</h3><div class="olist">${os.map(orderItemHTML).join("")}</div></div>` : ""}
+        <button type="button" class="btn big full close-big" data-close>閉じる</button>
       </div>`;
   }
 
@@ -591,8 +592,8 @@ export function startOfficeApp(main, me) {
         <ul class="g-lines">${Object.values(o.lines || {}).map(l => `<li>${esc(lineText(l))}</li>`).join("")}</ul>
         ${cx ? `<p class="muted">取り消した（${o.cancelledAt ? `${md(o.cancelledAt)} ${hm(o.cancelledAt)}・` : ""}${esc(o.cancelledBy || "")}）。品物は依頼にもどしました。</p>`
           : o.status === "wait" ? `
-            <div class="cx-start" id="ocx-${esc(o.id)}">
-              <button type="button" class="btn danger" data-ocancel="${esc(o.id)}">注文を取り消して依頼にもどす</button>
+            <div class="cx-low" id="ocx-${esc(o.id)}">
+              <button type="button" class="linkbtn" data-ocancel="${esc(o.id)}">注文を取り消して依頼にもどす</button>
               <span class="hint">押しまちがえたときや、材料屋を変えたいときに。材料屋に連絡したあとなら、材料屋にも取り消しを伝えてください。</span>
             </div>` : ""}
       </div>`;
@@ -659,7 +660,7 @@ export function startOfficeApp(main, me) {
       afterSave(w);
     } else if (d.ocancel) {
       const box = w.querySelector(`#ocx-${CSS.escape(d.ocancel)}`);
-      box.className = "confirm";
+      box.className = "confirm cxl";
       box.innerHTML = `<p class="confirm-q">この注文を取り消して、品物を依頼にもどしますか？</p>
         <div class="confirm-btns"><button type="button" class="btn danger" data-ocyes="${esc(d.ocancel)}">取り消す</button><button type="button" class="btn" data-ocno>やめる</button></div>`;
       box.scrollIntoView({ block: "nearest" });
@@ -809,9 +810,10 @@ export function startOfficeApp(main, me) {
         </dl></div>
         ${o.src ? `<details class="block hidbox"><summary>LINE の元の文</summary><pre class="src-text">${esc(o.src)}</pre></details>` : ""}
         ${unsent || appPending ? "" : sendArea}
+        <button type="button" class="btn big full close-big" data-close>閉じる</button>
         ${o.status === "wait" ? `
-          <div class="cx-start" id="ocx-${esc(o.id)}">
-            <button type="button" class="btn danger" data-ocancel="${esc(o.id)}">${o.reqId ? "注文を取り消して依頼にもどす" : "注文を取り消す"}</button>
+          <div class="cx-low" id="ocx-${esc(o.id)}">
+            <button type="button" class="linkbtn" data-ocancel="${esc(o.id)}">${o.reqId ? "注文を取り消して依頼にもどす" : "注文を取り消す"}</button>
             <span class="hint">押しまちがえたときや、材料屋を変えたいときに。材料屋に連絡したあとなら、材料屋にも取り消しを伝えてください。</span>
           </div>` : ""}
       </div>`;
@@ -970,7 +972,7 @@ export function startOfficeApp(main, me) {
       await copyOrSend(o, d.osend ? st.sups[o.supplier] : null, w.querySelector("#oCopyFb"), st.info);
     } else if (d.ocancel) {
       const box = w.querySelector(`#ocx-${CSS.escape(d.ocancel)}`);
-      box.className = "confirm";
+      box.className = "confirm cxl";
       box.innerHTML = `<p class="confirm-q">${o.reqId ? "この注文を取り消して、品物を依頼にもどしますか？" : "この注文を取り消しますか？（消さずに「取り消した」の印で残します）"}</p>
         <div class="confirm-btns"><button type="button" class="btn danger" data-ocyes="${esc(d.ocancel)}">取り消す</button><button type="button" class="btn" data-ocno>やめる</button></div>`;
       box.scrollIntoView({ block: "nearest" });

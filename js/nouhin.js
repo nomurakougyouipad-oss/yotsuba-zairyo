@@ -619,5 +619,10 @@ export function openImport({ sups, getOrders, me }) {
       document.body.appendChild(d);
     }
     render();
-  }, { side: true, onClose: () => { if (stopJobs) stopJobs(); if (closeLog) closeLog(); } });
+  }, {
+    side: true, onClose: () => { if (stopJobs) stopJobs(); if (closeLog) closeLog(); },
+    // まだ入れていない納品書（読んでいるもの・「入れない」でない読んだもの）や、はりつけた表があれば、閉じる前に聞く（11/2）
+    guard: () => cards.some(c => c.status === "reading" || c.groups.some(gr => !gr.saved && gr.dest !== "skip")) || !!(document.querySelector("#impPaste") || {}).value,
+    guardText: "まだ入れていない納品書があります。閉じると、読みとったものが消えます。閉じますか？",
+  });
 }
