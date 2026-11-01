@@ -18,6 +18,8 @@ export { zairyoBackup } from "./backup.js";
 export { zairyoAi } from "./ai.js";
 // プッシュ通知（現場から新しい依頼・ためしの通知）は notify.js（10/14）。材料屋のアプリの知らせ（zairyoNotifyOrder）も（2-6）
 export { zairyoNotifyRequest, zairyoNotifyTest, zairyoNotifyOrder } from "./notify.js";
+// 預かり（11/2 シンプル版）：注文が「届いた」になったら、預かりの残りをへらす（zairyoAzukariUse）は azukari.js
+export { zairyoAzukariUse } from "./azukari.js";
 
 setGlobalOptions({ region: "asia-southeast1", maxInstances: 3, memory: "256MiB", timeoutSeconds: 30 });
 initializeApp();

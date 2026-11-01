@@ -11,7 +11,7 @@ import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet } from "./common.js";
 import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
-import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany } from "./chumon.js";
+import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany, azkText } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel, shopOf, pageLink, SHOPS } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
@@ -22,6 +22,7 @@ import { fileBlockHTML, wireFiles, filesOf, downloadFiles } from "./fairu.js";
 import { openKakouOrder } from "./kakou.js";
 import { slipFormHTML, wireSlipForm, readSlipForm, slipRowText } from "./kingaku.js";
 import { quoteState, isOpenQuote, quoteCard, openQuoteForm, quoteHTML, wireQuote, qLines } from "./mitsumori.js";
+import { openAzukari, azItems, lineSpec } from "./azukari.js";
 
 /** 一覧・注文の画面の小さい印（加工品・見積から。10/15） */
 const KIND_TAG = { kakou: "加工品", mekki: "めっき", mitsumori: "見積から", nouhin: "納品書から" };   // nouhin＝納品書の取りこみで作った注文（アプリで注文していない。10/30）
@@ -180,6 +181,7 @@ export function startOfficeApp(main, me) {
           <button type="button" role="tab" data-view="mitsu">見積</button>
         </div>
         <input id="q" class="inp search" type="search" placeholder="注番・件名・品名・人でさがす" aria-label="さがす" autocomplete="off">
+        <button type="button" class="btn" id="azBtn" hidden>預かり</button>
         <button type="button" class="btn" id="setBtn">⚙ 設定</button>
       </div>
       <div id="filterNote" class="filter-note" hidden></div>
@@ -336,7 +338,7 @@ export function startOfficeApp(main, me) {
         <div class="card-head"><span class="sup">${esc(o.supplierName)}${kindTag(o)}</span>
           ${nr ? "" : `<span class="ochip${o.status === "wait" ? " solid" : o.status === "arrived" ? " blue" : ""}">${unsent ? "まだ送っていない" : s.chip}</span>`}</div>
         <div class="kouji"><span class="chuban">${esc(o.chuban)}</span><span class="kenmei">${esc(zenkana(o.kenmei))}</span></div>
-        <div class="items">${esc(Object.values(o.lines || {}).map(lineText).join("\n"))}</div>
+        <div class="items">${esc(Object.values(o.lines || {}).map(l => lineText(l) + azkText(l)).join("\n"))}</div>
         <dl class="meta">
           <div><dt>希望日</dt><dd${late ? ' class="late"' : ""}>${esc(kibouText(o.kibou))}${late ? "（すぎています）" : ""}</dd></div>
           <div><dt>届け先</dt><dd>${esc(o.basho || "—")}</dd></div>
@@ -538,6 +540,61 @@ export function startOfficeApp(main, me) {
       </div>`;
   }
 
+  /* ---------- 預かり（11/2 シンプル版。台帳は js/azukari.js） ---------- */
+  const azOn = sid => !!(st.sups && st.sups[sid] && st.sups[sid].azukari);
+  /** ほかのまだ届いていない注文で「預かりから」にしている数（その預かりの品物ぶん） */
+  const azPlanned = (sid, iid, exceptId = "") => (st.orders || []).filter(o => o.supplier === sid && o.status === "wait" && o.id !== exceptId)
+    .reduce((t, o) => t + Object.values(o.lines || {}).filter(l => l.azk === iid && l.azkQty > 0 && !l.azkDone).reduce((u, l) => u + Number(l.azkQty), 0), 0);
+  /** その材料屋の預かりに、この品物があるか → { iid, x, planned（ほかの注文で使う予定）, avail（それをひいた残り） } か null
+   *  品名・単位が同じもの。もう「預かりから」にしてある品物は、その預かりの品物 */
+  function azMatch(sid, l, exceptId = "") {
+    if (!azOn(sid) || !l) return null;
+    const items = ((st.az || {})[sid] || {}).items || {}, full = lineSpec(l);
+    const hit = l.azk && items[l.azk] ? [l.azk, items[l.azk]] : azItems((st.az || {})[sid]).find(([, x]) => x.unit === l.unit && (x.spec === full || x.spec === l.spec));
+    if (!hit) return null;
+    const planned = azPlanned(sid, hit[0], exceptId);
+    return { iid: hit[0], x: hit[1], planned, avail: Math.max(0, Number(hit[1].qty) - planned) };
+  }
+  const azLeftText = m => "預かりにあり（残り " + fmtQty(m.avail) + m.x.unit + (m.planned ? "・ほかの注文で " + fmtQty(m.planned) + m.x.unit + " 使う予定" : "") + "）";
+  const azRestText = (l, q) => (q > Number(l.qty) ? "注文の数（" + fmtQty(l.qty) + l.unit + "）より多いです" : Number(l.qty) - q > 0 ? "のこり " + fmtQty(Number(l.qty) - q) + l.unit + "は 新しく用意" : "（全部 預かりから）");
+  const azNum = v => { const n = parseFloat(String(v ?? "").normalize("NFKC").replace(/[,，\s]/g, "")); return Number.isFinite(n) ? n : null; };
+  const azKey = (r, id) => r.id + "/" + id;
+  /** 依頼から注文するときの「預かりにあり（残り○本）」＋「預かりから」＋数の欄 */
+  function azRowHTML(r, sid, id) {
+    const l = r.lines[id], m = azMatch(sid, l);
+    if (!m || m.avail <= 0) return "";
+    const q = (st.azWant || {})[azKey(r, id)], on = q != null;
+    return ` <span class="tag az-tag">${esc(azLeftText(m))}</span>
+      <div class="azrow"><button type="button" class="btn az-want" data-azw="${esc(id)}" aria-pressed="${on}">${on ? "✓ 預かりから" : "預かりから"}</button>
+        ${on ? `<input class="inp az-q" data-azq="${esc(id)}" inputmode="decimal" value="${esc(fmtQty(q))}" aria-label="預かりから出す数"><span>${esc(l.unit)}</span>
+          <span class="hint" data-azrest="${esc(id)}">${esc(azRestText(l, q))}</span>` : ""}</div>`;
+  }
+  /** 「預かりから」の数のたしかめ → まちがいの文か "" */
+  function azErr(l, q, m) {
+    if (!(q > 0)) return l.spec + "：預かりから出す数を入れてください";
+    if (q > Number(l.qty)) return l.spec + "：預かりから出す数が、注文の数（" + fmtQty(l.qty) + l.unit + "）より多いです";
+    if (!m || q > m.avail) return l.spec + "：預かりの残り（" + (m ? fmtQty(m.avail) : 0) + l.unit + "）より多いです";
+    return "";
+  }
+
+  /** 注文の中身の品物の行の「預かりから」（11/2）：まだ届いていない注文で、預かりを使う材料屋のときだけ。届くまで、押す・外す・数を直すができる */
+  function oAzHTML(o, lid, l) {
+    if (o.status !== "wait" || !azOn(o.supplier) || l.azkDone) return "";
+    const m = azMatch(o.supplier, l, o.id), set = l.azkQty > 0;
+    if (!set && (!m || m.avail <= 0)) return "";
+    if (st.oazEdit === o.id + "/" + lid) {
+      const q = st.oazVal ?? (set ? Number(l.azkQty) : Math.min(Number(l.qty), m.avail));
+      return `${m ? `<div class="azrow"><span class="tag az-tag">${esc(azLeftText(m))}</span></div>` : ""}
+        <div class="azrow"><span>預かりから</span><input class="inp az-q" data-oazq="${esc(lid)}" inputmode="decimal" value="${esc(fmtQty(q))}" aria-label="預かりから出す数"><span>${esc(l.unit)}</span>
+          <span class="hint" data-oazrest>${esc(azRestText(l, q))}</span></div>
+        <div class="row"><button type="button" class="btn primary" data-oazsave="${esc(lid)}">この数にする</button>
+          ${set ? `<button type="button" class="btn" data-oazoff="${esc(lid)}">預かりから外す</button>` : ""}
+          <button type="button" class="btn" data-oazno>やめる</button></div>`;
+    }
+    return set ? ` <div class="azrow"><span class="tag az-tag">預かりから ${esc(fmtQty(l.azkQty))}${esc(l.unit)}</span><button type="button" class="linkbtn" data-oaz="${esc(lid)}">直す・外す</button></div>`
+      : ` <span class="tag az-tag">${esc(azLeftText(m))}</span> <div class="azrow"><button type="button" class="btn az-want" data-oaz="${esc(lid)}">預かりから</button></div>`;
+  }
+
   function groupsHTML(r) {
     const { groups, none } = groupsOf(r);
     let h = "<h3>2. 材料屋ごとに注文する</h3>";
@@ -557,7 +614,7 @@ export function startOfficeApp(main, me) {
           <div class="group">
             <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">材料屋のアプリ</span><span class="hint g-n">${ids.length}点</span></div>
             <ul class="g-lines">${ids.map(id => { const l = r.lines[id], n = Object.keys(l.photos || {}).length;
-              return `<li>${esc(lineText(l))}${n ? ` <span class="tag">写真${n}枚</span>` : ""}${l.link ? ` <span class="tag">リンクつき</span>` : ""}</li>`; }).join("")}</ul>
+              return `<li>${esc(lineText(l))}${n ? ` <span class="tag">写真${n}枚</span>` : ""}${l.link ? ` <span class="tag">リンクつき</span>` : ""}${azRowHTML(r, sid, id)}</li>`; }).join("")}</ul>
             <div class="row"><button type="button" class="btn primary" data-gapp="${esc(sid)}">アプリに送る（注文する）</button>
               <button type="button" class="btn" data-gcopy="${esc(sid)}">注文の文をコピー</button></div>
             <div class="field" data-gfb="${esc(sid)}" hidden><p class="send-note" role="status" hidden></p><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
@@ -568,7 +625,7 @@ export function startOfficeApp(main, me) {
           <div class="group">
             <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">${esc(s.to || "御中")}</span><span class="hint g-n">${ids.length}点</span></div>
             <ul class="g-lines">${ids.map(id => { const l = r.lines[id], n = Object.keys(l.photos || {}).length;
-              return `<li>${esc(lineText(l))}${n ? ` <span class="tag">写真${n}枚は別に送る</span>` : ""}${l.link ? ` <span class="tag">リンクつき</span>` : ""}</li>`; }).join("")}</ul>
+              return `<li>${esc(lineText(l))}${n ? ` <span class="tag">写真${n}枚は別に送る</span>` : ""}${l.link ? ` <span class="tag">リンクつき</span>` : ""}${azRowHTML(r, sid, id)}</li>`; }).join("")}</ul>
             <div class="row"><button type="button" class="btn" data-gcopy="${esc(sid)}">注文の文をコピー</button>
               ${sendLabel(s) ? `<button type="button" class="btn" data-gsend="${esc(sid)}">${sendLabel(s)}</button>` : ""}
               <button type="button" class="btn primary" data-gorder="${esc(sid)}">注文した</button></div>
@@ -589,7 +646,7 @@ export function startOfficeApp(main, me) {
       <div class="oitem${cx ? " cx" : ""}">
         <div class="oi-head"><b>${esc(o.supplierName)}</b>
           <span class="muted">${md(o.orderedAt)} ${hm(o.orderedAt)} 注文（${esc(o.orderedBy || "")}）</span></div>
-        <ul class="g-lines">${Object.values(o.lines || {}).map(l => `<li>${esc(lineText(l))}</li>`).join("")}</ul>
+        <ul class="g-lines">${Object.values(o.lines || {}).map(l => `<li>${esc(lineText(l) + azkText(l))}</li>`).join("")}</ul>
         ${cx ? `<p class="muted">取り消した（${o.cancelledAt ? `${md(o.cancelledAt)} ${hm(o.cancelledAt)}・` : ""}${esc(o.cancelledBy || "")}）。品物は依頼にもどしました。</p>`
           : o.status === "wait" ? `
             <div class="cx-low" id="ocx-${esc(o.id)}">
@@ -619,29 +676,65 @@ export function startOfficeApp(main, me) {
         if (gb) gb.innerHTML = groupsHTML(r);
       });
       w.addEventListener("click", e => onPanelClick(e, w).catch(ex => toast(errorText(ex))));
+      // 預かりから出す数（11/2）：入れたら「のこり○本は新しく用意」を合わせる（かきなおさない）
+      w.addEventListener("input", e => {
+        const q = e.target.closest("[data-azq]");
+        if (!q) return;
+        const id = q.dataset.azq, l = r.lines[id], n = azNum(q.value);
+        st.azWant[azKey(r, id)] = n ?? 0;
+        const h = w.querySelector('[data-azrest="' + CSS.escape(id) + '"]');
+        if (h) h.textContent = azRestText(l, n ?? 0);
+      });
     }, { side: true });
   }
 
   /** 中身の画面で押したとき */
   async function onPanelClick(e, w) {
-    const t = e.target.closest("[data-redit],[data-gcopy],[data-gsend],[data-gorder],[data-gapp],[data-ocancel],[data-ocyes],[data-ocno],[data-chuban]");
+    const t = e.target.closest("[data-redit],[data-gcopy],[data-gsend],[data-gorder],[data-gapp],[data-ocancel],[data-ocyes],[data-ocno],[data-chuban],[data-azw]");
     if (!t || t.disabled) return;
     const r = (st.reqs || []).find(x => x.id === st.openId);
     if (!r) return;
     const d = t.dataset;
     if (d.chuban) return copyChuban(d.chuban);   // ネットで買う（10/15）
+    if (d.azw) {   // 預かりから（11/2）：押すたびに切りかえる。数は、注文の数と預かりの残りの少ないほう（直せる）
+      const k = azKey(r, d.azw), l = r.lines[d.azw];
+      st.azWant = st.azWant || {};
+      if (st.azWant[k] != null) delete st.azWant[k];
+      else { const m = azMatch(picksOf(r)[d.azw], l); st.azWant[k] = m ? Math.min(Number(l.qty), m.avail) : 0; }
+      const gb = w.querySelector("#groupsBox");
+      if (gb) gb.innerHTML = groupsHTML(r);
+      return;
+    }
     if ("redit" in d) {   // 依頼を直す（10/14）
       return openReqEdit({ r, orders: ordersOf(r.id), places: st.places, units: unitsList(), me, onDone: () => openReq(r.id) });
     }
     const draftFor = sid => {
       const g = groupsOf(r).groups.find(([s]) => s === sid);
-      return g ? draftOrder(r, sid, st.sups[sid], g[1], bashoText(r)) : null;
+      if (!g) return null;
+      const az = {};   // 預かりから（11/2）
+      for (const id of g[1]) {
+        const q = (st.azWant || {})[azKey(r, id)], m = q != null ? azMatch(sid, r.lines[id]) : null;
+        if (m && q > 0) az[id] = { iid: m.iid, qty: Math.min(q, Number(r.lines[id].qty)) };
+      }
+      return draftOrder(r, sid, st.sups[sid], g[1], bashoText(r), az);
+    };
+    const azCheck = sid => {   // 預かりから出す数が、注文の数・預かりの残りより多くないか（11/2）
+      const g = groupsOf(r).groups.find(([s]) => s === sid);
+      for (const id of (g ? g[1] : [])) {
+        const q = (st.azWant || {})[azKey(r, id)];
+        if (q == null) continue;
+        const e = azErr(r.lines[id], q, azMatch(sid, r.lines[id]));
+        if (e) return e;
+      }
+      return "";
     };
     if (d.gcopy || d.gsend) {
       const sid = d.gcopy || d.gsend, dr = draftFor(sid);
       if (!dr) return;
       await copyOrSend(dr, d.gsend ? st.sups[sid] : null, w.querySelector(`[data-gfb="${CSS.escape(sid)}"]`), st.info);
     } else if (d.gorder || d.gapp) {
+      const ae = azCheck(d.gorder || d.gapp);
+      if (ae) { toast(ae); return; }
       const dr0 = draftFor(d.gorder || d.gapp);
       if (!dr0) return;
       // アプリに送る（2-2）：注文に、アプリに送った印もつける
@@ -787,7 +880,7 @@ export function startOfficeApp(main, me) {
         ${cx ? "" : `<div class="block"><ol class="steps" style="--c:${s.color}">${steps.map(([l, d, done]) => `<li class="${done ? "done" : ""}">${l}<span class="d">${done && d ? md(d) : ""}</span></li>`).join("")}</ol></div>`}
         ${act}
         ${cx ? "" : slipBlockHTML(o)}
-        <div class="block"><h3>品名・数量</h3><ul class="g-lines">${Object.values(o.lines || {}).map(l => `<li>${esc(lineText(l))}</li>`).join("")}</ul>
+        <div class="block"><h3>品名・数量</h3><ul class="g-lines">${Object.entries(o.lines || {}).map(([lid, l]) => `<li>${esc(lineText(l) + azkText(l))}${oAzHTML(o, lid, l)}</li>`).join("")}</ul>
           ${cx ? "" : `<div class="row"><button type="button" class="btn" data-oedit>注文を直す</button></div>`}</div>
         ${fileBlockHTML(o, !cx)}
         ${logHTML(o)}
@@ -888,6 +981,13 @@ export function startOfficeApp(main, me) {
       w.querySelectorAll("[data-slipform]").forEach(box => wireSlipForm(box, () => { box.dataset.dirty = "1"; }));
       w.addEventListener("input", e => {
         if (e.target.id === "amtS") w.querySelector("#eBill").textContent = "";
+        const q = e.target.closest("[data-oazq]");   // 預かりから出す数（11/2）
+        if (q) {
+          const o = (st.orders || []).find(x => x.id === id), l = o && o.lines[q.dataset.oazq], n = azNum(q.value);
+          st.oazVal = n ?? 0;
+          const h = w.querySelector("[data-oazrest]");
+          if (h && l) h.textContent = azRestText(l, n ?? 0);
+        }
       });
       if (focusSel) {
         const f = w.querySelector(focusSel);
@@ -897,7 +997,7 @@ export function startOfficeApp(main, me) {
   }
 
   async function onOrderClick(e, w) {
-    const t = e.target.closest("[data-oquote],[data-oedit],[data-arrive],[data-osent],[data-oapp],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-slipmore],[data-slipfix],[data-slipfixsave],[data-slipfixno],[data-billgo],[data-unbill],[data-chuban]");
+    const t = e.target.closest("[data-oaz],[data-oazsave],[data-oazoff],[data-oazno],[data-oquote],[data-oedit],[data-arrive],[data-osent],[data-oapp],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-slipmore],[data-slipfix],[data-slipfixsave],[data-slipfixno],[data-billgo],[data-unbill],[data-chuban]");
     if (!t || t.disabled) return;
     const d = t.dataset, o = (st.orders || []).find(x => x.id === st.openOrderId);
     if (!o) return;
@@ -918,7 +1018,33 @@ export function startOfficeApp(main, me) {
       if (a && w.contains(a)) a.blur();
       refreshPanel();
     };
-    if (d.oapp) {   // 材料屋のアプリに送る（2-2）
+    if (d.oaz || "oazno" in d) {   // 預かりから（11/2）：数の欄を出す・しまう
+      st.oazEdit = d.oaz ? o.id + "/" + d.oaz : "";
+      st.oazVal = null;
+      openOrder(o.id, true);
+      const q = document.querySelector("#orderWrap [data-oazq]");
+      if (q) { q.focus(); q.select(); }
+      return;
+    }
+    if (d.oazsave || d.oazoff) {   // 預かりから（11/2）：この数にする・外す
+      const lid = d.oazsave || d.oazoff, l = (o.lines || {})[lid], off = !!d.oazoff;
+      if (!l || o.status !== "wait") return;
+      let az = { azk: null, azkQty: null };
+      if (!off) {
+        const q = azNum((w.querySelector("[data-oazq]") || {}).value), m = azMatch(o.supplier, l, o.id), e = azErr(l, q, m);
+        if (e) { toast(e); return; }
+        az = { azk: m.iid, azkQty: q };
+      }
+      const base = "zairyo/orders/" + o.id, upd = {
+        [base + "/lines/" + lid + "/azk"]: az.azk, [base + "/lines/" + lid + "/azkQty"]: az.azkQty,
+        [base + "/log/" + push(ref(db, base + "/log")).key]: { at: serverTimestamp(), by: me.name || "事務所", what: off ? "預かりから外した：" + l.spec : "預かりから：" + l.spec + " " + fmtQty(az.azkQty) + l.unit },
+      };
+      if (o.supState) upd[base + "/supEditedAt"] = serverTimestamp();   // 材料屋のアプリに「事務所が直しました」
+      st.oazEdit = "";
+      st.oazVal = null;
+      await busy("しまっています…", () => update(ref(db), upd));
+      toast(off ? "預かりから外しました" : "預かりからにしました（届いたときに、預かりの残りから自動でへります）");
+    } else if (d.oapp) {   // 材料屋のアプリに送る（2-2）
       await busy("送っています…", () => sendToApp(o, me));
       toast(`${o.supplierName} のアプリに送りました`);
     } else if (d.osent) {   // 加工品：材料屋に送った（10/15）
@@ -1012,7 +1138,7 @@ export function startOfficeApp(main, me) {
               <div class="brow">
                 <label class="b-main"><input type="checkbox" data-bpick="${esc(o.id)}"${bulk.pick[o.id] ? " checked" : ""}>
                   <span><span class="b-top">届いた ${o.arrivedAt ? md(o.arrivedAt) : "—"}・<span class="chuban">${esc(o.chuban)}</span> ${esc(zenkana(o.kenmei))}</span>
-                    <span class="b-items">${esc(Object.values(o.lines || {}).map(lineText).join("／"))}</span></span></label>
+                    <span class="b-items">${esc(Object.values(o.lines || {}).map(l => lineText(l) + azkText(l)).join("／"))}</span></span></label>
                 <div class="yen-in"><input class="inp" data-bamt="${esc(o.id)}" inputmode="numeric" placeholder="金額" value="${esc(bulk.amt[o.id] ?? "")}" aria-label="${esc(o.chuban)} の金額"><span>円</span></div>
               </div>`).join("")}</div>
             <p class="ptotal"><span id="bCount"></span><span class="money" id="bSum"></span><span>円</span></p>
@@ -1133,7 +1259,7 @@ export function startOfficeApp(main, me) {
     if (!sh || sh.hidden) return;
     const a = document.activeElement;
     if (st.openId && document.getElementById("reqWrap")) {
-      if (a && a.closest && a.closest("#reqWrap") && a.matches("select, textarea")) return;   // えらんでいる途中はかきなおさない
+      if (a && a.closest && a.closest("#reqWrap") && a.matches("select, textarea, input")) return;   // えらんでいる・数を入れている途中はかきなおさない
       if (document.querySelector("#reqWrap .confirm")) return;   // 「本当に？」を出している途中はかきなおさない
       openReq(st.openId, true);
     } else if (st.openOrderId && document.getElementById("orderWrap")) {
@@ -1149,11 +1275,26 @@ export function startOfficeApp(main, me) {
     }
   }
 
+  /* ---------- 預かりの台帳（11/2。js/azukari.js）：「預かりを使う」の材料屋がいるときだけ「預かり」のボタン ---------- */
+  const azSups = () => Object.entries(st.sups || {}).filter(([, s]) => s && s.azukari && !s.hidden).sort(byOrder);
+  function drawAzBtn() {
+    const b = $("#azBtn", main);
+    if (b) b.hidden = !azSups().length;
+  }
+  function openAz() {
+    const list = azSups(), go = ([id, s]) => openAzukari({ sup: id, supName: s.name, role: "office", by: me.name || "事務所", catalog: st.catalog });
+    if (list.length === 1) return go(list[0]);
+    openSheet(`<div class="pw" id="azPick"><div class="panel-head"><div><h2 id="panelTitle">預かり：材料屋をえらぶ</h2></div><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
+      <div class="stack">${list.map(([id, s]) => `<button type="button" class="btn big" data-azsup="${esc(id)}">${esc(s.name)}</button>`).join("")}</div></div>`, p => {
+      p.querySelector("#azPick").addEventListener("click", e => { const b = e.target.closest("[data-azsup]"); if (b) go(list.find(([id]) => id === b.dataset.azsup)); });
+    }, { side: true });
+  }
+
   /* ---------- 押したとき（一覧） ---------- */
   main.addEventListener("click", e => {
     // カードの中の「取り消し」のたしかめの所（理由の欄など）は、押してもカードを開かない
     if (e.target.closest(".rcx-box") && !e.target.closest("[data-rcxyes],[data-rcxno],[data-rrsyes]")) return;
-    const t = e.target.closest("[data-rcx],[data-rcxyes],[data-rcxno],[data-rcxseen],[data-rrs],[data-rrsyes],[data-newbox],[data-mitsubox],[data-filter],[data-src],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],[data-quote],#billBtn,#lineBtn,#kakouBtn,#mitsuBtn,#impBtn,#setBtn,#setBack,#clearQ");
+    const t = e.target.closest("[data-rcx],[data-rcxyes],[data-rcxno],[data-rcxseen],[data-rrs],[data-rrsyes],[data-newbox],[data-mitsubox],[data-filter],[data-src],[data-view],[data-next],[data-bill],[data-kouji],[data-reqopen],[data-req],[data-open],[data-quote],#billBtn,#lineBtn,#kakouBtn,#mitsuBtn,#impBtn,#azBtn,#setBtn,#setBack,#clearQ");
     if (!t || t.disabled) return;
     const d = t.dataset;
     if (d.rcx || d.rrs || "rcxno" in d) {
@@ -1197,6 +1338,7 @@ export function startOfficeApp(main, me) {
     else if (t.id === "lineBtn") {
       openLineOrder({ sups: st.sups, places: st.places, catalog: st.catalog, me, onPlaced: id => { st.view = "orders"; st.filter = "all"; st.src = ""; draw(); openOrder(id); } });
     }
+    else if (t.id === "azBtn") openAz();   // 預かりの台帳（11/2）
     else if (t.id === "setBtn") showSettings(true);
     else if (t.id === "setBack") showSettings(false);
     else if (t.id === "clearQ") { st.q = ""; st.filter = "all"; st.src = ""; $("#q", main).value = ""; draw(); }
@@ -1240,7 +1382,9 @@ export function startOfficeApp(main, me) {
     refreshPanel();
   }, ex => { st.quotes = []; toast("見積を読めませんでした（" + errorText(ex) + "）"); });
   onValue(ref(db, "zairyo/master/catalog"), s => { st.catalog = normCatalog(s.val()); });
-  onValue(ref(db, "zairyo/master/suppliers"), s => { st.sups = s.val() || {}; refreshPanel(); });
+  onValue(ref(db, "zairyo/master/suppliers"), s => { st.sups = s.val() || {}; refreshPanel(); drawAzBtn(); });
+  // 預かり（11/2）：注文するときの「預かりにあり（残り○本）」に使う
+  onValue(ref(db, "zairyo/azukari"), s => { st.az = s.val() || {}; refreshPanel(); }, () => { st.az = {}; });
   onValue(ref(db, "zairyo/master/places"), s => { st.places = s.val() || {}; });
   // ⚙ 設定の「会社・注文書」と、注文する人の電話番号（事務所だけ読める。注文の文・FAX に入れる。10/14）
   st.info = {};

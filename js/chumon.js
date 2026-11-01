@@ -5,10 +5,13 @@
 import { ref, push, get, update, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, auth } from "./firebase.js";
 import { zenkana } from "./common.js";
-import { lineText, kibouText } from "./tanomu.js";
+import { lineText, kibouText, fmtQty } from "./tanomu.js";
 import { attachOf } from "./shashin.js";
 
 const linesArr = o => Object.values(o.lines || {});
+/** 預かり（11/2 シンプル版）：事務所が「預かりから」とした数（azk＝預かりの品物の番号・azkQty＝預かりから出す数）。
+ *  全部なら「（預かりより）」、一部なら「（うち5本は預かりより）」。注文の文・事務所の一覧・金額の欄に出す */
+export const azkText = l => (!l || !(l.azkQty > 0) ? "" : l.azkQty >= l.qty ? "（預かりより）" : `（うち${fmtQty(l.azkQty)}${l.unit}は預かりより）`);
 
 /** 材料屋への注文の文（試作の orderText と同じ形。LINE・メール・FAX）。日報の件名の半角カナは全角にする
  *  info＝事務所の情報（⚙ 設定の「会社・注文書」と「注文する人」の電話番号。/zairyo/officeInfo）{ company, phrases, tels }
@@ -23,7 +26,7 @@ export function orderText(o, info = {}, { footer = false } = {}) {
   L.push(`注文先　${o.supplierName}　${o.to || "御中"}`, "");
   L.push(`工事件名　${zenkana(o.kenmei || "")}`);
   L.push(`注文番号　${o.chuban}`, "");
-  L.push("品名", ...linesArr(o).map(lineText));
+  L.push("品名", ...linesArr(o).map(l => lineText(l) + azkText(l)));   // 預かりから（11/2）は「（預かりより）」
   const at = attachOf(o.lines);
   at.links.forEach(h => L.push("参考：" + h));
   if (at.photos.length) L.push("※品物の写真を別に送ります");
@@ -85,13 +88,14 @@ export function sendUrl(sup, o, info = {}) {
 export const sendLabel = sup => (sup && sup.send === "mail" ? "メールで送る" : sup && sup.send === "line" ? "LINE で送る" : sup && sup.send === "fax" ? "FAX 用に印刷" : "");
 
 /** 依頼のうち、材料屋（supId）にたのむ品物（lineIds）で、注文の形を作る（まだしまわない。文のコピーにも使う） */
-export function draftOrder(r, supId, sup, lineIds, bashoText) {
+export function draftOrder(r, supId, sup, lineIds, bashoText, az = {}) {   // az＝{品物の番号: {iid, qty}}（事務所が「預かりから」とした。11/2）
   const lines = {};
   for (const id of lineIds) {
     const l = r.lines[id];
     lines[id] = { key: l.key || "", cat: l.cat || "", name: l.name || "", vals: l.vals || {}, spec: l.spec, note: l.note || "", qty: l.qty, unit: l.unit };
     if (l.photos) lines[id].photos = Object.values(l.photos);   // 写真・リンクも注文についていく
     if (l.link) lines[id].link = l.link;
+    if (az[id]) Object.assign(lines[id], { azk: az[id].iid, azkQty: az[id].qty });
   }
   return {
     reqId: r.id, supplier: supId, supplierName: sup.name, to: sup.to || "御中",

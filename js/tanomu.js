@@ -104,9 +104,10 @@ const newUid = () => Date.now().toString(36) + Math.random().toString(36).slice(
 /** 品物をえらんだときの画面。src = なおすカートの行（uid あり）か、前と同じ内容（uid なし）。onSave(行) で返す
  *  draft … 書きかけからもどすときの中身（loadDraft() の kind: "item"）。あると「すてる」を出す
  *  書いている間は、中身をいつも端末にしまう（お店からもどってアプリが開きなおしても、この画面にもどすため） */
-export function openItem(catalog, key, src, onSave, draft = null) {
+export function openItem(catalog, key, src, onSave, draft = null, o = {}) {
+  // o（事務所の預かりの台帳から使うとき。11/2）：label＝下のボタンの名前、noDraft＝書きかけをしまわない、noWeb＝ネットでさがす・写真・リンクを出さない、onCancel＝えらばずに閉じたとき
   const it = catalog.item.get(key);
-  if (!it) { toast("この品物は、もう一覧にありません"); clearDraft(); return; }
+  if (!it) { toast("この品物は、もう一覧にありません"); if (!o.noDraft) clearDraft(); return; }
   const from = draft || src;
   const vals = from ? { ...from.vals } : {};
   // 新しくえらぶときは「はじめからえらんでおくボタン」を入れておく。出さない行の値は消す（10/21）
@@ -115,7 +116,7 @@ export function openItem(catalog, key, src, onSave, draft = null) {
   let shown = new Set(it.free ? [] : it.opts.filter(([k]) => rowShown(it, k, vals)).map(([k]) => k));
   const qty0 = from ? from.qty : 1, unit0 = (from && from.unit) || it.unit, note0 = from ? from.note || "" : "";
   const units = catalog.units.includes(unit0) ? catalog.units : [...catalog.units, unit0];
-  const web = !!(it.free || it.id === "kanamono");   // ネットで探す・写真・リンクをつけられる品物
+  const web = !o.noWeb && !!(it.free || it.id === "kanamono");   // ネットで探す・写真・リンクをつけられる品物
   const photos0 = draft ? [...(draft.photos0 || [])] : src && src.photos ? [...src.photos] : [];   // はじめについていた写真
   const photos = draft ? [...(draft.photos || [])] : [...photos0];
   const link0 = (from && from.link) || "";
@@ -163,7 +164,7 @@ export function openItem(catalog, key, src, onSave, draft = null) {
         <div class="preview"><span class="lab">こう書いて送ります</span><p id="iPrev"></p></div>
         <p class="err" id="iErr" role="alert"></p>
         ${draft ? '<div class="row draft-row"><span class="muted">書きかけの品物です</span><button type="button" class="btn" id="iDrop">すてる</button></div>' : ""}
-        <button type="button" class="btn primary big full" id="addCart">${src && src.uid ? "なおす" : "カートに入れる"}</button>
+        <button type="button" class="btn primary big full" id="addCart">${o.label || (src && src.uid ? "なおす" : "カートに入れる")}</button>
       </div>
     </div>`;
 
@@ -218,7 +219,7 @@ export function openItem(catalog, key, src, onSave, draft = null) {
       keep();
     };
     // 書きかけを端末にしまう（preview は中身がかわるたびに呼ばれるので、そこから呼ぶ）
-    const keep = () => saveDraft({
+    const keep = () => !o.noDraft && saveDraft({
       kind: "item", key, editUid, vals, note: g("#iNote").value, qty: g("#iQty").value, unit: g("#iUnit").value,
       photos, photos0, link: web ? g("#iLink").value : "",
     });
@@ -335,8 +336,9 @@ export function openItem(catalog, key, src, onSave, draft = null) {
   }, {
     // 入れずに閉じたら、この画面でつけた写真（はじめにはなかった写真）は、置き場から消す
     onClose: () => {
-      clearDraft();
+      if (!o.noDraft) clearDraft();
       if (!saved) photos.filter(p => !photos0.includes(p)).forEach(deletePhoto);
+      if (!saved && o.onCancel) setTimeout(o.onCancel, 0);   // えらばずに閉じた（預かりの台帳にもどる）
     },
   });
 }

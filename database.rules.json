@@ -102,6 +102,49 @@
           }
         }
       },
+      "azukari": {
+        ".read": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
+        "$sup": {
+          ".read": "auth != null && ((auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office') || (auth.token.zr_role == 'sup' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'sup' && root.child('zairyo/devices/' + auth.uid + '/sup').val() == auth.token.zr_sup && $sup == auth.token.zr_sup))",
+          "items": {
+            "$iid": {
+              ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
+              ".validate": "$iid.length <= 40 && newData.hasChildren(['spec', 'unit', 'qty', 'at', 'by'])",
+              "spec": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 300" },
+              "key": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "vals": {
+                "$k": { ".validate": "$k.length <= 20 && newData.isString() && newData.val().length <= 200" }
+              },
+              "unit": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 10" },
+              "qty": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 100000" },
+              "at": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
+              "by": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 60" },
+              "$other": { ".validate": false }
+            }
+          },
+          "log": {
+            "$lid": {
+              ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office' && !data.exists()",
+              ".validate": "$lid.length <= 40 && newData.hasChildren(['at', 'by', 'role', 'kind', 'iid', 'spec', 'unit', 'from', 'to'])",
+              "at": { ".validate": "newData.isNumber() && newData.val() == now" },
+              "by": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 60" },
+              "role": { ".validate": "newData.val() == 'office' && auth.token.zr_role == 'office'" },
+              "kind": { ".validate": "newData.isString() && newData.val().matches(/^(add|fix|use)$/)" },
+              "iid": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "spec": { ".validate": "newData.isString() && newData.val().length <= 300" },
+              "unit": { ".validate": "newData.isString() && newData.val().length <= 10" },
+              "from": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 100000" },
+              "to": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 100000" },
+              "reason": { ".validate": "newData.isString() && newData.val().length <= 100" },
+              "orderId": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "chuban": { ".validate": "newData.isString() && newData.val().length <= 10" },
+              "kenmei": { ".validate": "newData.isString() && newData.val().length <= 100" },
+              "$other": { ".validate": false }
+            }
+          },
+          "$other": { ".validate": false }
+        }
+      },
       "master": {
         ".read": "auth != null && (auth.token.zr_role == 'genba' || auth.token.zr_role == 'office') && root.child('zairyo/devices/' + auth.uid + '/role').val() == auth.token.zr_role",
         ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
@@ -119,7 +162,7 @@
             "name": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" },
             "to": { ".validate": "newData.isString() && newData.val().length <= 20" },
             "app": { ".validate": "newData.isBoolean()" },
-            "azukari": { ".validate": "newData.isBoolean()" },
+            "azukari": { ".read": "auth != null && auth.token.zr_role == 'sup' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'sup' && root.child('zairyo/devices/' + auth.uid + '/sup').val() == auth.token.zr_sup && $id == auth.token.zr_sup", ".validate": "newData.isBoolean()" },
             "send": { ".validate": "newData.val() == 'mail' || newData.val() == 'line' || newData.val() == 'fax' || newData.val() == 'net'" },
             "shop": { ".validate": "newData.val() == 'monotaro' || newData.val() == 'misumi' || newData.val() == 'amazon'" },
             "fax": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 20 && newData.val().matches(/^[0-9()+\\- ]+$/)" },
@@ -511,6 +554,9 @@
               "photos": { "$i": { ".validate": "newData.isString() && newData.val().matches(/^zairyo\\/photos\\/[A-Za-z0-9]+\\/[A-Za-z0-9]+\\.jpg$/)" } },
               "link": { ".validate": "newData.isString() && newData.val().length <= 500 && newData.val().matches(/^https?:\\/\\/.+/)" },
               "qprice": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000000" },
+              "azk": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" },
+              "azkQty": { ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= newData.parent().child('qty').val()" },
+              "azkDone": { ".validate": "data.val() == true && newData.val() == true" },
               "$other": { ".validate": false }
             }
           },

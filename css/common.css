@@ -636,6 +636,37 @@ ul.plain{margin:0;padding-left:1.2em}
 .ocard.mark-cx .items{text-decoration:line-through;color:var(--muted)}
 .ocard .nr-note{margin:0}
 .sec-h{margin:4px 0 8px;font-size:15px;color:var(--danger)}
+/* 預かり（11/2 シンプル版。台帳は js/azukari.js） */
+.az-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
+@media (max-width:760px){.az-cols{grid-template-columns:1fr}}
+.azl{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.azl li{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;background:var(--surface)}
+.az-top{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.az-name{font-weight:700;min-width:0;overflow-wrap:anywhere}
+.az-num{font-family:var(--f-num);font-size:26px;font-weight:600;white-space:nowrap}
+.az-num small{font-size:13px;margin-left:2px;font-family:inherit}
+.az-edit{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.az-edit .inp{width:5.5em;text-align:center;font-family:var(--f-num)}
+.az-edit .step{min-width:44px;min-height:44px;font-size:20px;font-weight:800}
+.az-items{display:flex;flex-wrap:wrap;gap:6px}
+.az-qty{width:6em;text-align:right;font-family:var(--f-num)}
+.alog{list-style:none;margin:0;padding:0;font-size:14px;display:flex;flex-direction:column}
+.alog li{display:grid;grid-template-columns:3.6em minmax(0,1fr) auto;gap:8px;padding:7px 0;border-top:1px solid var(--line)}
+.alog li:first-child{border-top:0}
+.alog .d{color:var(--muted)}
+.alog .n{font-family:var(--f-num);font-weight:700;white-space:nowrap}
+.alog .who,.alog .why{font-size:12px;color:var(--muted)}
+.az-open{margin-top:8px}
+.tag.az-tag{color:var(--blue);border-color:var(--blue)}
+.azrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}
+.btn.az-want{min-height:40px;padding:4px 12px;font-size:14px}
+.btn.az-want[aria-pressed="true"]{background:var(--blue);border-color:var(--blue);color:var(--bg)}
+.inp.az-q{width:4.8em;min-height:40px;text-align:center;font-family:var(--f-num)}
+/* 材料屋のアプリ：大きく「預かりから」 */
+.bigaz{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;background:var(--blue);color:var(--bg);font-weight:800;font-size:16px;border-radius:8px;padding:4px 10px;margin-top:6px}
+.ocard .bigaz{font-size:14px;margin:0}
+.newpart{display:inline-block;margin-top:6px;font-weight:700;color:var(--muted);font-size:14px}
+.a-az{display:block;margin-top:2px}
 .bigmark{align-self:flex-start;font-size:16px;font-weight:800;line-height:1.5;padding:2px 12px;border-radius:6px;background:var(--mk);color:var(--bg)}
 .ocard.mark-new .bigmark{color:var(--on-amber)}
 .chg del{color:var(--muted)}

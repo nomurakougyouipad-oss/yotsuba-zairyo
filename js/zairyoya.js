@@ -5,7 +5,7 @@
 //   ホーム画面のアプリを開いてから登録する。そのとき鍵が住所に残っている必要がある）
 // - 2-2：注文を見る（4つのタブ・注文の中身）。2-3：受けました・届ける日・届けました・事務所が直した／取り消した知らせ。2-4：金額を入れる（納品書の金額になる）。2-5：図面・写真のダウンロード。2-6：通知と、新しい・直した・取り消しの印
 import { ref, query, orderByChild, equalTo, onValue, update, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
-import { db, call } from "./firebase.js";
+import { db, call, watchConnected } from "./firebase.js";
 import { $, esc, zenkana, toast, initTheme, registerSW, openSheet } from "./common.js";
 import { whoAmI, registerSup, errorText, isIPhoneBrowser } from "./touroku.js";
 import { lineText, kibouText, fmtQty } from "./tanomu.js";
@@ -13,6 +13,7 @@ import { pushState, enablePush, disablePush, refreshPush, testPush } from "./tsu
 import { yen, slipsOf, supAddSlip, supSeePrice } from "./chumon.js";
 import { slipFormHTML, wireSlipForm, readSlipForm } from "./kingaku.js";
 import { sizeText } from "./fairu.js";
+import { openAzukari } from "./azukari.js";
 import { openPhoto } from "./shashin.js";
 
 initTheme();
@@ -156,8 +157,22 @@ function showHome(me) {
     <section class="card sup-head"><span class="eyebrow">よつば建設工業さまからの注文</span>
       <div class="sup-push" id="supPush"></div>
       <div class="seg sup-tabs" role="tablist" aria-label="注文のようす" id="supTabs"></div></section>
+    <p class="warn" id="supNet" role="status" hidden>サーバーとつながっていません。電波やネットをたしかめてください（つながると、自動でつなぎなおします）。</p>
     <p class="hint" id="supHint"></p>
-    <div id="supList"></div>`;
+    <div id="supList"></div>
+    <div id="supAz"></div>`;
+  // サーバーとつながっているか（10/17）：5秒以上とぎれたら知らせる。とぎれている間はボタンで書かない（画面にだけ出て、届かないため）
+  let online = true, netTimer = 0;
+  watchConnected(on => {
+    online = on;
+    clearTimeout(netTimer);
+    if (on) $("#supNet").hidden = true;
+    else netTimer = setTimeout(() => { $("#supNet").hidden = online; }, 5000);
+  });
+  // 預かり（11/2 シンプル版）：⚙ 設定で「預かりを使う」の材料屋だけ。見るだけ（足す・直すのは事務所）
+  onValue(ref(db, `zairyo/master/suppliers/${me.sup}/azukari`), s => {
+    $("#supAz").innerHTML = s.val() === true ? '<button type="button" class="btn full az-open" data-azopen>預かっている材料を見る（よつば建設工業さまの材料）</button>' : "";
+  }, () => { $("#supAz").innerHTML = ""; });
   const live = () => (orders || []).filter(o => o.supState);   // 事務所が「アプリに送る」を押した注文だけ
   let wantOpen = new URLSearchParams(location.search).get("o") || "";   // 通知を押して開いた注文（2-6）
   /** 通知（2-6）：オフ・オン・使えない */
@@ -231,6 +246,7 @@ function showHome(me) {
     }
     if (act === "ph") { if (t.dataset.url) openPhoto("", t.dataset.url); return; }
     const busy = async (label, upd, msg) => {
+      if (!online) throw new Error("サーバーとつながっていません。電波やネットをたしかめて、もう一度押してください");
       const old = t.textContent;
       t.disabled = true; t.textContent = label;
       try { await (typeof upd === "function" ? upd() : update(ref(db, base), upd)); } catch (ex) { t.disabled = false; t.textContent = old; throw ex; }
@@ -304,6 +320,7 @@ function showHome(me) {
     }
   }
   main.addEventListener("click", async e => {
+    if (e.target.closest("[data-azopen]")) { openAzukari({ sup: me.sup, supName: me.supName || "材料屋", role: "sup" }); return; }   // 預かり（見るだけ。11/2）
     const pb = e.target.closest("[data-push]");
     if (pb) {   // 通知（2-6）
       const act = pb.dataset.push;
@@ -348,6 +365,11 @@ function showHome(me) {
 }
 
 /** 注文のカード（一覧） */
+/** 預かり（11/2）：事務所が「預かりから」にした品物があるか */
+const azOf = o => Object.values(o.lines || {}).some(l => l && l.azkQty > 0);
+/** 品物の行の「預かりから 5本 ＋ 新しく用意 3本」 */
+const azLineHTML = l => (!(l && l.azkQty > 0) ? "" : `<br><span class="bigaz">預かりから ${esc(fmtQty(l.azkQty))}${esc(l.unit)}</span>${Number(l.qty) - l.azkQty > 0 ? ` <span class="newpart">＋ 新しく用意 ${esc(fmtQty(Number(l.qty) - l.azkQty))}${esc(l.unit)}</span>` : ""}`);
+
 function cardHTML(o) {
   const cx = isCx(o);
   const color = cx ? "var(--grey)" : edited(o) ? "var(--amber)" : o.supState === "delivered" ? "var(--blue)" : o.supState === "priced" ? "var(--grey)" : "var(--amber)";
@@ -360,6 +382,7 @@ function cardHTML(o) {
       ${mk ? `<span class="bigmark">${MARK[mk]}</span>` : ""}
       <div class="card-head"><span class="kouji"><span class="chuban">${esc(o.chuban)}</span><span class="kenmei">${esc(zenkana(o.kenmei || ""))}</span></span>
         ${mk ? "" : `<span class="ochip${solid ? " solid" : ""}">${chip}</span>`}</div>
+      ${azOf(o) && !cx ? '<span class="bigaz">預かりから</span>' : ""}
       <div class="items">${esc(Object.values(o.lines || {}).map(lineText).join("\n"))}</div>
       <dl class="meta">
         <div><dt>希望日</dt><dd>${esc(kibouText(o.kibou))}</dd></div>
@@ -401,7 +424,7 @@ function actHTML(o, u) {
       ${u.changeDate ? `${dateIn(o.deliverDate)}<div class="row"><button type="button" class="btn primary" data-act="dateyes">この日に変える</button><button type="button" class="btn" data-act="dateno">やめる</button></div>`
         : u.askDeliver ? `<div class="confirm"><p class="confirm-q">届けましたか？（よつば建設工業の「届いた」にもなります）</p>
           <div class="confirm-btns"><button type="button" class="btn primary" data-act="deliveryes">届けました</button><button type="button" class="btn" data-act="deliverno">やめる</button></div></div>`
-        : `<div class="row"><button type="button" class="btn primary big" data-act="deliver">届けました</button><button type="button" class="btn" data-act="date">${o.deliverDate ? "届ける日を変える" : "届ける日を入れる"}</button></div>`}
+        : `${azOf(o) ? '<p class="hint">「預かりから」の分は、届けると、預かりの残りから自動でへります。</p>' : ""}<div class="row"><button type="button" class="btn primary big" data-act="deliver">届けました</button><button type="button" class="btn" data-act="date">${o.deliverDate ? "届ける日を変える" : "届ける日を入れる"}</button></div>`}
       ${err}</div>`;
   const slipsText = slipsOf(o).map(([, s]) => (s.date ? `${Number(s.date.slice(5, 7))}/${Number(s.date.slice(8))} の納品書` : "納品書")).join("・");
   if (o.supState === "delivered" && hasSlips(o)) return `
@@ -441,7 +464,7 @@ function orderHTML(o, u) {
         <div class="kouji"><span class="kenmei">${hv(o, "kenmei", v => zenkana(v || ""))}</span></div></div>
         <button type="button" class="x" data-close aria-label="閉じる">×</button></div>
       ${actHTML(o, u)}
-      <div class="block"><h3>品名・数量</h3><ul class="g-lines">${Object.entries(o.lines || {}).map(([lid, l]) => { const p = prevOf(o).lines[lid]; return `<li${p ? ' class="chg-line"' : ""}>${lineHTML(l, p)}${photosHTML(o, lid, l)}</li>`; }).join("")}</ul>
+      <div class="block"><h3>品名・数量</h3><ul class="g-lines">${Object.entries(o.lines || {}).map(([lid, l]) => { const p = prevOf(o).lines[lid]; return `<li${p ? ' class="chg-line"' : ""}>${lineHTML(l, p)}${isCx(o) ? "" : azLineHTML(l)}${photosHTML(o, lid, l)}</li>`; }).join("")}</ul>
         ${photos && !isCx(o) ? '<p class="hint">写真を押すと、大きく見られます。</p>' : ""}</div>
       <div class="block"><dl class="dl">
         <dt>希望日</dt><dd>${hv(o, "kibou", kibouText)}</dd>

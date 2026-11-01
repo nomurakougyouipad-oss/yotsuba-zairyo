@@ -4,7 +4,7 @@
 // - はじめに入れておく値：直すときは前の納品書の値。新しく入れるときは見積の単価（qprice）
 import { esc } from "./common.js";
 import { lineText, ymd } from "./tanomu.js";
-import { toPrice, yen } from "./chumon.js";
+import { toPrice, yen, azkText } from "./chumon.js";
 
 const comma = n => (n == null || n === "" ? "" : Number(n).toLocaleString("ja-JP", { maximumFractionDigits: 2 }));
 const round2 = n => Math.round(n * 100) / 100;
@@ -24,7 +24,7 @@ export function slipFormHTML(o, { slip = null, date = "" } = {}) {
         <div class="arow head" aria-hidden="true"><span>品物</span><span>Kg</span><span>¥/kg</span><span>単価</span><span>金額</span></div>
         ${lines.map(([lid, l]) => { const r = rows[lid] || {}, pr = slip ? r.price : l.qprice;
           return `<div class="arow" data-lid="${esc(lid)}" data-qty="${esc(String(l.qty))}">
-          <span class="a-spec">${esc(lineText(l))}</span>
+          <span class="a-spec">${esc(lineText(l) + azkText(l))}${l.azkQty > 0 ? '<span class="hint a-az">預かりの分は、いつもの納品書と同じ書き方で入れてください（0円なら 0）</span>' : ""}</span>
           <label class="a-cell"><span class="a-lab">Kg</span><input class="inp num" data-s="kg" inputmode="decimal" placeholder="Kg" aria-label="${esc(l.spec)} の重さ（Kg）" value="${esc(r.kg == null ? "" : String(r.kg))}"></label>
           <label class="a-cell"><span class="a-lab">¥/kg</span><input class="inp num" data-s="perKg" inputmode="decimal" placeholder="¥/kg" aria-label="${esc(l.spec)} の kg あたりの値段" value="${esc(comma(r.perKg))}"></label>
           <label class="a-cell"><span class="a-lab">単価</span><input class="inp num" data-s="price" inputmode="decimal" placeholder="単価" aria-label="${esc(l.spec)} の単価" value="${esc(comma(pr))}"></label>
