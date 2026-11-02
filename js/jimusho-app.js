@@ -11,13 +11,14 @@ import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet } from "./common.js";
 import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
-import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany, azkText } from "./chumon.js";
+import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany, azkText, orderPdf, pdfLine } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel, shopOf, pageLink, SHOPS } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
 import { openImport } from "./nouhin.js";
 import { openReqEdit, openOrderEdit } from "./naosu.js";
-import { printFax } from "./fax.js";
+import { printFax, faxHTML } from "./fax.js";
+import { htmlToPdf, pdfName, downloadBlob, loadPdfLibs } from "./pdf.js";
 import { fileBlockHTML, wireFiles, filesOf, downloadFiles } from "./fairu.js";
 import { openKakouOrder } from "./kakou.js";
 import { slipFormHTML, wireSlipForm, readSlipForm, slipRowText } from "./kingaku.js";
@@ -68,10 +69,22 @@ const isPhone = () => /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (
  *  コピーした文は fb（下の欄）にも出す（うまくコピーできなかったときに、選んでコピーできるように）
  *  コピーは開く前にする（新しいタブが前に出ると、このページからはコピーできなくなるため）
  *  LINE は、パソコンでは開かない（LINE の説明に「LINE URLスキームは、デスクトップ版（macOS、Windows）のLINEではサポートされません」。
- *  line.me/R/share を開くと、Chrome で line.me のトップページが出るだけだった 10/14 持ち主）。コピーと「○○ をえらんで、貼り付けて」だけ */
+ *  line.me/R/share を開くと、Chrome で line.me のトップページが出るだけだった 10/14 持ち主）。コピーと「○○ をえらんで、貼り付けて」だけ
+ *  メールのときは、注文書（見積依頼は見積依頼書）の PDF を作って「ダウンロード」に出す（11/2 事務員さん。js/pdf.js。加工品・めっきは作らない）。
+ *  Gmail は、押してから間があきすぎると Chrome が開かせないので、PDF を待つのは2.5秒まで（できていなければ、Gmail を開いてから出す） */
+let sending = false;   // PDF を作っている間に、もう一度押されたときは何もしない
 async function copyOrSend(o, sup, fb, info = {}, pack = null) {
-  // pack＝見積依頼など、注文でないものを送るとき { text, url(sup), fax(), files }（10/15 js/mitsumori.js の quotePack）
-  const P = pack || { text: orderText(o, info), url: s => sendUrl(s, o, info), fax: () => printFax(o, sup, info), files: filesOf(o).map(([, f]) => f) };
+  if (sending) return;
+  sending = true;
+  try { await sendNow(o, sup, fb, info, pack); } finally { sending = false; }
+}
+async function sendNow(o, sup, fb, info, pack) {
+  // pack＝見積依頼など、注文でないものを送るとき { text, url(sup, { pdf }), fax(), files, pdf() }（10/15 js/mitsumori.js の quotePack）
+  // pdf()＝メールにつける PDF { what（注文書・見積依頼書）, html（FAX の紙）, name（ファイルの名前）, label（2枚以上のときの紙の下の名前） }。つけないときは null（11/2）
+  const P = pack || {
+    text: orderText(o, info), url: (s, opt) => sendUrl(s, o, info, opt), fax: () => printFax(o, sup, info), files: filesOf(o).map(([, f]) => f),
+    pdf: orderPdf(o) ? () => ({ what: "注文書", html: faxHTML(o, sup, info, { mail: true }), name: pdfName("注文書", o.chuban, o.supplierName), label: `注文書　${o.chuban}　${o.supplierName}` }) : null,
+  };
   const text = P.text;   // info＝⚙ 設定の「会社・注文書」と電話番号（決まり文句・電話番号が入る）
   // FAX（10/14）：注文書を印刷する画面を開く（印刷の画面で FAX 用のプリンターをえらぶ）。文のコピーもしておく
   if (sup && sup.send === "fax") {
@@ -86,40 +99,66 @@ async function copyOrSend(o, sup, fb, info = {}, pack = null) {
     return;
   }
   const lineCopyOnly = !!sup && sup.send === "line" && !isPhone();
-  const url = sup && !lineCopyOnly ? P.url(sup) : "";
+  const mail = !!sup && sup.send === "mail";
   fb.hidden = false;
   fb.querySelector("textarea").value = text;
   let copied = true;
   try { await navigator.clipboard.writeText(text); } catch (ex) { copied = false; fb.querySelector("textarea").select(); }
+  const note = fb.querySelector(".send-note");
+  // メールにつける PDF（11/2）：できたら先に「ダウンロード」へ。2.5秒でできていなければ、Gmail を開いてから
+  const job = mail && P.pdf ? P.pdf() : null;
+  let pdf = null, pdfErr = null, pdfLater = null;
+  if (job) {
+    note.textContent = `${job.what}の PDF を作っています…`;
+    note.hidden = false;
+    const made = htmlToPdf(job.html, { label: job.label }).then(blob => ({ blob, name: job.name }));
+    made.catch(() => { });
+    const r = await Promise.race([made.then(x => ({ x }), e => ({ e })), new Promise(res => setTimeout(res, 2500, null))]);
+    if (!r) pdfLater = made;
+    else if (r.x) { pdf = r.x; downloadBlob(pdf.blob, pdf.name); }
+    else pdfErr = r.e;
+  }
+  const saidPdf = !!job && !pdfErr;   // 本文に「注文書（PDF）を添付しております。」を入れたか
+  const url = sup && !lineCopyOnly ? P.url(sup, { pdf: saidPdf }) : "";
   if (url) window.open(url, "_blank", "noopener");
+  if (pdfLater) {
+    try { pdf = await pdfLater; downloadBlob(pdf.blob, pdf.name); } catch (ex) { pdfErr = ex; }
+  }
   // 注文につけたファイル（注文書・図面）は、メールのときに「ダウンロード」に出す。Gmail を開く住所ではファイルをつけられないので、
   // Gmail のクリップで付けてもらう（10/15 事務所の相談）
-  const files = url && sup.send === "mail" ? P.files : [];
-  let dl = "", dlOk = false;
+  const files = url && mail ? P.files : [];
+  let filesOk = false, filesErr = "";
   if (files.length) {
     try {
       await downloadFiles(files);
-      dlOk = true;
-      dl = `ファイル${files.length}つを「ダウンロード」に入れました。Gmail のクリップ（📎）から付けて、送信してください。` +
-        (files.length > 1 ? "（1回目だけ、Chrome が「複数のファイルのダウンロード」を聞きます。このページで「許可」を押してください）" : "");
+      filesOk = true;
     } catch (ex) {
-      dl = "ファイルを「ダウンロード」に出せませんでした。「ファイル（注文書・図面）」の欄の「ダウンロード」から出してください。";
+      filesErr = "ファイルを「ダウンロード」に出せませんでした。「ファイル（注文書・図面）」の欄の「ダウンロード」から出してください。";
     }
   }
+  // 「ダウンロード」に入れたもの（PDF とファイル）
+  const what = job ? job.what : "";
+  const got = [pdf ? `${what}の PDF（${pdf.name}）` : "", filesOk ? `ファイル${files.length}つ` : ""].filter(Boolean);
+  const nDl = (pdf ? 1 : 0) + (filesOk ? files.length : 0);
+  let dl = got.length ? `${got.join("と、")}を「ダウンロード」に入れました。Gmail のクリップ（📎）から付けて、送信してください。` +
+    (nDl > 1 ? "（1回目だけ、Chrome が「複数のファイルのダウンロード」を聞きます。このページで「許可」を押してください）" : "") : "";
+  if (pdfErr) dl += saidPdf ? `${what}の PDF は作れませんでした。本文の「${pdfLine(what)}」の行を消して送るか、Gmail を閉じて、もう一度押してください。`
+    : `${what}の PDF は作れませんでした（ネットをたしかめて、もう一度押すと作りなおします）。`;
+  dl += filesErr;
   // 送るときの知らせは、ボタンの下に残す（すぐ消える知らせだと、見落とすため）
   const who = sup && sup.lineTo ? `「${sup.lineTo}」` : "送り先";
   const msg = lineCopyOnly
       ? `${copied ? "文をコピーしました。" : "コピーできませんでした。下の文を選んでコピーしてから、"}LINE で${who}をえらんで、貼り付けて送ってください。`
     : !url ? ""
-    : sup.send === "mail" ? "Gmail を開きました。" + dl + (!sup.email ? "メールアドレスが入っていないので、宛先を入れてください（⚙ 設定 → 材料屋 で入れられます）。" : dlOk ? "" : "中身を見て、送信してください。")
+    : mail ? "Gmail を開きました。" + dl + (!sup.email ? "メールアドレスが入っていないので、宛先を入れてください（⚙ 設定 → 材料屋 で入れられます）。" : got.length || pdfErr ? "" : "中身を見て、送信してください。")
     : `LINE で${who}をえらんで、送ってください。文が入っていなければ、はりつけてください（コピーしてあります）。`;
-  const note = fb.querySelector(".send-note");
   note.textContent = msg;
   note.hidden = !msg;
   if (lineCopyOnly) toast(copied ? `文をコピーしました。LINE で${who}をえらんでください` : "コピーできませんでした。下の文を選んでコピーしてください");
   else if (!url) toast(copied ? "注文の文をコピーしました。LINE やメールにはりつけられます" : "コピーできませんでした。下の文を選んでコピーしてください");
-  else if (sup.send === "mail" && files.length) toast(dlOk ? "ファイルをダウンロードに入れました。Gmail のクリップから付けてください" : "Gmail を開きました。ファイルは出せませんでした");
-  else toast(sup.send === "mail" ? "Gmail を開きました" : sup.lineTo ? `LINE で「${sup.lineTo}」をえらんでください` : "LINE を開きました");
+  else if (mail && pdfErr) toast(`Gmail を開きました。${what}の PDF は作れませんでした`);
+  else if (mail && (job || files.length)) toast(got.length ? "「ダウンロード」に入れました。Gmail のクリップから付けてください" : "Gmail を開きました。ファイルは出せませんでした");
+  else toast(mail ? "Gmail を開きました" : sup.lineTo ? `LINE で「${sup.lineTo}」をえらんでください` : "LINE を開きました");
 }
 
 /** 注番をコピーする（ネットのお店で買うとき、お店の備考などの欄にはりつける。10/15） */
@@ -1382,7 +1421,14 @@ export function startOfficeApp(main, me) {
     refreshPanel();
   }, ex => { st.quotes = []; toast("見積を読めませんでした（" + errorText(ex) + "）"); });
   onValue(ref(db, "zairyo/master/catalog"), s => { st.catalog = normCatalog(s.val()); });
-  onValue(ref(db, "zairyo/master/suppliers"), s => { st.sups = s.val() || {}; refreshPanel(); drawAzBtn(); });
+  // メールで送る材料屋があれば、PDF を作る道具を先に読んでおく（押したときに待たないように。11/2）
+  let pdfPre = false;
+  const preloadPdf = () => {
+    if (pdfPre || !Object.values(st.sups || {}).some(s => s && s.send === "mail")) return;
+    pdfPre = true;
+    setTimeout(() => loadPdfLibs().catch(() => { pdfPre = false; }), 4000);
+  };
+  onValue(ref(db, "zairyo/master/suppliers"), s => { st.sups = s.val() || {}; refreshPanel(); drawAzBtn(); preloadPdf(); });
   // 預かり（11/2）：注文するときの「預かりにあり（残り○本）」に使う
   onValue(ref(db, "zairyo/azukari"), s => { st.az = s.val() || {}; refreshPanel(); }, () => { st.az = {}; });
   onValue(ref(db, "zairyo/master/places"), s => { st.places = s.val() || {}; });

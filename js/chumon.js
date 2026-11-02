@@ -64,7 +64,9 @@ export function companyLines(c = {}) {
    - LINE：スマホでは、LINE の「送る」画面を文が入った形で開く（https://line.me/R/share。line:// は古いのでやめる予定と LINE の説明にある）。
      パソコン版の LINE では使えない（LINE の説明・10/14 ためし）ので、パソコンでは開かずに、コピーと「○○ をえらんで、貼り付けて」だけ
      （jimusho-app.js の copyOrSend）。送り先は、LINE の決まりで毎回自分でえらぶ
-   どちらも、押したときに文のコピーもする（うまく入らなかったときに、はりつけられるように） */
+   どちらも、押したときに文のコピーもする（うまく入らなかったときに、はりつけられるように）
+   - メールに注文書の PDF をつける（11/2 事務員さん。js/pdf.js・jimusho-app.js の copyOrSend）：本文のいちばん上に「注文書（PDF）を添付しております。」。
+     LINE・電話で入れた注文は、その上（と PDF・FAX の紙）に「先ほどお電話・LINEでお願いした分の注文書です。」。加工品・めっきは PDF をつけない */
 export const COMPANY = "よつば建設工業";
 
 /** メールの件名「注文　注番　件名（よつば建設工業）」 */
@@ -72,11 +74,23 @@ export function mailSubject(o) {
   return `注文　${o.chuban}　${zenkana(o.kenmei || "")}（${COMPANY}）`;
 }
 
-/** 材料屋 sup に o を送る住所（Gmail か LINE）。送り方を決めていなければ "" */
-export function sendUrl(sup, o, info = {}) {
+/** LINE・電話で入れた注文か（依頼なし・加工品などでもない。事務所の「来たところ」が「LINE・電話」の注文） */
+export const isLineOrder = o => !!o && !o.reqId && !o.kind;
+/** LINE・電話で入れた注文を、あとから注文書で送るときの一言（材料屋さんが2回用意しないように。メールの本文のいちばん上・PDF・FAX の紙に。11/2 持ち主）。
+ *  電話か LINE かは見分けない（はりつけた文があるかでは、まちがうことがあるため。1つの言い方にする 11/2 持ち主）。ほかの注文は "" */
+export const lineOrderNote = o => (isLineOrder(o) ? "先ほどお電話・LINEでお願いした分の注文書です。" : "");
+/** メールに注文書の PDF をつける注文か（加工品・めっきは、自分で作った注文書をつけているので、つけない。11/2） */
+export const orderPdf = o => !!o && o.kind !== "kakou" && o.kind !== "mekki";
+/** メールで PDF をつけるときの、本文のいちばん上の1行（PDF・LINE・コピーには入れない。11/2 持ち主 C） */
+export const pdfLine = what => `${what}（PDF）を添付しております。`;
+
+/** 材料屋 sup に o を送る住所（Gmail か LINE）。送り方を決めていなければ ""。
+ *  pdf＝メールに注文書の PDF をつけるか（つけるときは、本文のいちばん上に「注文書（PDF）を添付しております。」。11/2） */
+export function sendUrl(sup, o, info = {}, { pdf = orderPdf(o) } = {}) {
   const enc = encodeURIComponent;
   if (sup && sup.send === "mail") {
-    const text = orderText(o, info, { footer: true });   // メールは、いちばん下に会社の名前・住所など
+    const head = [lineOrderNote(o), pdf ? pdfLine("注文書") : ""].filter(Boolean);   // LINE・電話で入れた注文は「先ほど…」も
+    const text = (head.length ? head.join("\n") + "\n\n" : "") + orderText(o, info, { footer: true });   // メールは、いちばん下に会社の名前・住所など
     const cc = Object.values(sup.cc || {}).filter(Boolean);   // CC は、なくてもよい・いくつでも（カンマでつなぐ）
     return `https://mail.google.com/mail/?view=cm&fs=1&to=${enc(sup.email || "")}${cc.length ? `&cc=${enc(cc.join(","))}` : ""}&su=${enc(mailSubject(o))}&body=${enc(text)}`;
   }

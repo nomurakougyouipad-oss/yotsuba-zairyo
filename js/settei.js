@@ -562,6 +562,7 @@ function faxTest() {
   const place = Object.values(S.place || {}).find(p => p && !p.hidden && !/^取りに/.test(p.name || "")) || {};
   const staff = Object.keys(S.staff || {})[0] || "";
   printFax({
+    reqId: "見本",   // 見本は、現場の依頼から作った注文の形（LINE・電話で入れた注文の一言は出さない。11/2）
     supplierName: "（見本）材料屋", to: "御中", chuban: "AB26123", kenmei: "（見本）ポンプ配管修理",
     lines: { a: { spec: "SUS304 六角ボルト M12×55(B,N,SW,2FW)", qty: 20, unit: "組" }, b: { spec: "SUS304 六角ボルト M12×35(B,N,SW,2FW)", qty: 30, unit: "組" } },
     kibou: "最短", basho: place.name || "", bashoText: place.text || "", chumonsha: staff, tantou: staff, memo: "",

@@ -6,7 +6,8 @@
 //             answer: { rows: { 品物: { kg, perKg, price, amount } }, total, nouki, memo, file（見積書）, at, by } } },
 //     status: "open" | "ordered" | "closed", orderId, orderSup, orderedAt, closedAt, closedBy, createdAt, createdBy }
 // - 見積依頼の文は docs の見本（01見積依頼.txt）の形。決まり文句は「見積金額と納期の回答をお願いいたします」。会社の情報は ⚙ 設定から
-// - 送り方は注文と同じ（メール・LINE・FAX・コピー。jimusho-app.js の copyOrSend に、この見積の文などをわたす）。FAX は見積依頼書の表（fax.js）
+// - 送り方は注文と同じ（メール・LINE・FAX・コピー。jimusho-app.js の copyOrSend に、この見積の文などをわたす）。FAX は見積依頼書の表（fax.js）。
+//   メールのときは、見積依頼書の PDF（FAX と同じ表）も「ダウンロード」に出す（11/2 事務員さん。js/pdf.js）
 // - 返事：品物ごとに Kg・¥/kg（書かなくてもよい。入れたら金額と単価が出る）・単価・金額、合計（税抜）・納期・メモ・見積書（PDF など）
 // - 「この見積で注文する」：品物・ファイル（図面など。見積書は入れない）・見積の単価（qprice）が入った注文を作る（kind:"mitsumori"・unsent:true。
 //   加工品と同じく「送った」で消える）。注文の画面から、もとの見積を開ける（quoteId）
@@ -17,7 +18,8 @@ import { ymd, kibouText, lineText, fmtQty } from "./tanomu.js";
 import { normalizeChuban } from "./kouji.js";
 import { CHUBAN_RE } from "./nippo.js";
 import { errorText } from "./touroku.js";
-import { companyLines, yen, toPrice, COMPANY } from "./chumon.js";
+import { companyLines, yen, toPrice, COMPANY, pdfLine } from "./chumon.js";
+import { pdfName } from "./pdf.js";
 import { filesOf, okFiles, uploadFile, removeUploaded, sizeText, downloadFiles } from "./fairu.js";
 import { byOrder, unitsOr, sendWord, itemsFieldHTML, wireItems, readItems, rowsToLines, linesToRows, filePickHTML, wireFilePick, uploadPicked, wireChuban, fillStaff } from "./kakou.js";
 import { printHTML, mitsumoriFaxHTML } from "./fax.js";
@@ -72,21 +74,27 @@ export function mitsumoriText(q, supId, info = {}) {
   if (f.length) L.push("------------------------------------------", ...f.map(x => "  " + x), "-------------------------------------------");
   return L.join("\n");
 }
-/** 送るときにわたすもの（jimusho-app.js の copyOrSend）：文・メールや LINE の住所・FAX の印刷・ファイル */
+/** 送るときにわたすもの（jimusho-app.js の copyOrSend）：文・メールや LINE の住所・FAX の印刷・ファイル・メールにつける PDF（11/2） */
 export function quotePack(q, supId, sup, info = {}) {
   const enc = encodeURIComponent, text = mitsumoriText(q, supId, info);
   return {
     text,
-    url: s => {
+    // pdf＝見積依頼書の PDF をつけるか（つけるときは、本文のいちばん上に「見積依頼書（PDF）を添付しております。」。11/2）
+    url: (s, { pdf = true } = {}) => {
       if (s.send === "mail") {
         const cc = Object.values(s.cc || {}).filter(Boolean);
-        return `https://mail.google.com/mail/?view=cm&fs=1&to=${enc(s.email || "")}${cc.length ? `&cc=${enc(cc.join(","))}` : ""}&su=${enc(`見積依頼　${q.chuban}　${zenkana(q.kenmei || "")}（${COMPANY}）`)}&body=${enc(text)}`;
+        const body = (pdf ? pdfLine("見積依頼書") + "\n\n" : "") + text;
+        return `https://mail.google.com/mail/?view=cm&fs=1&to=${enc(s.email || "")}${cc.length ? `&cc=${enc(cc.join(","))}` : ""}&su=${enc(`見積依頼　${q.chuban}　${zenkana(q.kenmei || "")}（${COMPANY}）`)}&body=${enc(body)}`;
       }
       if (s.send === "line") return `https://line.me/R/share?text=${enc(text)}`;
       return "";
     },
     fax: () => printHTML(mitsumoriFaxHTML(q, supId, sup, info)),
     files: filesOf(q).map(([, f]) => f),
+    pdf: () => {
+      const name = ((q.sups || {})[supId] || {}).name || (sup && sup.name) || "";
+      return { what: "見積依頼書", html: mitsumoriFaxHTML(q, supId, sup, info, { mail: true }), name: pdfName("見積依頼書", q.chuban, name), label: `見積依頼書　${q.chuban}　${name}` };
+    },
   };
 }
 

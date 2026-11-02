@@ -3,15 +3,20 @@
 //   いちばん下に会社の名前・住所・TEL・FAX・メール・ホームページ（⚙ 設定の「会社・注文書」）
 // - 印刷の画面で、FAX 用のプリンターをえらんで送る（このページの中に見えない枠を作って、そこを印刷する）
 // - FAX は白黒なので、色は使わない。字は大きめ
+// - mail：メールにつける PDF（11/2。js/pdf.js で絵にする）。右上の「送り先 FAX」は出さない
+// - LINE・電話で入れた注文なら、日付の下の枠に「先ほどお電話・LINEでお願いした分の注文書です。」（材料屋さんが2回用意しないように。
+//   FAX でも PDF でも。11/2 持ち主）
 import { esc } from "./common.js";
-import { orderText, companyLines } from "./chumon.js";
+import { orderText, companyLines, lineOrderNote } from "./chumon.js";
 
 const today = () => { const d = new Date(); return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`; };
 
 /** 注文書の HTML（印刷用の1ページ） */
-export function faxHTML(o, sup, info = {}) {
+export function faxHTML(o, sup, info = {}, { mail = false } = {}) {
   const body = orderText(o, info);
   const foot = companyLines(info.company);
+  const note = lineOrderNote(o);
+  const to = mail ? "" : sup && sup.fax ? `送り先 FAX：${esc(sup.fax)}` : "送り先 FAX：（⚙ 設定の材料屋で入れてください）";
   return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>注文書 ${esc(o.chuban || "")} ${esc(o.supplierName || "")}</title>
 <style>
   @page { size: A4 portrait; margin: 14mm 16mm; }
@@ -22,19 +27,21 @@ export function faxHTML(o, sup, info = {}) {
   .title { border-top: 2.5px solid #000; border-bottom: 2.5px solid #000; text-align: center; font-size: 26pt; font-weight: 700; letter-spacing: .8em; padding: 3mm 0 3mm .8em; }
   .meta { display: flex; justify-content: space-between; gap: 8mm; font-size: 11.5pt; margin: 3mm 0 6mm; }
   .body { white-space: pre-wrap; word-break: break-all; margin: 0; font: inherit; }
+  .note { border: 1.5px solid #000; padding: 2mm 4mm; margin: 0 0 6mm; font-weight: 700; }
   .foot { margin-top: auto; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 2.5mm 4mm; font-size: 11.5pt; line-height: 1.55; }
   @media screen { body { padding: 14mm 16mm; } }
 </style></head><body><div class="sheet">
   <div class="title">注文書</div>
-  <div class="meta"><span>${esc(today())}</span><span>${sup && sup.fax ? `送り先 FAX：${esc(sup.fax)}` : "送り先 FAX：（⚙ 設定の材料屋で入れてください）"}</span></div>
+  <div class="meta"><span>${esc(today())}</span><span>${to}</span></div>
+  ${note ? `<div class="note">${esc(note)}</div>` : ""}
   <pre class="body">${esc(body)}</pre>
   ${foot.length ? `<div class="foot">${foot.map(esc).join("<br>")}</div>` : ""}
 </div></body></html>`;
 }
 
 /** 見積依頼書の HTML（10/15。見本の A0見積依頼書 と同じ欄の表。金額などの欄は空けて、材料屋が書いて返せるように）
- *  q＝見積、supId＝出す材料屋、info＝⚙ 設定の「会社・注文書」と電話番号 */
-export function mitsumoriFaxHTML(q, supId, sup, info = {}) {
+ *  q＝見積、supId＝出す材料屋、info＝⚙ 設定の「会社・注文書」と電話番号。mail＝メールにつける PDF（「送り先 FAX」は出さない。11/2） */
+export function mitsumoriFaxHTML(q, supId, sup, info = {}, { mail = false } = {}) {
   const s = (q.sups || {})[supId] || {}, c = info.company || {}, tels = info.tels || {};
   const who = n => (n && tels[n] ? `${n}（${tels[n]}）` : n || "");
   const lines = Object.entries(q.lines || {}).sort(([a], [b]) => a.localeCompare(b)).map(([, l]) => {
@@ -68,7 +75,7 @@ export function mitsumoriFaxHTML(q, supId, sup, info = {}) {
 </style></head><body><div class="sheet">
   <div class="title">見積依頼書</div>
   <div class="meta"><span>見積依頼番号（注番）：${esc(q.chuban || "")}</span><span>${esc(today())}</span></div>
-  <div class="meta"><span></span><span>${sup && sup.fax ? `送り先 FAX：${esc(sup.fax)}` : "送り先 FAX：（⚙ 設定の材料屋で入れてください）"}</span></div>
+  ${mail ? "" : `<div class="meta"><span></span><span>${sup && sup.fax ? `送り先 FAX：${esc(sup.fax)}` : "送り先 FAX：（⚙ 設定の材料屋で入れてください）"}</span></div>`}
   <div class="who"><div class="to">${esc(s.name || "")}　${esc(s.to || "御中")}</div>
     <div class="co">${c.name ? `<b>${esc(c.name)}</b><br>` : ""}${c.zip || c.addr ? `${c.zip ? `〒${esc(c.zip)} ` : ""}${esc(c.addr || "")}<br>` : ""}${c.tel || c.fax ? `${c.tel ? `TEL ${esc(c.tel)}` : ""}${c.tel && c.fax ? "　" : ""}${c.fax ? `FAX ${esc(c.fax)}` : ""}<br>` : ""}担当者　${esc(who(q.tantou))}</div></div>
   <div>工事件名　${esc(q.kenmei || "")}${q.kojiTantou ? `　　工事担当　${esc(who(q.kojiTantou))}` : ""}</div>
@@ -79,7 +86,7 @@ export function mitsumoriFaxHTML(q, supId, sup, info = {}) {
     ${"<tr><td class=\"b\"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>".repeat(blank)}
     <tr><td colspan="4" style="text-align:right;font-weight:700">合計</td><td></td><td colspan="3"></td></tr>
   </table>
-  ${files.length ? `<div>※添付ファイル：${esc(files.join("、"))}（別に送ります）</div>` : ""}
+  ${files.length ? `<div>※添付ファイル：${esc(files.join("、"))}（${mail ? "メールに添付しています" : "別に送ります"}）</div>` : ""}
   <div class="ask">見積金額と納期の回答をお願いいたします</div>
   ${foot.length ? `<div class="foot">${foot.map(esc).join("　")}</div>` : ""}
 </div></body></html>`;
