@@ -8,7 +8,7 @@
 // - 11章 7-5a：「納品書の取りこみ」（js/nouhin.js）。スキャンを AI で読んで、注文の納品書の金額に入れる
 import { ref, onValue, update, push, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db } from "./firebase.js";
-import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet } from "./common.js";
+import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet, keepPlace } from "./common.js";
 import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
 import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany, azkText, orderPdf, pdfLine } from "./chumon.js";
@@ -475,11 +475,17 @@ export function startOfficeApp(main, me) {
       (cxs.length ? `<details class="block hidbox" id="cxBox"><summary>取り消した依頼（${cxs.length}）</summary><div class="ocards">${cxs.map(reqCard).join("")}</div></details>` : "");
   }
 
-  function draw() {
-    const open = [...main.querySelectorAll("#list details[id][open]")].map(d => d.id);
-    drawTop();
-    drawList();
-    for (const id of open) { const d = $(`#${id}`, main); if (d) d.open = true; }
+  /** keep＝データが変わったときのかきなおし（見ていたカードを同じ高さにのこす。js/common.js の keepPlace。11/2 持ち主「画面が勝手に上に飛ぶ」）。
+   *  タブ・箱・さがす を押したときは、ふつうにかきなおす */
+  function draw(keep = false) {
+    const go = () => {
+      const open = [...main.querySelectorAll("#list details[id][open]")].map(d => d.id);
+      drawTop();
+      drawList();
+      for (const id of open) { const d = $(`#${id}`, main); if (d) d.open = true; }
+    };
+    if (keep) keepPlace($("#list", main), "[data-open],[data-req],[data-quote],[data-kouji]", go);
+    else go();
   }
 
   /* ---------- 依頼の中身（右から出る）：材料屋を決めて注文する ---------- */
@@ -1405,19 +1411,19 @@ export function startOfficeApp(main, me) {
   /* ---------- データ ---------- */
   onValue(ref(db, "zairyo/requests"), s => {
     st.reqs = Object.entries(s.val() || {}).map(([id, r]) => ({ id, ...r })).sort((a, b) => (b.sentAt || 0) - (a.sentAt || 0));
-    draw();
+    draw(true);
     refreshPanel();
   });
   onValue(ref(db, "zairyo/orders"), s => {
     st.orders = Object.entries(s.val() || {}).map(([id, o]) => ({ id, ...o }));
-    draw();
+    draw(true);
     refreshPanel();
   }, ex => { st.orders = []; toast("注文を読めませんでした（" + errorText(ex) + "）"); });
-  setInterval(() => { if (!document.hidden) draw(); }, 30 * 60 * 1000);   // 返事なし（日がかわると出る。2-6）を、ときどきかきなおす
+  setInterval(() => { if (!document.hidden) draw(true); }, 30 * 60 * 1000);   // 返事なし（日がかわると出る。2-6）を、ときどきかきなおす
   // 見積（10/15）：事務所だけが読める
   onValue(ref(db, "zairyo/quotes"), s => {
     st.quotes = Object.entries(s.val() || {}).map(([id, q]) => ({ id, ...q }));
-    draw();
+    draw(true);
     refreshPanel();
   }, ex => { st.quotes = []; toast("見積を読めませんでした（" + errorText(ex) + "）"); });
   onValue(ref(db, "zairyo/master/catalog"), s => { st.catalog = normCatalog(s.val()); });

@@ -8,7 +8,7 @@
 // - 進み具合（注文した・届いた）と金額は、11章 5 で事務所の注文ができてから出す
 import { ref, onValue, push, update, query, orderByChild, equalTo, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, auth } from "./firebase.js";
-import { $, esc, zenkana, toast, runChecks, checkRow, openSheet, closeSheet, loadDraft, clearDraft } from "./common.js";
+import { $, esc, zenkana, toast, runChecks, checkRow, openSheet, closeSheet, loadDraft, clearDraft, keepPlace } from "./common.js";
 import { errorText } from "./touroku.js";
 import { watchJobs } from "./nippo.js";
 import { jobPicker } from "./kouji.js";
@@ -58,6 +58,21 @@ export function startGenbaApp(main, me) {
   };
   const ordersFor = reqId => st.orders.filter(o => o.reqId === reqId);
   let picker = null, nippoRow = null, askDel = "";
+  let chkOpen = false;   // 「送ったもの」の「つながりのたしかめ」を開いているか（かきなおしても開いたまま。11/2）
+  // 開きなおしたとき（iPhone のホーム画面のアプリは、写真・ほかのアプリからもどると開きなおすことがある）は、
+  // 見ていたタブと位置にもどす（30分以内。11/2 持ち主「画面が勝手に上に飛ぶ」）。データが来て画面がのびてから、その位置へ
+  const PLACE_KEY = "yotsuba-zairyo-genba-place";
+  let pendingY = null;
+  try {
+    const p = JSON.parse(localStorage.getItem(PLACE_KEY) || "null");
+    if (p && Date.now() - p.at < 30 * 60 * 1000 && ["tanomu", "sent", "cart"].includes(p.tab)) { st.tab = p.tab; pendingY = p.y > 0 ? p.y : null; }
+  } catch (err) { }
+  const savePlace = () => { try { localStorage.setItem(PLACE_KEY, JSON.stringify({ tab: st.tab, y: Math.round(window.scrollY), at: Date.now() })); } catch (err) { } };
+  document.addEventListener("visibilitychange", () => { if (document.hidden) savePlace(); });
+  window.addEventListener("pagehide", savePlace);
+  const stopPending = () => { pendingY = null; };   // さわったら、もうもどさない（8秒たっても）
+  for (const ev of ["touchstart", "wheel", "keydown"]) window.addEventListener(ev, stopPending, { once: true, passive: true });
+  setTimeout(stopPending, 8000);
   let catChosen = false;   // 種類のタブを自分でえらんだか（えらんでいなければ、★いつもの があればそれを出す）
   try { st.cat = localStorage.getItem(CAT_KEY) || ""; catChosen = !!st.cat; } catch (err) { }
 
@@ -82,7 +97,10 @@ export function startGenbaApp(main, me) {
     else { body.innerHTML = sentHTML(); mountChecks(); }
     bar.hidden = st.tab !== "tanomu";
     bar.innerHTML = barHTML();
+    if (pendingY != null && document.documentElement.scrollHeight - window.innerHeight >= pendingY - 2) { window.scrollTo(0, pendingY); pendingY = null; }
   }
+  // データが変わったときのかきなおし：見ていたカード・品物を同じ高さにのこす（js/common.js の keepPlace。タブを押したときは、ふつうの draw）
+  const redraw = () => keepPlace(body, "[data-sent],[data-item]", draw);
 
   /* ---------- たのむ ---------- */
   /** ★いつもの：自分が送った品物（品物・品名・メモが同じものをまとめる）を、多い順に12こまで */
@@ -357,9 +375,10 @@ export function startGenbaApp(main, me) {
               ? `<span class="sent-money">金額 <b class="num">${yen(mo.total)}</b>円（税抜）${mo.allKnown ? "" : '<span class="hint">　ほかはまだ</span>'}</span>` : ""; })()}
           </button>`;
       }).join("");
+    // つながりのたしかめ：かきなおしても開いたまま（前は、データが変わると閉じて、そのぶん画面が上にずれた。11/2 持ち主）
     return `
       <div class="sents">${list}</div>
-      <details class="block hidbox"><summary>つながりのたしかめ</summary><ul class="checks" id="checks"></ul></details>`;
+      <details class="block hidbox" id="chkBox"${chkOpen ? " open" : ""}><summary>つながりのたしかめ</summary><ul class="checks" id="checks"></ul></details>`;
   }
 
   /** 金額（税抜）：材料屋ごとの材料費と合計。事務所が納品書・請求書から入れたもの */
@@ -445,11 +464,20 @@ export function startGenbaApp(main, me) {
       });
     });
   }
+  /** つながりのたしかめ：開いているときだけ、たしかめる（前は、かきなおすたびに毎回たしかめていた。11/2） */
   function mountChecks() {
-    const list = $("#checks", body);
-    runChecks(list, { sw: true });
-    nippoRow = checkRow(list, "日報の注番を読める");
-    showNippo();
+    const box = $("#chkBox", body);
+    if (!box) return;
+    const run = () => {
+      const list = $("#checks", box);
+      list.innerHTML = "";
+      runChecks(list, { sw: true });
+      nippoRow = checkRow(list, "日報の注番を読める");
+      showNippo();
+    };
+    // 開いた形でかきなおしたときにも toggle が来るので、人が開け閉めしたときだけ（chkOpen とちがうとき）
+    box.addEventListener("toggle", () => { if (box.open === chkOpen) return; chkOpen = box.open; if (box.open) run(); else nippoRow = null; });
+    if (box.open) run();
   }
   function showNippo(err) {
     if (!nippoRow) return;
@@ -573,23 +601,23 @@ export function startGenbaApp(main, me) {
   onValue(ref(db, "zairyo/master/catalog"), s => {
     const first = !st.catalog;
     st.catalog = normCatalog(s.val());
-    if (st.tab === "tanomu") draw();
+    if (st.tab === "tanomu") redraw();
     if (first) restoreDraft();   // 品物一覧を読んでから、書きかけの画面にもどす
   }, ex => toast(errorText(ex)));
-  onValue(ref(db, "zairyo/master/places"), s => { st.places = s.val() || {}; if (st.tab === "cart" && !st.sending) draw(); });
-  onValue(ref(db, "zairyo/master/suppliers"), s => { st.sups = s.val() || {}; if (st.tab === "cart" && !st.sending) draw(); });
+  onValue(ref(db, "zairyo/master/places"), s => { st.places = s.val() || {}; if (st.tab === "cart" && !st.sending) redraw(); });
+  onValue(ref(db, "zairyo/master/suppliers"), s => { st.sups = s.val() || {}; if (st.tab === "cart" && !st.sending) redraw(); });
   // 注番の頭の2文字の会社名（台帳ぜんたいの表 /common/kaisha）
   onValue(ref(db, "common/kaisha"), s => { st.kaisha = s.val() || {}; if (picker && st.jobs) picker.setJobs(st.jobs); });
   watchJobs(d => { st.jobs = d; if (picker) picker.setJobs(d); showNippo(); }, ex => showNippo(ex));
   // 自分が送った依頼（ルールで、この問い合わせだけ通す）
   onValue(query(ref(db, "zairyo/requests"), orderByChild("chumonsha"), equalTo(me.name)), s => {
     st.reqs = Object.entries(s.val() || {}).map(([id, r]) => ({ id, ...r })).sort((a, b) => (b.sentAt || 0) - (a.sentAt || 0));
-    if (st.tab === "sent" || st.tab === "tanomu") draw();
+    if (st.tab === "sent" || st.tab === "tanomu") redraw();
   }, ex => { st.reqs = []; toast("送ったものを読めませんでした（" + errorText(ex) + "）"); });
   // 自分の依頼から事務所が作った注文（ルールで、この問い合わせだけ通す）。読めないときは「事務所で確認中」のまま
   onValue(query(ref(db, "zairyo/orders"), orderByChild("chumonsha"), equalTo(me.name)), s => {
     st.orders = Object.entries(s.val() || {}).map(([id, o]) => ({ id, ...o }));
-    if (st.tab === "sent") draw();
+    if (st.tab === "sent") redraw();
   }, () => { st.orders = []; });
 
   draw();

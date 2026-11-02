@@ -116,6 +116,37 @@ export function closeSheet() {
   if (lastFocus && document.contains(lastFocus)) lastFocus.focus({ preventScroll: true });
 }
 
+/* ---------- 一覧をかきなおしても、見ていた所をのこす（11/2 持ち主「画面が勝手に上に飛ぶ」） ----------
+   データが変わるたびに一覧を作りなおす（innerHTML）と、新しいカードが上にふえたとき、見ていたカードの所に べつのカードが来る。
+   かきなおす前に、画面に見えているカード（上から6つまで）の高さをおぼえて、かきなおしたあと、のこっているカードが同じ高さに来るようにずらす。
+   スクロールしていない（いちばん上）ときは、なにもしない（新しいカードが上に見えるように）。
+   box＝一覧の入れ物、sel＝カードのしるし、fn＝かきなおす。データが変わったとき・ボタンのあとだけに使う（タブ・しぼりこみを押したときは使わない） */
+const PLACE_ATTRS = ["data-open", "data-req", "data-quote", "data-kouji", "data-o", "data-sent", "data-item"];
+const placeKey = c => { for (const a of PLACE_ATTRS) if (c.hasAttribute(a)) return a + "=" + c.getAttribute(a); return ""; };
+export function keepPlace(box, sel, fn) {
+  const seen = [];
+  if (box && window.scrollY > 0) {
+    for (const c of box.querySelectorAll(sel)) {
+      const r = c.getBoundingClientRect();
+      if (r.bottom <= 0 || !r.height) continue;   // 上に出ている・閉じた「くわしく」の中
+      if (r.top >= window.innerHeight) break;
+      const k = placeKey(c);
+      if (k) seen.push([k, r.top]);
+      if (seen.length >= 6) break;
+    }
+  }
+  fn();
+  if (!seen.length || !box || !box.isConnected) return;
+  const now = new Map([...box.querySelectorAll(sel)].map(c => [placeKey(c), c]));
+  for (const [k, top] of seen) {
+    const c = now.get(k);
+    if (!c || !c.getBoundingClientRect().height) continue;   // そのカードは一覧から出た → つぎのカードで合わせる
+    const d = c.getBoundingClientRect().top - top;
+    if (Math.abs(d) >= 1) window.scrollBy(0, d);
+    return;
+  }
+}
+
 /* ---------- 書きかけの画面（現場） ----------
    iPhone のホーム画面のアプリは、お店のページからもどると開きなおすことがある。
    品物の画面・ネットでさがす の書きかけを端末にしまっておき、開きなおしたらその画面にもどす */

@@ -6,7 +6,7 @@
 // - 2-2：注文を見る（4つのタブ・注文の中身）。2-3：受けました・届ける日・届けました・事務所が直した／取り消した知らせ。2-4：金額を入れる（納品書の金額になる）。2-5：図面・写真のダウンロード。2-6：通知と、新しい・直した・取り消しの印
 import { ref, query, orderByChild, equalTo, onValue, update, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, call, watchConnected } from "./firebase.js";
-import { $, esc, zenkana, toast, initTheme, registerSW, openSheet } from "./common.js";
+import { $, esc, zenkana, toast, initTheme, registerSW, openSheet, keepPlace } from "./common.js";
 import { whoAmI, registerSup, errorText, isIPhoneBrowser } from "./touroku.js";
 import { lineText, kibouText, fmtQty } from "./tanomu.js";
 import { pushState, enablePush, disablePush, refreshPush, testPush } from "./tsuuchi.js";
@@ -213,6 +213,8 @@ function showHome(me) {
       if (force || (!typing && !u.askDeliver && !pricing)) openOrder(o, true);
     }
   };
+  // データが変わった・ボタンを押したあとのかきなおし：見ていたカードを同じ高さにのこす（タブを押したときは、ふつうの draw。11/2 持ち主）
+  const redraw = (force = false) => keepPlace($("#supList"), "[data-o]", () => draw(force));
   const openOrder = (o, keepScroll = false) => {
     const panel = document.getElementById("panel"), y = keepScroll && panel ? panel.scrollTop : 0;
     openSheet(orderHTML(o, ui[o.id] || (ui[o.id] = {})), p => {
@@ -253,17 +255,15 @@ function showHome(me) {
       // しまい終わったら、日付の欄にカーソルが残っていても外して、かきなおす（欄を入れている途中は、かきなおさないため）
       const ae = document.activeElement;
       if (ae && w.contains(ae)) ae.blur();
-      draw(true);
+      redraw(true);
       toast(msg);
     };
     if (act === "accept") {   // 受けました（届ける日は必ず）
       const d = w.querySelector("#dDate").value;
       if (!isDate(d)) { err.textContent = "届ける日をえらんでください"; w.querySelector("#dDate").focus(); return; }
+      // タブは、かえない（見ていた一覧の所のまま。つぎのタブにかえると、後ろの一覧が短くなって上にもどっていた。11/2 持ち主）
       await busy("しまっています…", { supState: "accepted", supAcceptedAt: serverTimestamp(), supAcceptedBy: me.name, deliverDate: d },
-        `受けました。${kibouText(d)} に届ける予定を、よつば建設工業に知らせました`);
-      tab = "todokeru";
-      try { localStorage.setItem(TAB_KEY, tab); } catch (err2) { }
-      draw();
+        `受けました。${kibouText(d)} に届ける予定を、よつば建設工業に知らせました（「② 届ける」に入りました）`);
     } else if (act === "date") { u.changeDate = true; openOrder(o, true); }
     else if (act === "dateno") { u.changeDate = false; openOrder(o, true); }
     else if (act === "dateyes") {
@@ -279,10 +279,7 @@ function showHome(me) {
       await busy("しまっています…", {
         supState: "delivered", supDeliveredAt: serverTimestamp(), supDeliveredBy: me.name,
         ...(o.status === "wait" ? { status: "arrived", arrivedAt: serverTimestamp(), arrivedBy: by } : {}),
-      }, "届けました。よつば建設工業の「届いた」にもなりました");
-      tab = "kingaku";
-      try { localStorage.setItem(TAB_KEY, tab); } catch (err2) { }
-      draw();
+      }, "届けました。よつば建設工業の「届いた」にもなりました（「③ 金額を入れる」に入りました）");
     } else if (act === "cxseen") {
       await busy("しまっています…", { supCxSeenAt: serverTimestamp() }, "取り消しを、たしかめました（「終わった」に入りました）");
     } else if (act === "editseen") {
@@ -297,26 +294,21 @@ function showHome(me) {
       openOrder(o, true);
     } else if (act === "priceyes") {   // 送る：よつば建設工業の「納品書の金額」になる
       try {
-        await busy("送っています…", () => supAddSlip(o, u.pending, me), `${yen(u.pending.amount)}円を送りました。よつば建設工業の「納品書の金額」になりました`);
+        await busy("送っています…", () => supAddSlip(o, u.pending, me), `${yen(u.pending.amount)}円を送りました。よつば建設工業の「納品書の金額」になりました（「終わった」に入りました）`);
       } catch (ex) {
         const now = live().find(x => x.id === o.id);
         if (now && hasSlips(now)) {   // 入れている間に、事務所が先に入れた
           u.pending = null; u.draft = null; u.dirty = false;
-          draw(true);
+          redraw(true);
           toast("よつば建設工業が、さきに金額を入れていました。金額をたしかめてください");
           return;
         }
         throw ex;
       }
       u.pending = null; u.draft = null; u.dirty = false;
-      tab = "owari";
-      try { localStorage.setItem(TAB_KEY, tab); } catch (err2) { }
-      draw();
+      redraw(true);
     } else if (act === "priceseen") {   // 事務所が入れた金額をたしかめた（持ち主 3A）
       await busy("しまっています…", () => supSeePrice(o, me), "金額をたしかめました（「終わった」に入りました）");
-      tab = "owari";
-      try { localStorage.setItem(TAB_KEY, tab); } catch (err2) { }
-      draw();
     }
   }
   main.addEventListener("click", async e => {
@@ -350,7 +342,7 @@ function showHome(me) {
   draw();
   onValue(query(ref(db, "zairyo/orders"), orderByChild("supplier"), equalTo(me.sup)), s => {
     orders = Object.entries(s.val() || {}).map(([id, o]) => ({ id, ...o }));
-    draw();
+    redraw();
     if (wantOpen) {   // 通知を押して開いた（2-6）：その注文のタブにして開く
       const o = live().find(x => x.id === wantOpen);
       wantOpen = "";
