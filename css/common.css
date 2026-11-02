@@ -776,6 +776,16 @@ ul.plain{margin:0;padding-left:1.2em}
 .imp-nums .n-amount{flex:1.2 1 110px}
 .imp-nums .num{text-align:right;font-variant-numeric:tabular-nums}
 .imp-sum{margin:0;font-size:14px}
+/* 「どの注文に入れますか？」：合う注文がないときの説明と2つのボタン（11/2 事務員さん） */
+.imp-dest{display:flex;flex-direction:column;gap:8px}
+.dest-q{border:2px solid var(--amber);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;background:var(--surface)}
+.dest-q h4{margin:0;font-size:16px}
+.dest-q p{margin:0}
+.dest-q ul{margin:0;padding-left:18px;font-size:14px;line-height:1.6}
+.dest-q .choice{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.dest-q .choice .btn{min-height:52px;white-space:normal;line-height:1.3}
+.dest-q .choice .btn[aria-pressed="true"]{background:var(--amber);color:#14191E;border-color:var(--amber)}
+.imp-row .hint.warn{margin:0;font-size:13px}
 @media (max-width:900px){.imp-card{grid-template-columns:1fr}}
 .imp-card.table{grid-template-columns:1fr}
 .imp-log{display:flex;flex-direction:column;gap:6px;padding:8px 0;border-bottom:1px solid var(--line)}

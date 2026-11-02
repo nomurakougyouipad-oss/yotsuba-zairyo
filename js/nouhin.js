@@ -17,6 +17,10 @@
 //   入れたら取りこみの記録（/zairyo/imports：いつ・だれが・どのファイル・どの注文に何を入れたか）。「前の取りこみ」から、まとめて取り消せる
 //   （入れた納品書の金額と単価の記録を消す・「届いた」にした注文はもどす・新しく作った注文は取り消す・請求ずみの注文はさわらない）。
 //   元のスキャンは Storage の zairyo/scans/{端末の番号}/{番号}.jpg に保存して、注文の納品書から見られる
+// - 11/2（事務員さん「入れない」になっていて、どうすればよいか分からなかった）：「入れる先」→「どの注文に入れますか？」。
+//   注番・材料屋の注文がアプリにないときは、その場に説明（引き取りなど、アプリで注文していない分→「新しい注文として入れる」／
+//   送り状・控え→「入れない」のまま）と2つのボタン。金額のない紙に単価・金額を書いたら、自動の「入れない」を外して、えらびなおしてもらう。
+//   数がない行に単価だけ書いたら「数を入れると、金額が出ます」
 import { ref, get, push, set, update, query, limitToLast, onValue, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { ref as sref, uploadBytes, deleteObject } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-storage.js";
 import { db, auth, call, storage } from "./firebase.js";
@@ -313,24 +317,41 @@ export function openImport({ sups, getOrders, me }) {
     /* ---------- 画面 ---------- */
     const sumOf = gr => gr.rows.reduce((s, r) => s + (r.amount || 0), 0);
     const md = ts => { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()}`; };
-    const sumHTML = gr => (noPriceOf(gr) ? "金額のない納品書です（入れると「届いた」にするだけ）" : `明細の合計 <span class="money" data-sum>${yen(sumOf(gr))}</span> 円（税抜）`);
+    const sumHTML = gr => (noPriceOf(gr) ? "金額のない納品書です（入れると「届いた」にするだけ）。単価か金額を入れると、その金額で入ります" : `明細の合計 <span class="money" data-sum>${yen(sumOf(gr))}</span> 円（税抜）`);
     const pageName = c => `${c.name}${c.page ? `（${c.page}ページ）` : ""}`;
     function dupHTML(gr) {
-      const d = dupOf(gr), skip = gr.dest === "skip" ? "「入れない」にしています。入れるときは、入れる先をえらびなおしてください。" : "";
-      if (!d) {   // ① 金額のない紙で、入れる先の注文がない
-        return noPriceOf(gr) && !hitOf(gr) && gr.dest === "skip" ? `<p class="okmsg">金額のない紙です（送り状・受領書など）。入れる先の注文がないので「入れない」にしています。注文を作って入れるときは、「新しい注文として入れる」にえらびなおしてください。</p>` : "";
-      }
+      const d = dupOf(gr), skip = gr.dest === "skip" ? "「入れない」にしています。入れるときは、どの注文に入れるかをえらびなおしてください。" : "";
+      if (!d) return "";   // ① 金額のない紙で、合う注文がないときの説明は、下の「どの注文に入れますか？」に出す（11/2）
       const where = d.o ? `${esc(d.o.supplierName)}・${esc(d.o.chuban)}${d.s.at ? `・${md(d.s.at)} ${esc(d.s.by || "")}` : ""}` : esc(pageName(d.c));
       if (d.priced) return `<p class="okmsg">${d.o ? `金額のある納品書が、もう入っています（${where}）` : `金額のある納品書（${where}）と同じ品物です`}。金額は納品書のほうで入れます。${skip}</p>`;
       const diff = d.amt != null && d.amt !== sumOf(gr) ? `金額がちがいます（${yen(d.amt)}円 と ${yen(sumOf(gr))}円）。どちらかの読みまちがいかもしれません。` : "";
       return `<p class="okmsg">${d.o ? `この納品書は、もう入っています（${where}）` : `同じ納品書${gr.no ? `（番号 ${esc(gr.no)}）` : ""}が、この取りこみの前のほうにもあります（${where}）`}。${diff}${skip}</p>`;
     }
+    /** 数がなくて、単価だけの行（金額が出ない。11/2） */
+    const needQty = r => r.price != null && r.qty == null && r.amount == null;
+    /** どの注文に入れますか（11/2 事務員さん。前は「入れる先」で、「入れない」のときに何をすればよいか分からなかった）。
+     *  この注番・材料屋の注文がアプリにないときは、その場に説明（引き取りなど→新しい注文／送り状・控え→入れない）。
+     *  同じ注番の注文が1つもなければ2つのボタン、ほかの材料屋の注文があれば、えらぶ所 */
+    function destHTML(gr) {
+      const cand = candidates(gr);
+      const opts = `<option value=""${gr.dest ? "" : " selected"}>えらんでください</option>` +
+        cand.map(o => `<option value="${esc(o.id)}"${gr.dest === o.id ? " selected" : ""}>${esc(o.supplierName)}・${esc(o.chuban)} ${esc(zenkana(o.kenmei || ""))}（${ST[o.status].chip}・${new Date(o.orderedAt).getMonth() + 1}/${new Date(o.orderedAt).getDate()} 注文）</option>`).join("") +
+        `<option value="new"${gr.dest === "new" ? " selected" : ""}>新しい注文として入れる（アプリで注文していない分）</option><option value="skip"${gr.dest === "skip" ? " selected" : ""}>入れない（送り状・控えなど）</option>`;
+      const newHint = gr.dest === "new" && gr.chuban ? `<p class="hint">注番 ${esc(gr.chuban)} で、新しい注文を作ってから入れます（工事件名は日報から）。</p>` : "";
+      const none = !dupOf(gr) && CHUBAN_RE.test(gr.chuban) && gr.supId && !cand.some(o => o.supplier === gr.supId);
+      if (!none) return `<label class="mini">どの注文に入れますか？<select class="inp" data-f="dest">${opts}</select></label>${newHint}`;
+      const btn = (v, label) => `<button type="button" class="btn" data-dest="${v}" aria-pressed="${gr.dest === v}">${label}</button>`;
+      return `<div class="dest-q">
+          <h4>どの注文に入れますか？</h4>
+          <p>${gr.handPriced && !noPriceOf(gr) ? "<b>金額を入れたので、金額のある納品書として入れます。</b>" : ""}この注番（${esc(gr.chuban)}）・${esc((sups[gr.supId] || {}).name || "")} の注文は、アプリにありません。</p>
+          <ul><li>職員が引き取りに行った分など、<b>アプリで注文していない分</b> →「新しい注文として入れる」</li>
+            <li><b>送り状・控え</b>（納品書がべつにある）→「入れない」${gr.dest === "skip" ? "のまま" : ""}</li></ul>
+          ${cand.length ? `<select class="inp" data-f="dest" aria-label="どの注文に入れますか">${opts}</select>`
+            : `<div class="choice">${btn("new", "新しい注文として入れる")}${btn("skip", "入れない（送り状・控え）")}</div>`}
+        </div>${newHint}`;
+    }
     function groupHTML(gr, ci, gi) {
       if (gr.saved) return `<div class="imp-g done"><p class="okmsg">入れました：${esc(gr.savedText || "")}</p></div>`;
-      const cand = candidates(gr);
-      const destOpts = `<option value=""${gr.dest ? "" : " selected"}>えらんでください</option>` +
-        cand.map(o => `<option value="${esc(o.id)}"${gr.dest === o.id ? " selected" : ""}>${esc(o.supplierName)}・${esc(o.chuban)} ${esc(zenkana(o.kenmei || ""))}（${ST[o.status].chip}・${new Date(o.orderedAt).getMonth() + 1}/${new Date(o.orderedAt).getDate()} 注文）</option>`).join("") +
-        `<option value="new"${gr.dest === "new" ? " selected" : ""}>新しい注文として入れる</option><option value="skip"${gr.dest === "skip" ? " selected" : ""}>入れない</option>`;
       return `
         <div class="imp-g" data-c="${ci}" data-g="${gi}">
           ${dupHTML(gr)}
@@ -351,12 +372,11 @@ export function openImport({ sups, getOrders, me }) {
                 <label class="mini n-price">単価<input class="inp num" data-rf="price" inputmode="decimal" value="${comma(r.price)}"></label>
                 <label class="mini n-amount">金額<input class="inp num" data-rf="amount" inputmode="numeric" value="${comma(r.amount)}"></label>
               </div>
+              <p class="hint warn" data-rhint${needQty(r) ? "" : " hidden"}>数を入れると、金額が出ます（金額を直接入れてもよい）</p>
             </div>`).join("")}
           </div>
           <p class="imp-sum">${sumHTML(gr)}</p>
-          <label class="mini">入れる先<select class="inp" data-f="dest">${destOpts}</select></label>
-          ${gr.dest === "new" && gr.chuban ? `<p class="hint">注番 ${esc(gr.chuban)} で、新しい注文を作ってから入れます（工事件名は日報から）。</p>` : ""}
-          ${!gr.dest && gr.chuban && gr.supId && !cand.some(o => o.supplier === gr.supId) ? '<p class="hint warn">この注番・材料屋の注文がありません。「新しい注文として入れる」か「入れない」をえらんでください。</p>' : ""}
+          <div class="imp-dest" data-destbox>${destHTML(gr)}</div>
           ${gr.err ? `<p class="err">${esc(gr.err)}</p>` : ""}
         </div>`;
     }
@@ -384,11 +404,15 @@ export function openImport({ sups, getOrders, me }) {
     const ready = () => cards.flatMap(c => c.groups.filter(gr => !gr.saved && gr.dest && gr.dest !== "skip"));
     function render() {
       g("#impList").innerHTML = cards.map(cardHTML).join("");
+      drawFoot();
+    }
+    /** いちばん下の「○件を入れる」 */
+    function drawFoot() {
       const n = ready().length, reading = cards.some(c => c.status === "reading");
       g("#impFoot").hidden = !cards.some(c => c.groups.length);
       const go = g("#impGo");
       go.disabled = !n || reading;
-      go.textContent = reading ? "読んでいます…" : n ? `${n}件を入れる` : "入れる先をえらんでください";
+      go.textContent = reading ? "読んでいます…" : n ? `${n}件を入れる` : "どの注文に入れるか、えらんでください";
     }
     const groupAt = el => { const d = el.closest("[data-g]"); return d ? cards[Number(d.dataset.c)].groups[Number(d.dataset.g)] : null; };
 
@@ -399,6 +423,7 @@ export function openImport({ sups, getOrders, me }) {
       if (t.dataset.read) readCard(cards[Number(t.dataset.read)]);
       else if (t.dataset.force) readCard(cards[Number(t.dataset.force)], true);
       else if (t.dataset.zoom) zoom(cards[Number(t.dataset.zoom)].thumb);
+      else if (t.dataset.dest) { const gr = groupAt(t); gr.dest = t.dataset.dest; gr.picked = true; render(); }   // 「新しい注文として入れる」「入れない」のボタン（11/2）
       else if (t.dataset.rdel) {
         const gr = groupAt(t);
         gr.rows.splice(Number(t.dataset.rdel), 1);
@@ -426,6 +451,7 @@ export function openImport({ sups, getOrders, me }) {
       if (!gr) return;
       if (t.dataset.rf) {
         const r = gr.rows[Number(t.closest("[data-r]").dataset.r)], f = t.dataset.rf;
+        const np0 = noPriceOf(gr);
         if (f === "spec") r.spec = t.value.replace(/\s*\n\s*/g, " ").trim();   // 品名は1行（折りかえして見せるだけ）
         else if (f === "unit") r.unit = t.value.trim();
         else r[f] = toPrice(t.value);
@@ -435,8 +461,19 @@ export function openImport({ sups, getOrders, me }) {
           am.value = comma(r.amount);
         }
         if (f === "amount") t.dataset.touched = "1";
-        const s = t.closest(".imp-g").querySelector(".imp-sum");
+        const box = t.closest(".imp-g"), s = box.querySelector(".imp-sum");
         if (s) s.innerHTML = sumHTML(gr);   // 金額を書くと、金額のない紙から金額のある納品書になる（③）
+        const rh = t.closest("[data-r]").querySelector("[data-rhint]");
+        if (rh) rh.hidden = !needQty(r);   // 数がなくて単価だけ → 金額が出ない（11/2）
+        // 金額を書いて、金額のない紙が金額のある納品書になった（または、もどった）：自分でえらんでいなければ、どの注文に入れるかを決めなおす。
+        // 前は自動の「入れない」のままで、気づかないと入らなかった（11/2）。書いている欄はそのまま（下の所だけ、かきなおす）
+        if (np0 !== noPriceOf(gr)) {
+          gr.handPriced = !noPriceOf(gr);
+          if (!gr.picked) gr.dest = defaultDest(gr);
+          const db = box.querySelector("[data-destbox]");
+          if (db) db.innerHTML = destHTML(gr);
+          drawFoot();
+        }
       } else if (t.dataset.f === "no") gr.no = t.value.trim();
     });
     w.addEventListener("change", e => {
