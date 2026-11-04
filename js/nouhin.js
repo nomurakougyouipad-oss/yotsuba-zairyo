@@ -37,7 +37,7 @@ import { db, auth, call, storage } from "./firebase.js";
 import { esc, zenkana, toast, openSheet } from "./common.js";
 import { ymd } from "./tanomu.js";
 import { addSlip, yen, toPrice, ST, slipsOf, npSlipsOf, addNpSlip, sameItems, sameDay, notInOrder, handSlipsOf, moveSlip, matchScore, bestOrder, linesShort } from "./chumon.js";
-import { watchJobs, CHUBAN_RE } from "./nippo.js";
+import { watchJobs, getJob, CHUBAN_RE } from "./nippo.js";
 import { matchSupplier } from "./line-parse.js";
 import { errorText } from "./touroku.js";
 import { TABLE_OK, readTableFile, textToTable, tableToRows } from "./hyou.js";
@@ -426,7 +426,11 @@ export function openImport({ sups, getOrders, me }) {
       const opts = `<option value=""${gr.dest ? "" : " selected"}>えらんでください</option>` +
         cand.map(o => `<option value="${esc(o.id)}"${gr.dest === o.id ? " selected" : ""}>${esc(o.supplierName)}・${esc(o.chuban)} ${about(o)}</option>`).join("") +
         `<option value="new"${gr.dest === "new" ? " selected" : ""}>新しい注文として入れる（アプリで注文していない分）</option><option value="skip"${gr.dest === "skip" ? " selected" : ""}>入れない（送り状・控えなど）</option>`;
-      const newHint = gr.dest === "new" && gr.chuban ? `<p class="hint">注番 ${esc(gr.chuban)} で、新しい注文を作ってから入れます（工事件名は日報から）。</p>` : "";
+      // 日報にない注番なら、そう知らせる（11/4 ①。件名・担当が日報から入らない。日報にあるときは、いまの1行のまま）
+      const noJob = gr.dest === "new" && CHUBAN_RE.test(gr.chuban) && jobs && !jobs.all.has(gr.chuban);
+      const newHint = gr.dest !== "new" || !gr.chuban ? ""
+        : noJob ? `<p class="hint warn">日報に、この注番（${esc(gr.chuban)}）がありません。件名は「（納品書から入れた注文）」、担当は空で作ります（あとで注文の画面の「注文を直す」で入れられます）。</p>`
+        : `<p class="hint">注番 ${esc(gr.chuban)} で、新しい注文を作ってから入れます（工事件名は日報から）。</p>`;
       const none = !d && CHUBAN_RE.test(gr.chuban) && gr.supId && !cand.some(o => o.supplier === gr.supId);
       if (!none) {
         const a = actOf(gr), ho = handWait(gr) ? orderOf(gr.dest) : a && a.kind === "skip" ? orderOf(a.to) : null;   // 「入れない」を押したあとも、箱は出しておく
@@ -799,7 +803,8 @@ export function openImport({ sups, getOrders, me }) {
     /** 納品書から新しい注文を作る（まだ届いていない注文として作ってから、納品書を入れる） */
     async function newOrder(gr) {
       const sup = sups[gr.supId];
-      const job = jobs && jobs.all.get(gr.chuban);
+      // 件名・担当は日報から。日報の一覧をまだ読めていなければ、この注番だけ読む（11/4 ②。読めなくても注文は作る）
+      const job = jobs ? jobs.all.get(gr.chuban) : await getJob(gr.chuban).catch(() => null);
       const lines = {};
       gr.rows.forEach((r, i) => {
         lines["l" + String(i + 1).padStart(2, "0")] = { spec: r.spec || "（品名なし）", qty: r.qty > 0 ? r.qty : 1, unit: r.unit || "式" };
