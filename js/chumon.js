@@ -210,18 +210,40 @@ export const cost = o => (o.seikyu != null ? o.seikyu : o.nouhin != null ? o.nou
 /** 納品書（入れた順） [[id, slip]] */
 export const slipsOf = o => Object.entries(o.slips || {}).sort(([, a], [, b]) => (a.at || 0) - (b.at || 0));
 
+/** 手で入れた納品書の金額（事務所の「納品書の金額を入れる」と、材料屋のアプリ。取りこみの印 imp がない）[[id, slip]]（11/4） */
+export const handSlipsOf = o => slipsOf(o).filter(([, s]) => !s.imp);
+/** 単価の記録のうち、この注文のこの納品書の分（注文・日付・品名・単価が同じ。材料屋が入れた分は slip:"sup"） */
+const pricesOfSlip = (ps, o, sid, s) => Object.keys(ps).filter(pid => {
+  const p = ps[pid];
+  if (!p || p.orderId !== o.id) return false;
+  if (sid === "sup") return p.slip === "sup";
+  return p.slip !== "sup" && p.date === s.date && Object.values(s.rows || {}).some(r => r.spec === p.spec && r.price === p.price);
+});
+const logKey = o => push(ref(db, `zairyo/orders/${o.id}/log`)).key;
+
 /** 納品書の金額を入れる。slip = {no, date, amount, rows:{品物id:{spec, qty, unit, price?, amount}}}
  *  まだ届いていない注文なら「届いた」にする。単価があれば単価の記録（/zairyo/prices）にも残す
  *  （取りこみのときは slip に scan（スキャンの置き場所）と imp（取りこみの番号）もつく）
+ *  replace：消して置きかえる納品書の番号（手で入れた金額を、取りこんだ納品書に置きかえる。11/4）。その単価の記録も消す
  *  返り値：{ sid: 納品書の番号, priceIds: 単価の記録の番号, arrived: 「届いた」にしたか }（まとめて取り消すときに使う） */
-export async function addSlip(o, slip, me) {
+export async function addSlip(o, slip, me, { replace = [] } = {}) {
   const sid = push(ref(db, `zairyo/orders/${o.id}/slips`)).key;
-  const total = slipsOf(o).reduce((s, [, x]) => s + (Number(x.amount) || 0), 0) + (Number(slip.amount) || 0);
+  const total = slipsOf(o).filter(([id]) => !replace.includes(id)).reduce((s, [, x]) => s + (Number(x.amount) || 0), 0) + (Number(slip.amount) || 0);
   const base = `zairyo/orders/${o.id}`;
   const upd = {
     [`${base}/slips/${sid}`]: { ...slip, by: me.name, at: serverTimestamp() },
     [`${base}/nouhin`]: total,
   };
+  if (replace.length) {
+    const ps = (await get(ref(db, "zairyo/prices"))).val() || {};
+    for (const id of replace) {
+      const old = (o.slips || {})[id];
+      if (!old) continue;
+      upd[`${base}/slips/${id}`] = null;
+      pricesOfSlip(ps, o, id, old).forEach(pid => { upd[`zairyo/prices/${pid}`] = null; });
+      upd[`${base}/log/${logKey(o)}`] = { at: serverTimestamp(), by: me.name || "事務所", what: `手で入れた納品書の金額（${yen(old.amount)}円${old.date ? "・" + old.date : ""}）を、取りこんだ納品書${slip.no ? " No." + slip.no : ""}に置きかえた` };
+    }
+  }
   if (o.status === "wait") {
     upd[`${base}/status`] = "arrived";
     upd[`${base}/arrivedAt`] = serverTimestamp();
@@ -302,6 +324,54 @@ export async function removeNpSlip(o, id) {
 export async function setRowOrd(o, np, sid, rid, ord) {
   await update(ref(db, `zairyo/orders/${o.id}/${np ? "npSlips" : "slips"}/${sid}/rows/${rid}`), { ord });
 }
+
+/** 納品書を、ほかの注文に移す（11/4 YY26079：もう入っている納品書を、ちがう注文に入れなおして2回入った）。
+ *  from から消して to に入れる（番号はそのまま）。単価の記録と、取りこみの記録の注文も to にする（まとめて取り消すと to から消える）。
+ *  to がまだ届いていなければ「届いた」に。from の「届いた」は、そのまま */
+export async function moveSlip(from, to, sid, me) {
+  const s = (from.slips || {})[sid];
+  if (!s) throw new Error("移す納品書が見つかりません");
+  const sum = list => list.reduce((t, [, x]) => t + (Number(x.amount) || 0), 0);
+  const restFrom = slipsOf(from).filter(([id]) => id !== sid), toList = slipsOf(to);
+  const fb = `zairyo/orders/${from.id}`, tb = `zairyo/orders/${to.id}`;
+  const what = `納品書${s.no ? " No." + s.no : ""}（${yen(s.amount)}円）`;
+  const upd = {
+    [`${fb}/slips/${sid}`]: null,
+    [`${fb}/nouhin`]: restFrom.length ? sum(restFrom) : null,
+    [`${fb}/log/${logKey(from)}`]: { at: serverTimestamp(), by: me.name || "事務所", what: `${what}を、ほかの注文（${Object.values(to.lines || {}).map(l => l.spec).join("・").slice(0, 60)}）に移した` },
+    [`${tb}/slips/${sid}`]: { ...s, at: serverTimestamp() },
+    [`${tb}/nouhin`]: sum(toList) + (Number(s.amount) || 0),
+    [`${tb}/log/${logKey(to)}`]: { at: serverTimestamp(), by: me.name || "事務所", what: `${what}を、ほかの注文（${Object.values(from.lines || {}).map(l => l.spec).join("・").slice(0, 60)}）から移した` },
+  };
+  if (to.status === "wait") {
+    upd[`${tb}/status`] = "arrived";
+    upd[`${tb}/arrivedAt`] = serverTimestamp();
+    upd[`${tb}/arrivedBy`] = me.name;
+  }
+  const ps = (await get(ref(db, "zairyo/prices"))).val() || {};
+  pricesOfSlip(ps, from, sid, s).forEach(pid => { upd[`zairyo/prices/${pid}/orderId`] = to.id; });
+  if (s.imp) {
+    const rec = (await get(ref(db, `zairyo/imports/${s.imp}`))).val();
+    Object.entries((rec && rec.items) || {}).forEach(([i, it]) => { if (it && it.slipId === sid) upd[`zairyo/imports/${s.imp}/items/${i}/orderId`] = to.id; });
+  }
+  await update(ref(db), upd);
+}
+
+/* ---------- 同じ注番・同じ材料屋の注文が2つ以上あるとき、品名が合う注文をえらぶ（11/4 YY26079） ----------
+   品名の言葉（カタカナ・英字2字から）が同じなら1点、サイズの数字（10×25 の 10 と 25 など）が同じなら2点。行ごとに、いちばん合う品物の点を足す。
+   本物の納品書でためすと、10X25 → M10×25、6X15 → M6×15、シートペーパー → シートペーパーの注文、と全部合った */
+const scoreWords = s => specNorm(s).match(/[ァ-ヴー]{2,}|[A-Z]{2,}[A-Z0-9]*/g) || [];
+const scoreNums = s => [...new Set(specNorm(s).match(/\d+(\.\d+)?/g) || [])];
+function lineScore(a, b) {
+  const A = scoreWords(a), B = scoreWords(b), N = new Set(scoreNums(b));
+  return A.filter(x => B.some(y => x.includes(y) || y.includes(x))).length + 2 * scoreNums(a).filter(n => N.has(n)).length;
+}
+/** 注文の品物と、納品書の行がどれだけ合うか（点） */
+export const matchScore = (o, rows) => rows.reduce((t, r) => t + Math.max(0, ...Object.values(o.lines || {}).map(l => lineScore(l.spec, r.spec))), 0);
+/** いちばん合う注文（同じ点なら、はじめの注文＝新しい注文） */
+export const bestOrder = (os, rows) => os.reduce((b, o) => (!b || matchScore(o, rows) > matchScore(b, rows) ? o : b), null);
+/** 注文の品物の短い名前（えらぶ所・知らせ用） */
+export const linesShort = (o, n = 40) => { const t = Object.values(o.lines || {}).map(l => l.spec).join("・"); return t.length > n ? t.slice(0, n) + "…" : t; };
 
 /** 納品書を消す（入れまちがえたとき） */
 export async function removeSlip(o, sid) {

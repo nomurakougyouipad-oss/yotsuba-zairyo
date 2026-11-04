@@ -815,6 +815,9 @@ ul.plain{margin:0;padding-left:1.2em}
 .dest-q .choice{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .dest-q .choice .btn{min-height:52px;white-space:normal;line-height:1.3}
 .dest-q .choice .btn[aria-pressed="true"]{background:var(--amber);color:#14191E;border-color:var(--amber)}
+.dest-q .choice.c3{grid-template-columns:repeat(3,1fr)}   /* 手で入れた金額：入れない・置きかえる・足す（11/4） */
+@media (max-width:640px){.dest-q .choice.c3{grid-template-columns:1fr}}
+.notbox>.btn{margin-top:8px}
 /* 11/4：「上の注番・材料屋を直すと…」と「この注文ではありませんか？」（注番が1字ちがいの注文。ちがう字に線） */
 .dest-q .dest-tip{font-size:14px}
 .dest-near{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-radius:10px;background:var(--surface2)}
