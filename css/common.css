@@ -785,6 +785,15 @@ ul.plain{margin:0;padding-left:1.2em}
 .dest-q .choice{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .dest-q .choice .btn{min-height:52px;white-space:normal;line-height:1.3}
 .dest-q .choice .btn[aria-pressed="true"]{background:var(--amber);color:#14191E;border-color:var(--amber)}
+/* 11/4：「上の注番・材料屋を直すと…」と「この注文ではありませんか？」（注番が1字ちがいの注文。ちがう字に線） */
+.dest-q .dest-tip{font-size:14px}
+.dest-near{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-radius:10px;background:var(--surface2)}
+.dest-near .dest-near-h{font-weight:800}
+.near-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.near-row>span{flex:1 1 220px;min-width:0}
+.near-row .btn{min-height:44px;flex:0 0 auto}
+.dest-near .dif{color:var(--amber);text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:3px}
+.imp-top{display:contents}
 .imp-row .hint.warn{margin:0;font-size:13px}
 @media (max-width:900px){.imp-card{grid-template-columns:1fr}}
 .imp-card.table{grid-template-columns:1fr}

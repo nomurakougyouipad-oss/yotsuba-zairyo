@@ -21,6 +21,10 @@
 //   注番・材料屋の注文がアプリにないときは、その場に説明（引き取りなど、アプリで注文していない分→「新しい注文として入れる」／
 //   送り状・控え→「入れない」のまま）と2つのボタン。金額のない紙に単価・金額を書いたら、自動の「入れない」を外して、えらびなおしてもらう。
 //   数がない行に単価だけ書いたら「数を入れると、金額が出ます」
+// - 11/4（事務員さん）：注番を打ちなおしたら、7字そろったときに（欄から出たときも）すぐ合う注文をさがしなおす。知らせと
+//   「どの注文に入れますか？」だけかきなおす（全部かきなおすと、押したボタンが入れかわって1回目が効かなかった）。
+//   材料屋・注番の知らせは、いまの材料屋・注番で毎回出す（正しく直したら消える）。説明の箱に「上の注番・材料屋を直すと、合う注文が出ます」。
+//   注番が1字ちがい（となりの2字の入れかわりも）の同じ材料屋の注文があれば「この注文ではありませんか？」（押すと注番を直して、その注文に入れる）
 import { ref, get, push, set, update, query, limitToLast, onValue, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { ref as sref, uploadBytes, deleteObject } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-storage.js";
 import { db, auth, call, storage } from "./firebase.js";
@@ -126,7 +130,7 @@ const sameDay = (a, b) => !a || !b || a === b;
 /** 金額のない紙か（どの行にも金額がない・ぜんぶ 0 も同じ。③）。材料集計表は、いつも金額のある表 */
 const noPriceOf = gr => !gr.table && gr.rows.every(r => r.amount == null || r.amount === 0);
 
-function toGroups(res, supList, prefixOk) {
+function toGroups(res, supList) {
   const head = extractChubans(res.chuban);
   const notes = [];
   let fromName = false;
@@ -155,14 +159,11 @@ function toGroups(res, supList, prefixOk) {
     };
     g.doubt = [...doubt0, ...notes];
     if (by.size > 1) g.doubt.unshift(`1枚の納品書を注番ごとに ${by.size}つに分けました`);
-    if (!m.id && res.supplier) g.doubt.push(`材料屋「${res.supplier}」が分かりません。えらんでください`);
     if (total != null && Math.abs(total - all) > 1) g.doubt.push(`明細の合計 ${yen(all)}円 と、納品書の合計 ${yen(total)}円 がちがいます`);
     if (noPriceOf(g)) { if (rs.some(r => r.amount === 0)) g.doubt.push("金額がぜんぶ 0 です。金額のない紙としてあつかいます"); }
     else if (rs.some(r => r.amount == null)) g.doubt.push("金額が読めない行があります");
     if (rs.some(r => REPAIR.test(r.spec))) g.doubt.push("修理・工賃の行があります。材料費に入れないなら、その行を消してください（×）");
-    if (!chuban) g.doubt.push("注番が読めませんでした。入れてください");
-    else if (!prefixOk(chuban)) g.doubt.push(`注番の頭文字「${chuban.slice(0, 2)}」が、注番の会社の表にありません`);
-    return g;
+    return g;   // 材料屋・注番の知らせは、いまの材料屋・注番で毎回出す（openImport の keyDoubts）
   });
 }
 
@@ -170,7 +171,7 @@ function toGroups(res, supList, prefixOk) {
 export function openImport({ sups, getOrders, me }) {
   const supList = Object.entries(sups || {}).sort(byOrder);
   const cards = [];   // [{ name, page, thumb, parts, status: "wait"|"reading"|"done"|"err"|"notslip", kind, err, groups }]
-  let jobs = null, stopJobs = null, closeLog = null, kaisha = {}, kotei = {};
+  let jobs = null, stopJobs = null, closeLog = null, kaisha = {}, kotei = {}, codesOk = false;
   const prefixOk = ch => !!kaisha[ch.slice(0, 2)] || Object.keys(kotei).some(k => k.slice(0, 2) === ch.slice(0, 2));
 
   const html = `
@@ -193,8 +194,8 @@ export function openImport({ sups, getOrders, me }) {
     const w = panel.querySelector("#impWrap");
     const g = s => w.querySelector(s);
     stopJobs = watchJobs(d => { jobs = d; }, () => { });
-    get(ref(db, "common/kaisha")).then(s => { kaisha = s.val() || {}; }, () => { });
-    get(ref(db, "common/kotei")).then(s => { kotei = s.val() || {}; }, () => { });
+    Promise.all([get(ref(db, "common/kaisha")).then(s => { kaisha = s.val() || {}; }), get(ref(db, "common/kotei")).then(s => { kotei = s.val() || {}; })])
+      .then(() => { codesOk = true; }, () => { });   // 読めるまでは、頭文字の知らせは出さない（まちがって出さないように）
 
     /* ---------- 読む ---------- */
     async function addFiles(files) {
@@ -234,10 +235,7 @@ export function openImport({ sups, getOrders, me }) {
           dest: "", saved: false, err: "", table: true,
           doubt: [`表の ${rs.map(r => r.at).join("・")} 行目`],
         };
-        if (!m.id) gr.doubt.push(r0.supRaw ? `材料屋「${r0.supRaw}」が分かりません。えらんでください` : "材料屋の列がありません。えらんでください");
         if (rs.some(r => REPAIR.test(r.spec))) gr.doubt.push("修理・工賃の行があります。材料費に入れないなら、その行を消してください（×）");
-        if (!CHUBAN_RE.test(chuban)) gr.doubt.push("注番が読めませんでした。入れてください");
-        else if (!prefixOk(chuban)) gr.doubt.push(`注番の頭文字「${chuban.slice(0, 2)}」が、注番の会社の表にありません`);
         gr.dest = defaultDest(gr);
         return gr;
       });
@@ -262,7 +260,7 @@ export function openImport({ sups, getOrders, me }) {
         if (!s.isSlip) { c.status = "notslip"; c.kind = s.kind || "納品書ではない書類"; }
         else {
           c.status = "done";
-          c.groups = toGroups(s, supList, prefixOk);
+          c.groups = toGroups(s, supList);
           if (!c.groups.length) { c.status = "err"; c.err = "品物の行が読めませんでした"; }
           // 入れる先は、自分でえらんでいない紙は全部決めなおす（あとから読んだ金額のある紙と、前に読んだ金額のない紙が同じ品物のときのため。②）
           cards.forEach(x => x.groups.forEach(gr => { if (!gr.saved && !gr.picked) gr.dest = defaultDest(gr); }));
@@ -313,6 +311,33 @@ export function openImport({ sups, getOrders, me }) {
       if (hit) return hit.id;
       return noPriceOf(gr) ? "skip" : "";   // 合う注文がないときは、事務員さんが「新しい注文として入れる」か「入れない」をえらぶ。金額のない紙は「入れない」（①）
     }
+    /** 注番が1字ちがいか、となりの2字が入れかわっている（11/4 読みまちがいかもしれない注番） */
+    function nearChuban(a, b) {
+      if (!a || !b || a === b || a.length !== b.length) return false;
+      const d = [...a].flatMap((c, i) => (c === b[i] ? [] : [i]));
+      return d.length === 1 || (d.length === 2 && d[1] === d[0] + 1 && a[d[0]] === b[d[1]] && a[d[1]] === b[d[0]]);
+    }
+    /** 「この注文ではありませんか？」：注番が近い、同じ材料屋の注文（まだ届いていないか届いた。待ち・新しい順に3つまで） */
+    const nearOf = gr => (getOrders() || []).filter(o => o.supplier === gr.supId && (o.status === "wait" || o.status === "arrived") && nearChuban(o.chuban, gr.chuban))
+      .sort((a, b) => (a.status === "wait" ? 0 : 1) - (b.status === "wait" ? 0 : 1) || (b.orderedAt || 0) - (a.orderedAt || 0)).slice(0, 3);
+
+    /** 材料屋・注番の知らせ（11/4：いまの材料屋・注番で毎回出す。前は読んだときのままで、正しく直しても消えなかった） */
+    function keyDoubts(gr) {
+      const d = [];
+      if (!gr.supId && gr.supRaw) d.push(`材料屋「${gr.supRaw}」が分かりません。えらんでください`);
+      else if (!gr.supId && gr.table) d.push("材料屋の列がありません。えらんでください");
+      if (!CHUBAN_RE.test(gr.chuban)) d.push(gr.chEdited ? "注番を正しく入れてください（例 AB26123）" : "注番が読めませんでした。入れてください");
+      else if (codesOk && !prefixOk(gr.chuban)) d.push(`注番の頭文字「${gr.chuban.slice(0, 2)}」が、注番の会社の表にありません`);
+      return d;
+    }
+    /** 注番が変わった（11/4）：合う注文をさがしなおして、知らせと「どの注文に入れますか？」だけかきなおす */
+    function setChuban(gr, v) {
+      gr.chuban = v;
+      gr.chEdited = true;
+      gr.picked = false;   // 前の注番でえらんだ入れる先は、えらびなおし
+      gr.dest = defaultDest(gr);
+      refresh();
+    }
 
     /* ---------- 画面 ---------- */
     const sumOf = gr => gr.rows.reduce((s, r) => s + (r.amount || 0), 0);
@@ -331,19 +356,30 @@ export function openImport({ sups, getOrders, me }) {
     const needQty = r => r.price != null && r.qty == null && r.amount == null;
     /** どの注文に入れますか（11/2 事務員さん。前は「入れる先」で、「入れない」のときに何をすればよいか分からなかった）。
      *  この注番・材料屋の注文がアプリにないときは、その場に説明（引き取りなど→新しい注文／送り状・控え→入れない）。
-     *  同じ注番の注文が1つもなければ2つのボタン、ほかの材料屋の注文があれば、えらぶ所 */
+     *  同じ注番の注文が1つもなければ2つのボタン、ほかの材料屋の注文があれば、えらぶ所。
+     *  11/4：いちばん上に「上の注番・材料屋を直すと、合う注文が出ます」。注番が1字ちがいの注文があれば「この注文ではありませんか？」 */
     function destHTML(gr) {
       const cand = candidates(gr);
+      const about = o => `${esc(zenkana(o.kenmei || ""))}（${ST[o.status].chip}・${md(o.orderedAt)} 注文）`;
       const opts = `<option value=""${gr.dest ? "" : " selected"}>えらんでください</option>` +
-        cand.map(o => `<option value="${esc(o.id)}"${gr.dest === o.id ? " selected" : ""}>${esc(o.supplierName)}・${esc(o.chuban)} ${esc(zenkana(o.kenmei || ""))}（${ST[o.status].chip}・${new Date(o.orderedAt).getMonth() + 1}/${new Date(o.orderedAt).getDate()} 注文）</option>`).join("") +
+        cand.map(o => `<option value="${esc(o.id)}"${gr.dest === o.id ? " selected" : ""}>${esc(o.supplierName)}・${esc(o.chuban)} ${about(o)}</option>`).join("") +
         `<option value="new"${gr.dest === "new" ? " selected" : ""}>新しい注文として入れる（アプリで注文していない分）</option><option value="skip"${gr.dest === "skip" ? " selected" : ""}>入れない（送り状・控えなど）</option>`;
       const newHint = gr.dest === "new" && gr.chuban ? `<p class="hint">注番 ${esc(gr.chuban)} で、新しい注文を作ってから入れます（工事件名は日報から）。</p>` : "";
       const none = !dupOf(gr) && CHUBAN_RE.test(gr.chuban) && gr.supId && !cand.some(o => o.supplier === gr.supId);
       if (!none) return `<label class="mini">どの注文に入れますか？<select class="inp" data-f="dest">${opts}</select></label>${newHint}`;
       const btn = (v, label) => `<button type="button" class="btn" data-dest="${v}" aria-pressed="${gr.dest === v}">${label}</button>`;
+      const near = nearOf(gr);
+      const dif = ch => [...ch].map((c, i) => (c === gr.chuban[i] ? esc(c) : `<span class="dif">${esc(c)}</span>`)).join("");   // ちがう字に線
+      const nearHTML = near.length ? `<div class="dest-near">
+          <p class="dest-near-h">この注文ではありませんか？</p>
+          ${near.map(o => `<div class="near-row"><span>${esc(o.supplierName)}・<b>${dif(o.chuban)}</b> ${about(o)}</span><button type="button" class="btn" data-near="${esc(o.id)}">この注文に入れる</button></div>`).join("")}
+          <p class="hint">押すと、上の注番をその注文の注番に直して、その注文に入れます。</p>
+        </div>` : "";
       return `<div class="dest-q">
           <h4>どの注文に入れますか？</h4>
+          <p class="dest-tip">注番や材料屋の読みまちがいかもしれないときは、上の注番・材料屋を直すと、合う注文が出ます。</p>
           <p>${gr.handPriced && !noPriceOf(gr) ? "<b>金額を入れたので、金額のある納品書として入れます。</b>" : ""}この注番（${esc(gr.chuban)}）・${esc((sups[gr.supId] || {}).name || "")} の注文は、アプリにありません。</p>
+          ${nearHTML}
           <ul><li>職員が引き取りに行った分など、<b>アプリで注文していない分</b> →「新しい注文として入れる」</li>
             <li><b>送り状・控え</b>（納品書がべつにある）→「入れない」${gr.dest === "skip" ? "のまま" : ""}</li></ul>
           ${cand.length ? `<select class="inp" data-f="dest" aria-label="どの注文に入れますか">${opts}</select>`
@@ -354,8 +390,7 @@ export function openImport({ sups, getOrders, me }) {
       if (gr.saved) return `<div class="imp-g done"><p class="okmsg">入れました：${esc(gr.savedText || "")}</p></div>`;
       return `
         <div class="imp-g" data-c="${ci}" data-g="${gi}">
-          ${dupHTML(gr)}
-          ${gr.doubt.length ? `<ul class="imp-doubt">${gr.doubt.map(d => `<li>${esc(d)}</li>`).join("")}</ul>` : ""}
+          <div class="imp-top" data-topbox>${topHTML(gr)}</div>
           <div class="imp-f">
             <label class="mini">材料屋<select class="inp" data-f="supId"><option value="">えらんでください</option>${supList.map(([id, s]) => `<option value="${esc(id)}"${gr.supId === id ? " selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
             <label class="mini">注番<input class="inp" data-f="chuban" value="${esc(gr.chuban)}" maxlength="12" autocapitalize="characters"></label>
@@ -406,6 +441,24 @@ export function openImport({ sups, getOrders, me }) {
       g("#impList").innerHTML = cards.map(cardHTML).join("");
       drawFoot();
     }
+    /** 1枚の上の知らせ（同じ納品書・たしかめてほしい所） */
+    function topHTML(gr) {
+      const d = [...gr.doubt, ...keyDoubts(gr)];
+      return dupHTML(gr) + (d.length ? `<ul class="imp-doubt">${d.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : "");
+    }
+    /** 中が変わったときだけ入れかえる（同じなら、そのまま。押そうとしているボタンを入れかえない） */
+    const put = (el, html) => { if (el && el._html !== html) { el.innerHTML = html; el._html = html; } };
+    /** 知らせと「どの注文に入れますか？」と下のボタンだけ、かきなおす（11/4）。
+     *  全部かきなおすと、打っている欄や、押そうとしたボタンが入れかわって、1回目のボタンが効かなかった */
+    function refresh() {
+      cards.forEach((c, ci) => c.groups.forEach((gr, gi) => {
+        const box = g(`.imp-g[data-c="${ci}"][data-g="${gi}"]`);
+        if (!box) return;
+        put(box.querySelector("[data-topbox]"), topHTML(gr));
+        put(box.querySelector("[data-destbox]"), destHTML(gr));
+      }));
+      drawFoot();
+    }
     /** いちばん下の「○件を入れる」 */
     function drawFoot() {
       const n = ready().length, reading = cards.some(c => c.status === "reading");
@@ -424,6 +477,16 @@ export function openImport({ sups, getOrders, me }) {
       else if (t.dataset.force) readCard(cards[Number(t.dataset.force)], true);
       else if (t.dataset.zoom) zoom(cards[Number(t.dataset.zoom)].thumb);
       else if (t.dataset.dest) { const gr = groupAt(t); gr.dest = t.dataset.dest; gr.picked = true; render(); }   // 「新しい注文として入れる」「入れない」のボタン（11/2）
+      else if (t.dataset.near) {   // 「この注文ではありませんか？」の「この注文に入れる」（11/4）：注番をその注文の注番に直して、その注文に入れる
+        const gr = groupAt(t), o = (getOrders() || []).find(x => x.id === t.dataset.near);
+        if (!gr || !o) return;
+        gr.chuban = o.chuban;
+        gr.chEdited = true;
+        const d = dupOf(gr);   // もうその注文に入っている納品書なら「入れない」（同じ納品書の知らせが出る）
+        gr.dest = d ? "skip" : o.id;
+        gr.picked = !d;
+        render();
+      }
       else if (t.dataset.rdel) {
         const gr = groupAt(t);
         gr.rows.splice(Number(t.dataset.rdel), 1);
@@ -470,17 +533,24 @@ export function openImport({ sups, getOrders, me }) {
         if (np0 !== noPriceOf(gr)) {
           gr.handPriced = !noPriceOf(gr);
           if (!gr.picked) gr.dest = defaultDest(gr);
-          const db = box.querySelector("[data-destbox]");
-          if (db) db.innerHTML = destHTML(gr);
-          drawFoot();
+          refresh();
         }
+      } else if (t.dataset.f === "chuban") {
+        // 7字そろったら（例 AB26123）、欄から出るのを待たずに、すぐ合う注文をさがしなおす（11/4）。そろっていない間は、欄から出たとき（change）
+        const v = fixChuban(t.value);
+        if (CHUBAN_RE.test(v) && v !== gr.chuban) setChuban(gr, v);
       } else if (t.dataset.f === "no") gr.no = t.value.trim();
     });
     w.addEventListener("change", e => {
       const t = e.target, gr = groupAt(t);
       if (!gr || !t.dataset.f) return;
+      if (t.dataset.f === "chuban") {   // 欄から出たとき：7字でない注番も、ここでさがしなおす。全部はかきなおさない（押そうとしたボタンが入れかわらないように。11/4）
+        const v = fixChuban(t.value);
+        t.value = v;
+        if (v !== gr.chuban) setChuban(gr, v);
+        return;
+      }
       if (t.dataset.f === "supId") { gr.supId = t.value; gr.dest = defaultDest(gr); }
-      else if (t.dataset.f === "chuban") { gr.chuban = fixChuban(t.value); gr.dest = defaultDest(gr); }
       else if (t.dataset.f === "date") gr.date = t.value;
       else if (t.dataset.f === "dest") { gr.dest = t.value; gr.picked = true; }   // 自分でえらんだ入れる先は、あとで読んだ紙では変えない
       render();
