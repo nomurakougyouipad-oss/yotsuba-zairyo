@@ -3,7 +3,7 @@
     ".read": false,
     ".write": false,
     "common": {
-      ".read": "auth != null && (auth.token.zr_role == 'genba' || auth.token.zr_role == 'office') && root.child('zairyo/devices/' + auth.uid + '/role').val() == auth.token.zr_role",
+      ".read": "(auth != null && (auth.token.zr_role == 'genba' || auth.token.zr_role == 'office') && root.child('zairyo/devices/' + auth.uid + '/role').val() == auth.token.zr_role) || (auth != null && auth.token.dc_role == 'office' && root.child('daicho/devices/' + auth.uid + '/role').val() == 'office')",
       ".write": "auth != null && auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office'",
       "kaisha": {
         "$code": {
@@ -429,7 +429,7 @@
         }
       },
       "orders": {
-        ".read": "auth != null && ((auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office') || (auth.token.zr_role == 'genba' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'genba' && query.orderByChild == 'chumonsha' && query.equalTo == auth.token.zr_name) || (auth.token.zr_role == 'sup' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'sup' && root.child('zairyo/devices/' + auth.uid + '/sup').val() == auth.token.zr_sup && query.orderByChild == 'supplier' && query.equalTo == auth.token.zr_sup))",
+        ".read": "(auth != null && ((auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office') || (auth.token.zr_role == 'genba' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'genba' && query.orderByChild == 'chumonsha' && query.equalTo == auth.token.zr_name) || (auth.token.zr_role == 'sup' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'sup' && root.child('zairyo/devices/' + auth.uid + '/sup').val() == auth.token.zr_sup && query.orderByChild == 'supplier' && query.equalTo == auth.token.zr_sup))) || (auth != null && auth.token.dc_role == 'office' && root.child('daicho/devices/' + auth.uid + '/role').val() == 'office')",
         ".indexOn": ["chumonsha", "reqId", "chuban", "orderedAt", "supplier"],
         "$id": {
           ".read": "auth != null && ((auth.token.zr_role == 'office' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'office') || (auth.token.zr_role == 'genba' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'genba' && data.child('chumonsha').val() == auth.token.zr_name) || (auth.token.zr_role == 'sup' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'sup' && root.child('zairyo/devices/' + auth.uid + '/sup').val() == auth.token.zr_sup && data.child('supplier').val() == auth.token.zr_sup))",
@@ -586,6 +586,37 @@
           },
           "$other": { ".validate": false }
         }
+      }
+    },
+    "daicho": {
+      "devices": {
+        ".read": "auth != null && auth.token.dc_role == 'office' && root.child('daicho/devices/' + auth.uid + '/role').val() == 'office'",
+        "$uid": {
+          ".read": "auth != null && auth.uid == $uid",
+          "seenAt": { ".write": "auth != null && auth.uid == $uid && data.parent().child('role').exists() && data.parent().child('role').val() == auth.token.dc_role", ".validate": "newData.isNumber() && newData.val() == now" },
+          "kiki": { ".write": "auth != null && auth.uid == $uid && data.parent().child('role').exists() && data.parent().child('role').val() == auth.token.dc_role", ".validate": "newData.isString() && newData.val().length <= 40" }
+        }
+      },
+      "rates": {
+        ".read": "auth != null && auth.token.dc_role == 'office' && root.child('daicho/devices/' + auth.uid + '/role').val() == 'office'",
+        ".write": "auth != null && auth.token.dc_role == 'office' && root.child('daicho/devices/' + auth.uid + '/role').val() == 'office'",
+        "$from": {
+          ".validate": "$from.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) && newData.hasChildren(['kinds'])",
+          "kinds": {
+            "$kind": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000" }
+          },
+          "minus": { ".validate": "newData.isString() && newData.val().length <= 10" },
+          "setAt": { ".validate": "newData.isNumber()" },
+          "setBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "memo": { ".validate": "newData.isString() && newData.val().length <= 100" },
+          "$other": { ".validate": false }
+        }
+      },
+      "settei": {
+        ".read": "auth != null && auth.token.dc_role == 'office' && root.child('daicho/devices/' + auth.uid + '/role').val() == 'office'",
+        ".write": "auth != null && auth.token.dc_role == 'office' && root.child('daicho/devices/' + auth.uid + '/role').val() == 'office'",
+        "matDate": { ".validate": "newData.val() == 'ordered' || newData.val() == 'arrived' || newData.val() == 'billed'" },
+        "$other": { ".validate": false }
       }
     }
   }
