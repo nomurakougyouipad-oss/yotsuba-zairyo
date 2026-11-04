@@ -2,6 +2,9 @@
 // - 品物ごとに Kg・¥/kg（書かなくてもよい。入れると金額と単価が自動で出る。見積の返事と同じ）・単価（入れると金額＝単価×数）
 // - 合計（税抜）は、手で入れていなければ品物の金額の合計。納品書の番号（あれば）・日付
 // - はじめに入れておく値：直すときは前の納品書の値。新しく入れるときは見積の単価（qprice）
+// - 11/4（OS26315：取りこんだ納品書の5行を、手でもう一度入れて2回数えた）：もう納品書で入っている品物（done）は、
+//   「納品書で入っています」と出して、金額の計算と明細に入れない（「それでも入れる」で入れられる）。
+//   合計を手で入れて、その品物の分までふくめていたら止める
 import { esc } from "./common.js";
 import { lineText, ymd } from "./tanomu.js";
 import { toPrice, yen, azkText } from "./chumon.js";
@@ -9,8 +12,9 @@ import { toPrice, yen, azkText } from "./chumon.js";
 const comma = n => (n == null || n === "" ? "" : Number(n).toLocaleString("ja-JP", { maximumFractionDigits: 2 }));
 const round2 = n => Math.round(n * 100) / 100;
 
-/** 欄。o＝注文、slip＝前の納品書（直すとき）、date＝はじめの日付（なければ今日） */
-export function slipFormHTML(o, { slip = null, date = "" } = {}) {
+/** 欄。o＝注文、slip＝前の納品書（直すとき）、date＝はじめの日付（なければ今日）
+ *  done＝もう納品書で入っている品物 {品物id: {text: どの納品書か, amount: その金額}}（事務所の新しい納品書のときだけ） */
+export function slipFormHTML(o, { slip = null, date = "", done = {} } = {}) {
   const lines = Object.entries(o.lines || {});
   const rows = (slip && slip.rows) || {};
   const qp = !slip && lines.some(([, l]) => l.qprice != null);
@@ -20,14 +24,16 @@ export function slipFormHTML(o, { slip = null, date = "" } = {}) {
   return `
     <div class="slipform stack" data-slipform>
       ${qp ? '<p class="hint">見積の単価を入れてあります。納品書とちがえば直してください。</p>' : ""}
+      ${Object.keys(done).length ? `<p class="warn">同じ品物が、もう納品書で入っています（${Object.keys(done).length}品）。2回数えないように、その品物は入れません。</p>` : ""}
       <div class="arows">
         <div class="arow head" aria-hidden="true"><span>品物</span><span>Kg</span><span>¥/kg</span><span>単価</span><span>金額</span></div>
-        ${lines.map(([lid, l]) => { const r = rows[lid] || {}, pr = slip ? r.price : l.qprice;
-          return `<div class="arow" data-lid="${esc(lid)}" data-qty="${esc(String(l.qty))}">
-          <span class="a-spec">${esc(lineText(l) + azkText(l))}${l.azkQty > 0 ? '<span class="hint a-az">預かりの分は、いつもの納品書と同じ書き方で入れてください（0円なら 0）</span>' : ""}</span>
-          <label class="a-cell"><span class="a-lab">Kg</span><input class="inp num" data-s="kg" inputmode="decimal" placeholder="Kg" aria-label="${esc(l.spec)} の重さ（Kg）" value="${esc(r.kg == null ? "" : String(r.kg))}"></label>
-          <label class="a-cell"><span class="a-lab">¥/kg</span><input class="inp num" data-s="perKg" inputmode="decimal" placeholder="¥/kg" aria-label="${esc(l.spec)} の kg あたりの値段" value="${esc(comma(r.perKg))}"></label>
-          <label class="a-cell"><span class="a-lab">単価</span><input class="inp num" data-s="price" inputmode="decimal" placeholder="単価" aria-label="${esc(l.spec)} の単価" value="${esc(comma(pr))}"></label>
+        ${lines.map(([lid, l]) => { const r = rows[lid] || {}, pr = slip ? r.price : l.qprice, dn = done[lid], dis = dn ? " disabled" : "";
+          return `<div class="arow${dn ? " done" : ""}" data-lid="${esc(lid)}" data-qty="${esc(String(l.qty))}"${dn ? ` data-done="1" data-doneamt="${esc(String(dn.amount ?? 0))}"` : ""}>
+          <span class="a-spec">${esc(lineText(l) + azkText(l))}${l.azkQty > 0 ? '<span class="hint a-az">預かりの分は、いつもの納品書と同じ書き方で入れてください（0円なら 0）</span>' : ""}
+            ${dn ? `<span class="hint warn a-done">納品書で入っています（${esc(dn.text)}）<button type="button" class="linkbtn" data-undone>それでも入れる</button></span>` : ""}</span>
+          <label class="a-cell"><span class="a-lab">Kg</span><input class="inp num" data-s="kg" inputmode="decimal" placeholder="Kg" aria-label="${esc(l.spec)} の重さ（Kg）" value="${esc(r.kg == null ? "" : String(r.kg))}"${dis}></label>
+          <label class="a-cell"><span class="a-lab">¥/kg</span><input class="inp num" data-s="perKg" inputmode="decimal" placeholder="¥/kg" aria-label="${esc(l.spec)} の kg あたりの値段" value="${esc(comma(r.perKg))}"${dis}></label>
+          <label class="a-cell"><span class="a-lab">単価</span><input class="inp num" data-s="price" inputmode="decimal" placeholder="単価" aria-label="${esc(l.spec)} の単価" value="${esc(dn ? "" : comma(pr))}"${dis}></label>
           <span class="num a-amt" data-s="amount"></span></div>`; }).join("")}
       </div>
       <span class="hint">Kg と ¥/kg は、書かなくてもかまいません。入れると、金額と単価が自動で出ます。単価を入れると、金額（単価×数）が出ます。合計だけでもかまいません。</span>
@@ -46,6 +52,7 @@ export function calcSlipForm(box, changed) {
   let sum = 0, any = false;
   box.querySelectorAll(".arow[data-lid]").forEach(r => {
     const q = Number(r.dataset.qty) || 0, g = a => r.querySelector(`[data-s="${a}"]`);
+    if (r.dataset.done) { g("amount").textContent = ""; return; }   // もう納品書で入っている品物（11/4）
     const kg = toPrice(g("kg").value), pk = toPrice(g("perKg").value);
     let amount = null;
     if (kg != null && pk != null) {
@@ -66,6 +73,17 @@ export function calcSlipForm(box, changed) {
 /** 入れたら計算する（はじめにも1回。見積の単価・前の納品書の値で金額を出しておく） */
 export function wireSlipForm(box, onInput) {
   calcSlipForm(box);
+  box.addEventListener("click", e => {   // 「それでも入れる」：もう納品書で入っている品物も入れる（べつに届いた分など。11/4）
+    const b = e.target.closest("[data-undone]");
+    if (!b) return;
+    const r = b.closest(".arow");
+    delete r.dataset.done;
+    r.classList.remove("done");
+    r.querySelectorAll("input").forEach(i => { i.disabled = false; });
+    b.closest(".a-done").remove();
+    calcSlipForm(box);
+    if (onInput) onInput();
+  });
   box.addEventListener("input", e => {
     if (!e.target.matches("[data-s]")) return;
     calcSlipForm(box, e.target);
@@ -77,9 +95,11 @@ export function wireSlipForm(box, onInput) {
 /** 欄から納品書を読む → { slip: {no, date, amount, rows} } か { err, focus } */
 export function readSlipForm(box, o) {
   const rows = {};
+  let doneAmt = 0;
   for (const r of box.querySelectorAll(".arow[data-lid]")) {
     const l = (o.lines || {})[r.dataset.lid];
     if (!l) continue;
+    if (r.dataset.done) { doneAmt += Number(r.dataset.doneamt) || 0; continue; }   // もう納品書で入っている品物（11/4）
     const g = a => r.querySelector(`[data-s="${a}"]`), x = {};
     for (const k of ["kg", "perKg", "price"]) {
       const s = g(k).value.trim();
@@ -94,6 +114,11 @@ export function readSlipForm(box, o) {
   }
   const tEl = box.querySelector('[data-s="total"]'), total = toPrice(tEl.value);
   if (total == null) return { err: "合計（税抜）を入れてください（品物ごとの単価を入れると、自動で出ます）", focus: tEl };
+  const sum = Object.values(rows).reduce((t, x) => t + (Number(x.amount) || 0), 0);
+  if (doneAmt > 0 && tEl.dataset.manual) {   // 2回数えない（11/4）
+    if (Math.abs(total - (sum + doneAmt)) <= 1) return { err: `合計に、もう納品書で入っている品物の分（${yen(doneAmt)}円）が入っているようです。のこりの品物の分（${yen(sum)}円）にしてください`, focus: tEl };
+    if (!Object.keys(rows).length) return { err: "もう納品書で入っている品物があるので、合計だけでは入れられません。入れる品物の単価を入れてください（のこりの品物だけの合計になります）", focus: tEl };
+  }
   const date = box.querySelector('[data-s="date"]').value;
   return { slip: { no: box.querySelector('[data-s="no"]').value.trim().slice(0, 40), date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ymd(0), amount: Math.round(total), rows } };
 }

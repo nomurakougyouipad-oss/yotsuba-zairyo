@@ -31,12 +31,16 @@
 //   A 同じ注番・同じ材料屋の注文が2つ以上なら、品名とサイズがいちばん合う注文をはじめからえらぶ（chumon.js の matchScore）。合わない方をえらんだら「注文の品物とちがうようです」
 //   B もう取りこんで入っている納品書と同じ紙は「入れない」か「移す」（前の注文からは消す。chumon.js の moveSlip）。「両方に入れる」は出さない（持ち主）
 //   C 手で入れた納品書の金額がある注文は、「入れない／置きかえる／べつの納品書として足す」をえらぶまで入れない。手で入れた金額と同じ紙なら「入れない／置きかえる」
+// - 11/4（OS26315 大岡産業 No.21269 の 2枚つづき：2/2 を読むと番号が同じで「もう入っています」→「移す」で 1/2 が動き、手入力で5行が2回）：
+//   2枚つづき（同じ材料屋・同じ伝票番号・同じ注番で、中身がちがう紙）は1枚の納品書としてあつかう。AI は「1/2」「2/2」も読む（page・pages）。
+//   いっしょに読んだら1つにまとめる（joinPages。スキャンは scan・scan2）。あとから読んだつづきの紙は、前に入れた納品書に自動で足す（chumon.js addToSlip）。
+//   この紙の行がぜんぶ入っているときだけ「もう入っています」。合計は最後の紙の合計でくらべる（totalDoubt）。まとめて取り消すと、足した行と金額だけ消す
 import { ref, get, push, set, update, query, limitToLast, onValue, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { ref as sref, uploadBytes, deleteObject } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-storage.js";
 import { db, auth, call, storage } from "./firebase.js";
 import { esc, zenkana, toast, openSheet } from "./common.js";
 import { ymd } from "./tanomu.js";
-import { addSlip, yen, toPrice, ST, slipsOf, npSlipsOf, addNpSlip, sameItems, sameDay, notInOrder, handSlipsOf, moveSlip, matchScore, bestOrder, linesShort } from "./chumon.js";
+import { addSlip, yen, toPrice, ST, slipsOf, npSlipsOf, addNpSlip, sameItems, sameDay, notInOrder, handSlipsOf, moveSlip, matchScore, bestOrder, linesShort, rowIn, addToSlip } from "./chumon.js";
 import { watchJobs, getJob, CHUBAN_RE } from "./nippo.js";
 import { matchSupplier } from "./line-parse.js";
 import { errorText } from "./touroku.js";
@@ -130,6 +134,7 @@ const sameNo = (a, b) => !!a && !!b && noKey(a) === noKey(b);
 /** 金額のない紙か（どの行にも金額がない・ぜんぶ 0 も同じ。③）。材料集計表は、いつも金額のある表 */
 const noPriceOf = gr => !gr.table && gr.rows.every(r => r.amount == null || r.amount === 0);
 
+const pageNum = v => { const n = num(v); return n != null && n >= 1 && n <= 20 ? Math.round(n) : null; };
 function toGroups(res, supList) {
   const head = extractChubans(res.chuban);
   const notes = [];
@@ -156,10 +161,13 @@ function toGroups(res, supList) {
     const g = {
       chuban, supId: m.id || "", supRaw: res.supplier || "", no: String(res.slipNo || "").trim().slice(0, 40), date: okDate(res.date),
       rows: rs, dest: "", saved: false, err: "",
+      page: pageNum(res.page), pages: pageNum(res.pages),   // 2枚つづきの何枚目・何枚中（11/4。読めなければ null）
     };
     g.doubt = [...doubt0, ...notes];
     if (by.size > 1) g.doubt.unshift(`1枚の納品書を注番ごとに ${by.size}つに分けました`);
-    if (total != null && Math.abs(total - all) > 1) g.doubt.push(`明細の合計 ${yen(all)}円 と、納品書の合計 ${yen(total)}円 がちがいます`);
+    // 紙の合計：1つの注番の紙は、あとでくらべる（2枚つづきは、つないだ明細と最後の紙の合計で。openImport の totalDoubt）
+    if (by.size === 1) g.total = total;
+    else if (total != null && Math.abs(total - all) > 1) g.doubt.push(`明細の合計 ${yen(all)}円 と、納品書の合計 ${yen(total)}円 がちがいます`);
     if (noPriceOf(g)) { if (rs.some(r => r.amount === 0)) g.doubt.push("金額がぜんぶ 0 です。金額のない紙としてあつかいます"); }
     else if (rs.some(r => r.amount == null)) g.doubt.push("金額が読めない行があります");
     if (rs.some(r => REPAIR.test(r.spec))) g.doubt.push("修理・工賃の行があります。材料費に入れないなら、その行を消してください（×）");
@@ -262,6 +270,7 @@ export function openImport({ sups, getOrders, me }) {
           c.status = "done";
           c.groups = toGroups(s, supList);
           if (!c.groups.length) { c.status = "err"; c.err = "品物の行が読めませんでした"; }
+          else joinPages(c);   // 2枚つづきのつづきの紙なら、前の紙につなげる（11/4）
           // 入れる先は、自分でえらんでいない紙は全部決めなおす（あとから読んだ金額のある紙と、前に読んだ金額のない紙が同じ品物のときのため。②）
           cards.forEach(x => x.groups.forEach(gr => { if (!gr.saved && !gr.picked) gr.dest = defaultDest(gr); }));
         }
@@ -282,15 +291,29 @@ export function openImport({ sups, getOrders, me }) {
      *  priced：金額のない紙が、金額のある納品書と同じ品物（金額は、その納品書のほうで入れる） */
     function dupOf(gr) {
       const np = noPriceOf(gr);
+      const same = [];   // 番号が同じ、前に入れた納品書（11/4 OS26315）
       for (const o of getOrders() || []) {
         if (o.status === "cancelled" || o.supplier !== gr.supId || o.chuban !== gr.chuban) continue;   // 番号が同じでも、注番がちがえば別の納品書
         for (const [sid, s] of slipsOf(o)) {
           const x = { no: s.no, date: s.date, amt: s.amount, rows: Object.values(s.rows || {}) };
-          if (np ? sameItems(gr.rows, x.rows) && sameDay(gr.date, x.date) : samePaper(gr, x)) return { o, s, sid, amt: s.amount, priced: np };
+          if (np) { if (sameItems(gr.rows, x.rows) && sameDay(gr.date, x.date)) return { o, s, sid, amt: s.amount, priced: true }; continue; }
+          // 番号が同じでも、中身がちがえば同じ紙ではない（2/2 を読んで「もう入っています」→「移す」で 1/2 が動いた）。
+          // 番号が同じ納品書は、あとでまとめてくらべる（2枚つづきは、いくつかに分かれて入っていることもある。「1枚だけの紙」と読めたときはのぞく）
+          if (sameNo(gr.no, s.no) && gr.pages !== 1) { same.push({ o, s, sid, rows: x.rows }); continue; }
+          if (samePaper(gr, x)) return { o, s, sid, amt: s.amount };
         }
         if (np) for (const [, p] of npSlipsOf(o)) {   // 金額のない紙：前に入れた金額のない紙と同じ紙（11/4）。金額のある紙は止めない
           if (sameNo(gr.no, p.no) || ((!gr.no || !p.no) && sameDay(gr.date, p.date) && sameItems(gr.rows, Object.values(p.rows || {})))) return { o, s: p, amt: null, paper: true };
         }
+      }
+      // 番号が同じ納品書：この紙の行がぜんぶ（分かれていても）入っていれば同じ紙（multi＝いくつかに分かれて入っている）。
+      // ちがえば、つづきの紙として、まだ入っていない行（add）だけを、取りこんだ納品書（行がいちばん多い紙）に足す
+      let cont = null;
+      if (same.length) {
+        const all = same.flatMap(x => x.rows), main = same.slice().sort((a, b) => (b.s.imp ? 1 : 0) - (a.s.imp ? 1 : 0) || b.rows.length - a.rows.length)[0];
+        const base = { o: main.o, s: main.s, sid: main.sid, amt: main.s.amount };
+        if (gr.rows.every(r => rowIn(r, all))) return { ...base, multi: same.length > 1 ? same : null };
+        cont = { ...base, cont: true, add: gr.rows.filter(r => !rowIn(r, all)), before: same.reduce((t, x) => t + (Number(x.s.amount) || 0), 0) };
       }
       const mine = cards.flatMap(c => c.groups.map(x => ({ c, x })));
       const at = mine.findIndex(m => m.x === gr);
@@ -304,21 +327,44 @@ export function openImport({ sups, getOrders, me }) {
         if (i > at || (!np && xnp)) continue;   // ここからは前の紙だけ。金額のある紙は、金額のない紙では止めない
         if (samePaper(gr, { no: x.no, date: x.date, amt: sumOf(x), rows: x.rows })) return { c, amt: sumOf(x) };
       }
-      return null;
+      return cont;
+    }
+    /** 2枚つづきの納品書（同じ材料屋・同じ伝票番号・同じ注番で、中身がちがう紙）を、この取りこみで前に読んだ紙につなげて1つにする（11/4 OS26315）。
+     *  何枚目かが読めていれば、その順に行を並べる。合計は最後の紙の合計（何枚目か分からなければ、あとで読んだ紙） */
+    function joinPages(c) {
+      if (c.groups.length !== 1) return;
+      const g = c.groups[0];
+      if (!g.no || !g.supId || g.pages === 1) return;
+      for (const x of cards) {
+        if (x === c) continue;
+        const y = x.groups.find(t => !t.saved && t.supId === g.supId && t.chuban === g.chuban && sameNo(t.no, g.no) && noPriceOf(t) === noPriceOf(g));
+        if (!y || g.rows.every(r => rowIn(r, y.rows))) continue;   // 同じ紙をもう1回読んだときは、つながない（「同じ納品書が前のほうにも」）
+        const gFirst = !!(g.page && y.page && g.page < y.page);
+        y.rows = gFirst ? [...g.rows, ...y.rows] : [...y.rows, ...g.rows];
+        if (!gFirst) y.total = g.total ?? null;   // 最後の紙の合計でたしかめる
+        y.cards = [...(y.cards || [x]), c];
+        y.pages = Math.max(y.pages || 0, g.pages || 0, y.cards.length);
+        y.doubt = [...new Set([...y.doubt, ...g.doubt])];
+        if (!y.picked) y.dest = defaultDest(y);
+        c.groups = [];
+        c.joined = { no: g.no, to: pageName(x) };
+        return;
+      }
     }
     /** 入れる先になる注文（注番＋材料屋で、まだ届いていないか届いた注文） */
     const hitsOf = gr => candidates(gr).filter(o => o.supplier === gr.supId && (o.status === "wait" || o.status === "arrived"));
     /** 入れる先の注文。2つ以上あれば、品名とサイズがいちばん合う注文（11/4 YY26079：前は新しい注文で、10X25 の納品書が M6×15 に入った） */
     const hitOf = gr => bestOrder(hitsOf(gr), gr.rows);
     /** 前に入れた納品書と同じ紙（B・C で、えらんでもらう）：取りこんだ納品書なら「入れない／移す」、手で入れた金額なら「入れない／置きかえる」 */
-    const storedDup = d => !!(d && d.o && !d.priced && !d.paper);
+    const storedDup = d => !!(d && d.o && !d.priced && !d.paper && !d.cont);
     /** えらんだこと（gr.act）は、いまの入れる先のときだけ生きている（入れる先が変わったら、えらびなおし） */
     const actOf = gr => (gr.act && gr.act.dest === gr.dest ? gr.act : null);
     const orderOf = id => (getOrders() || []).find(o => o.id === id);
     /** 手で入れた金額がある注文に、金額のある納品書を入れるとき、「入れない・置きかえる・足す」をえらぶまで止める（C） */
     const handWait = gr => { const o = !noPriceOf(gr) && !dupOf(gr) && orderOf(gr.dest); return !!(o && handSlipsOf(o).length); };
     function defaultDest(gr) {
-      if (dupOf(gr)) return "skip";
+      const d = dupOf(gr);
+      if (d) return d.cont ? d.o.id : "skip";   // 2枚つづきのつづきの紙は、前の紙の注文に（11/4）
       const hit = hitOf(gr);
       if (hit) return hit.id;
       return noPriceOf(gr) ? "skip" : "";   // 合う注文がないときは、事務員さんが「新しい注文として入れる」か「入れない」をえらぶ。金額のない紙は「入れない」（①）
@@ -340,7 +386,15 @@ export function openImport({ sups, getOrders, me }) {
       else if (!gr.supId && gr.table) d.push("材料屋の列がありません。えらんでください");
       if (!CHUBAN_RE.test(gr.chuban)) d.push(gr.chEdited ? "注番を正しく入れてください（例 AB26123）" : "注番が読めませんでした。入れてください");
       else if (codesOk && !prefixOk(gr.chuban)) d.push(`注番の頭文字「${gr.chuban.slice(0, 2)}」が、注番の会社の表にありません`);
+      const t = totalDoubt(gr);
+      if (t) d.push(t);
       return d;
+    }
+    /** 紙の合計と、明細の合計がちがう（11/4：2枚つづきは、つないだ明細（前に入れた紙の分もふくむ）と、最後の紙の合計でくらべる） */
+    function totalDoubt(gr) {
+      if (gr.total == null || noPriceOf(gr)) return "";
+      const d = dupOf(gr), on = d && d.cont && gr.dest === d.o.id, before = on ? d.before : 0, sum = before + (on ? addSum(d) : sumOf(gr));
+      return Math.abs(gr.total - sum) > 1 ? `明細の合計 ${yen(sum)}円${before ? "（前の紙の分もふくむ）" : ""} と、納品書の合計 ${yen(gr.total)}円 がちがいます` : "";
     }
     /** 注番が変わった（11/4）：合う注文をさがしなおして、知らせと「どの注文に入れますか？」だけかきなおす */
     function setChuban(gr, v) {
@@ -356,9 +410,11 @@ export function openImport({ sups, getOrders, me }) {
     const md = ts => { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()}`; };
     const sumHTML = gr => (noPriceOf(gr) ? "金額のない納品書です（入れると「届いた」にして、明細を残します。金額は入りません）。単価か金額を入れると、その金額で入ります" : `明細の合計 <span class="money" data-sum>${yen(sumOf(gr))}</span> 円（税抜）`);
     const pageName = c => `${c.name}${c.page ? `（${c.page}ページ）` : ""}`;
+    /** つづきの紙で、まだ入っていない行の金額（11/4） */
+    const addSum = d => d.add.reduce((t, r) => t + (r.amount || 0), 0);
     function dupHTML(gr) {
       const d = dupOf(gr), skip = gr.dest === "skip" ? "「入れない」にしています。入れるときは、どの注文に入れるかをえらびなおしてください。" : "";
-      if (!d || storedDup(d)) return "";   // ① 金額のない紙で、合う注文がないときの説明は、下の「どの注文に入れますか？」に出す（11/2）。前に入れた納品書と同じ紙も、下の箱で（11/4）
+      if (!d || storedDup(d) || d.cont) return "";   // ① 金額のない紙で、合う注文がないときの説明は、下の「どの注文に入れますか？」に出す（11/2）。前に入れた納品書と同じ紙も、下の箱で（11/4）
       const where = d.o ? `${esc(d.o.supplierName)}・${esc(d.o.chuban)}${d.s.at ? `・${md(d.s.at)} ${esc(d.s.by || "")}` : ""}` : esc(pageName(d.c));
       if (d.priced) return `<p class="okmsg">${d.o ? `金額のある納品書が、もう入っています（${where}）` : `金額のある納品書（${where}）と同じ品物です`}。金額は納品書のほうで入れます。${skip}</p>`;
       const diff = d.amt != null && d.amt !== sumOf(gr) ? `金額がちがいます（${yen(d.amt)}円 と ${yen(sumOf(gr))}円）。どちらかの読みまちがいかもしれません。` : "";
@@ -387,15 +443,27 @@ export function openImport({ sups, getOrders, me }) {
           <span>えらんだ注文（${esc(linesShort(cur))}）より、${esc(linesShort(best))} の注文のほうが品名が合います。</span>
           <button type="button" class="btn" data-best="${esc(best.id)}">${esc(linesShort(best, 24))} の注文に入れる</button></div>`;
     }
+    /** 2枚つづきのつづきの紙（11/4 OS26315）：前に入れた紙（同じ伝票番号）に、自動で足す。「もう入っています」で止めない */
+    function contHTML(gr, d) {
+      const on = gr.dest === d.o.id, before = d.before, more = d.add.length < gr.rows.length, sum = before + addSum(d);
+      const ok = gr.total != null && Math.abs(gr.total - sum) <= 1;
+      return `<div class="dest-q">
+          <h4>2枚つづきの納品書（No.${esc(d.s.no || gr.no)}）の、つづきの紙です</h4>
+          <p>${esc(d.o.supplierName)}・${esc(d.o.chuban)}［${esc(linesShort(d.o, 24))}］の注文に入っている前の紙に、${on ? "この紙の行を足します" : "足しません（「入れない」にしています）"}。</p>
+          <p class="hint">前の紙 ${yen(before)}円 ＋ この紙${more ? `のうち、まだ入っていない ${d.add.length}行` : ""} ${yen(addSum(d))}円 ＝ ${yen(sum)}円${ok ? `（最後の紙の合計 ${yen(gr.total)}円 と同じです）` : ""}</p>
+          ${on ? '<button type="button" class="linkbtn muted" data-hact="skip">足さない（入れない）</button>' : `<button type="button" class="linkbtn" data-best="${esc(d.o.id)}">前の紙に足す</button>`}
+        </div>`;
+    }
     /** もう取りこんで入っている納品書と同じ紙（B。11/4 YY26079）：「入れない」か、ちがう注文に入っていたなら「移す」（前の注文からは消す）。
      *  「両方に入れる」は、2回入るもとなので出さない（持ち主） */
     function moveHTML(gr, d) {
-      const hs = hitsOf(gr), others = hs.filter(o => o.id !== d.o.id).sort((a, b) => matchScore(b, gr.rows) - matchScore(a, gr.rows));
+      const hs = hitsOf(gr), others = d.multi ? [] : hs.filter(o => o.id !== d.o.id).sort((a, b) => matchScore(b, gr.rows) - matchScore(a, gr.rows));
       const a = actOf(gr), here = linesShort(d.o, 24), best = bestOrder(hs, gr.rows);
-      const diff = d.amt != null && d.amt !== sumOf(gr) ? `金額がちがいます（${yen(d.amt)}円 と ${yen(sumOf(gr))}円）。どちらかの読みまちがいかもしれません。` : "";
+      const part = !!d.multi || Object.keys(d.s.rows || {}).length > gr.rows.length;   // 2枚つづきの納品書の、1枚分・いくつかに分かれて入っている（11/4）
+      const diff = !part && d.amt != null && d.amt !== sumOf(gr) ? `金額がちがいます（${yen(d.amt)}円 と ${yen(sumOf(gr))}円）。どちらかの読みまちがいかもしれません。` : "";
       return `<div class="dest-q">
           <h4>この納品書は、もう入っています</h4>
-          <p>${esc(d.o.supplierName)}・${esc(d.o.chuban)}［${esc(here)}］の注文に入っています（${d.s.at ? md(d.s.at) + " " : ""}${esc(d.s.by || "")}）。${diff}${best && best.id === d.o.id && others.length ? "品名は、この注文がいちばん合っています。" : ""}</p>
+          <p>${esc(d.o.supplierName)}・${esc(d.o.chuban)}［${esc(here)}］の注文に入っています（${d.s.at ? md(d.s.at) + " " : ""}${esc(d.s.by || "")}）。${d.multi ? `この紙の行は、番号 ${esc(gr.no)} の納品書（${d.multi.length}つに分かれて入っています）の中に、ぜんぶ入っています。` : part ? `この紙の行は、何枚かつづきの納品書（${yen(d.amt)}円）の中に、ぜんぶ入っています。` : ""}${diff}${best && best.id === d.o.id && others.length ? "品名は、この注文がいちばん合っています。" : ""}</p>
           ${others.length ? "<p class=\"hint\">ちがう注文に入っていたときは「移す」を押してください。前の注文からは消して、えらんだ注文に入れます（2回は入りません）。</p>" : ""}
           <div class="choice"><button type="button" class="btn" data-hact="skip" aria-pressed="${!a}">入れない</button>
             ${others.map(o => `<button type="button" class="btn" data-move="${esc(o.id)}" aria-pressed="${!!a && a.dest === o.id}">［${esc(linesShort(o, 24))}］の注文に移す（［${esc(here)}］からは消す）</button>`).join("")}</div>
@@ -421,7 +489,8 @@ export function openImport({ sups, getOrders, me }) {
      *  11/4：いちばん上に「上の注番・材料屋を直すと、合う注文が出ます」。注番が1字ちがいの注文があれば「この注文ではありませんか？」 */
     function destHTML(gr) {
       const cand = candidates(gr), hs = hitsOf(gr), d = dupOf(gr);
-      if (storedDup(d)) return d.s.imp ? moveHTML(gr, d) : handHTML(gr, d.o, [[d.sid, d.s]], true);
+      if (storedDup(d)) return d.multi || d.s.imp ? moveHTML(gr, d) : handHTML(gr, d.o, [[d.sid, d.s]], true);
+      if (d && d.cont) return contHTML(gr, d);
       const about = o => `${esc(zenkana(o.kenmei || ""))}（${ST[o.status].chip}・${md(o.orderedAt)} 注文）${hs.length > 1 && hs.includes(o) ? `［${esc(linesShort(o, 24))}］` : ""}`;
       const opts = `<option value=""${gr.dest ? "" : " selected"}>えらんでください</option>` +
         cand.map(o => `<option value="${esc(o.id)}"${gr.dest === o.id ? " selected" : ""}>${esc(o.supplierName)}・${esc(o.chuban)} ${about(o)}</option>`).join("") +
@@ -497,6 +566,7 @@ export function openImport({ sups, getOrders, me }) {
       else if (c.status === "reading") body = '<p class="muted">AI が読んでいます…</p>';
       else if (c.status === "err") body = `<p class="warn">${esc(c.err)}</p><button type="button" class="btn" data-read="${ci}">もう一度読む</button>`;
       else if (c.status === "notslip") body = `<p class="warn">材料の納品書ではないようです（${esc(c.kind)}）。入れません。</p><button type="button" class="linkbtn" data-force="${ci}">納品書として読む</button>`;
+      else if (c.joined) body = `<p class="okmsg">2枚つづきの納品書（No.${esc(c.joined.no)}）のつづきの紙です。前の紙（${esc(c.joined.to)}）といっしょにしました。</p>`;   // 11/4
       else body = c.groups.map((gr, gi) => groupHTML(gr, ci, gi)).join("");
       return `
         <section class="imp-card">
@@ -673,7 +743,7 @@ export function openImport({ sups, getOrders, me }) {
             gr.savedText = `${to.supplierName}・${to.chuban}［${linesShort(to, 24)}］へ（［${linesShort(from, 24)}］からは消しました）`;
             continue;
           }
-          const created = gr.dest === "new", np = noPriceOf(gr);
+          const created = gr.dest === "new", np = noPriceOf(gr), d = !np && dupOf(gr);
           const o = created ? await newOrder(gr) : (getOrders() || []).find(x => x.id === gr.dest);
           if (!o) throw new Error("入れる先の注文が見つかりません");
           const item = { orderId: o.id, created, arrived: o.status === "wait", amount: np ? 0 : sumOf(gr), chuban: o.chuban, sup: o.supplier, no: gr.no || "" };
@@ -694,17 +764,31 @@ export function openImport({ sups, getOrders, me }) {
             const scan = await scanOf(c);
             if (scan) paper.scan = scan;
             item.npId = (await addNpSlip(o, paper, me)).npId;
+          } else if (d && d.cont && d.o.id === o.id) {   // 2枚つづきのつづきの紙：前に入れた納品書に足す（11/4 OS26315）
+            const keep = gr.rows.map((r, i) => (d.add.includes(r) ? Object.values(rows)[i] : null)).filter(Boolean);   // まだ入っていない行だけ
+            item.amount = addSum(d);
+            const r = await addToSlip(o, d.sid, { rows: keep, amount: item.amount, scan: await scanOf(gr.cards ? gr.cards[gr.cards.length - 1] : c), pages: gr.pages }, me);   // 2枚をつないだ紙なら、あとの紙のスキャン
+            item.slipId = d.sid;
+            item.cont = true;
+            item.rowKeys = r.rowKeys;
+            if (r.priceIds.length) item.priceIds = r.priceIds;
           } else {
             const slip = { date: gr.date || ymd(0), amount: sumOf(gr), rows, imp };
             if (gr.no) slip.no = gr.no;
             const scan = await scanOf(c);
             if (scan) slip.scan = scan;
+            if (gr.cards && gr.cards.length > 1) {   // この取りこみで2枚をつないだ納品書（11/4）：2枚目のスキャンも
+              const scan2 = await scanOf(gr.cards[1]);
+              if (scan2) slip.scan2 = scan2;
+              slip.pages = Math.max(2, gr.pages || 0);
+            }
             const r = await addSlip(o, slip, me, { replace: act && act.kind === "replace" ? act.sids : [] });   // C「置きかえる」は手で入れた金額を消す
             item.slipId = r.sid;
             if (r.priceIds.length) item.priceIds = r.priceIds;
           }
           items.push(item);
           used.add(c);
+          (gr.cards || []).forEach(x => used.add(x));
           gr.saved = true;
           gr.savedText = `${o.supplierName}・${o.chuban}${np ? "（届いたにしました）" : `・${yen(sumOf(gr))}円`}`;
         } catch (ex) {
@@ -775,6 +859,18 @@ export function openImport({ sups, getOrders, me }) {
         if (!o) continue;
         if (o.status === "billed") { skipped.push(o.chuban); continue; }   // 請求ずみの注文はさわらない
         const base = `zairyo/orders/${o.id}`, upd = {};
+        if (it.cont) {   // 2枚つづきのつづきとして足した分（11/4）：足した行と金額だけ消す（前の紙は、そのまま）
+          const s = (o.slips || {})[it.slipId];
+          if (s) {
+            Object.values(it.rowKeys || {}).forEach(k => { upd[`${base}/slips/${it.slipId}/rows/${k}`] = null; });
+            upd[`${base}/slips/${it.slipId}/amount`] = Math.max(0, (Number(s.amount) || 0) - (Number(it.amount) || 0));
+            upd[`${base}/nouhin`] = Math.max(0, slipsOf(o).reduce((t, [, x]) => t + (Number(x.amount) || 0), 0) - (Number(it.amount) || 0));
+            if (s.scan2 && Object.values(rec.files || {}).some(f => f.scan === s.scan2)) { upd[`${base}/slips/${it.slipId}/scan2`] = null; upd[`${base}/slips/${it.slipId}/pages`] = null; }   // つづきの紙のスキャンは消える
+          }
+          Object.values(it.priceIds || {}).forEach(p => { upd[`zairyo/prices/${p}`] = null; });
+          if (Object.keys(upd).length) await update(ref(db), upd);
+          continue;
+        }
         const rest = slipsOf(o).filter(([sid]) => sid !== it.slipId);
         if (it.slipId && (o.slips || {})[it.slipId]) {
           upd[`${base}/slips/${it.slipId}`] = null;

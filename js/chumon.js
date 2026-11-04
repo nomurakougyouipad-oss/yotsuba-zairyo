@@ -370,6 +370,58 @@ function lineScore(a, b) {
 export const matchScore = (o, rows) => rows.reduce((t, r) => t + Math.max(0, ...Object.values(o.lines || {}).map(l => lineScore(l.spec, r.spec))), 0);
 /** いちばん合う注文（同じ点なら、はじめの注文＝新しい注文） */
 export const bestOrder = (os, rows) => os.reduce((b, o) => (!b || matchScore(o, rows) > matchScore(b, rows) ? o : b), null);
+/* ---------- 2枚つづきの納品書・手で入れるときの2回数え（11/4 OS26315 大岡産業 No.21269） ----------
+   2/2 を読むと、番号が同じなので「もう入っています」になり、「移す」で 1/2 が動いた。そのあと手で6行入れて、5行が2回になった */
+/** 同じ品物らしいか（品名の言葉（カタカナ・英字の言葉か漢字2字）と、サイズの数字が1つ以上同じ。「溶接エルボ 90EL40A」と「ロングエルボ (90°) 40A」など） */
+export function likeItem(a, b) {
+  const A = scoreWords(a), B = scoreWords(b), K = new Set(specKanji(b)), N = new Set(scoreNums(b));
+  const w = A.some(x => B.some(y => x.includes(y) || y.includes(x))) || specKanji(a).some(x => K.has(x));
+  return w && scoreNums(a).some(n => N.has(n));
+}
+/** 行 r が、行の並び rows の中にあるか（品名がそろえて同じで数も同じ、または同じ品物らしくて数が同じ。金額があれば金額も同じ） */
+export const rowIn = (r, rows) => rows.some(x => (specKey(x.spec) === specKey(r.spec) && (x.qty ?? null) === (r.qty ?? null))
+  || (likeItem(x.spec, r.spec) && Number(x.qty) === Number(r.qty) && (x.amount == null || r.amount == null || x.amount === r.amount)));
+/** 2枚つづきの納品書の、つづきの紙の行を足す。part = {rows:[{spec, qty?, unit?, price?, amount}], amount, scan?, pages?}
+ *  行は前の行のあとに足す（r06 …）。納品書の金額と、注文の納品書の金額をふやす。単価の記録も残す。
+ *  返り値：{ rowKeys: 足した行の番号, priceIds }（まとめて取り消すときに、足した分だけ消す） */
+export async function addToSlip(o, sid, part, me) {
+  const s = (o.slips || {})[sid];
+  if (!s) throw new Error("つづきを足す納品書が見つかりません");
+  const base = `zairyo/orders/${o.id}`, keys = Object.keys(s.rows || {});
+  let n = keys.length;
+  const next = () => { let k; do { k = "r" + String(++n).padStart(2, "0"); } while (keys.includes(k)); return k; };
+  const upd = {}, rowKeys = [], priceIds = [], add = Number(part.amount) || 0;
+  for (const r of part.rows) {
+    const k = next();
+    rowKeys.push(k);
+    upd[`${base}/slips/${sid}/rows/${k}`] = r;
+    if (r.price == null) continue;
+    const pk = push(ref(db, "zairyo/prices")).key;
+    priceIds.push(pk);
+    upd[`zairyo/prices/${pk}`] = { spec: r.spec, price: r.price, unit: r.unit || "", sup: o.supplier, supName: o.supplierName, key: "", date: s.date, orderId: o.id, chuban: o.chuban, at: serverTimestamp() };
+  }
+  upd[`${base}/slips/${sid}/amount`] = (Number(s.amount) || 0) + add;
+  upd[`${base}/nouhin`] = slipsOf(o).reduce((t, [, x]) => t + (Number(x.amount) || 0), 0) + add;
+  if (part.pages >= 2) upd[`${base}/slips/${sid}/pages`] = part.pages;
+  if (part.scan) upd[`${base}/slips/${sid}/${s.scan ? "scan2" : "scan"}`] = part.scan;
+  upd[`${base}/log/${logKey(o)}`] = { at: serverTimestamp(), by: me.name || "事務所", what: `納品書${s.no ? " No." + s.no : ""}のつづきの紙（${part.rows.length}行・${yen(add)}円）を足した（${yen(Number(s.amount) || 0)}円 → ${yen((Number(s.amount) || 0) + add)}円）` };
+  await update(ref(db), upd);
+  return { rowKeys, priceIds };
+}
+/** 手で入れる品物が、もう納品書で入っているか → { o2, s, sid, r }（入っている注文・納品書・行）か null
+ *  同じ注文の納品書に同じ品物の番号の行がある、または同じ注番・同じ材料屋の注文に、取りこんだ納品書で品名（言葉とサイズ）と数が同じ行がある */
+export function lineDone(orders, o, lid, l) {
+  for (const [sid, s] of slipsOf(o)) { const r = (s.rows || {})[lid]; if (r) return { o2: o, s, sid, r }; }
+  for (const o2 of orders || []) {
+    if (o2.status === "cancelled" || o2.supplier !== o.supplier || o2.chuban !== o.chuban) continue;
+    for (const [sid, s] of slipsOf(o2)) {
+      if (!s.imp) continue;
+      const r = Object.values(s.rows || {}).find(x => likeItem(l.spec, x.spec) && Number(x.qty) === Number(l.qty));
+      if (r) return { o2, s, sid, r };
+    }
+  }
+  return null;
+}
 /** 注文の品物の短い名前（えらぶ所・知らせ用） */
 export const linesShort = (o, n = 40) => { const t = Object.values(o.lines || {}).map(l => l.spec).join("・"); return t.length > n ? t.slice(0, n) + "…" : t; };
 

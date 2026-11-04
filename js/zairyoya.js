@@ -6,7 +6,7 @@
 // - 2-2：注文を見る（4つのタブ・注文の中身）。2-3：受けました・届ける日・届けました・事務所が直した／取り消した知らせ。2-4：金額を入れる（納品書の金額になる）。2-5：図面・写真のダウンロード。2-6：通知と、新しい・直した・取り消しの印
 import { ref, query, orderByChild, equalTo, onValue, update, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, call, watchConnected } from "./firebase.js";
-import { $, esc, zenkana, toast, initTheme, registerSW, openSheet, keepPlace } from "./common.js";
+import { $, esc, zenkana, toast, initTheme, watchVersion, registerSW, openSheet, keepPlace } from "./common.js";
 import { whoAmI, registerSup, errorText, isIPhoneBrowser } from "./touroku.js";
 import { lineText, kibouText, fmtQty } from "./tanomu.js";
 import { pushState, enablePush, disablePush, refreshPush, testPush } from "./tsuuchi.js";
@@ -17,6 +17,7 @@ import { openAzukari } from "./azukari.js";
 import { openPhoto } from "./shashin.js";
 
 initTheme();
+watchVersion();   // 新しいプログラムが出たら、使っていないときに自動で読みなおす（11/4）
 registerSW();
 const main = $("#main");
 const KEY = new URLSearchParams(location.search).get("k") || new URLSearchParams(location.hash.slice(1)).get("k") || "";

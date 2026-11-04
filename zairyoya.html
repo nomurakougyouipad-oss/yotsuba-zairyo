@@ -19,7 +19,33 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+1p:wght@400;500;700;800&family=Oswald:wght@500;600&display=swap">
 <link rel="stylesheet" href="css/common.css">
 <script>/* 覚えた明るい／暗いを、画面が出る前に当てる（ちらつかないように） */try{var t=localStorage.getItem("yotsuba-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
-<script type="module" src="js/zairyoya.js"></script>
+<script>/* 新しいプログラムを読む（11/4）：version.json（毎回サーバーから）の番号を、プログラム・見た目の住所につけて読む。
+   ブラウザに古いプログラムが残って、新しくしたのに前の動きのまま、にならないように（番号は tools/stamp.mjs で作る。読めないときは番号なしで読む） */
+(function () {
+  var entry = "js/zairyoya.js";
+  function go(v, files) {
+    if (v) {
+      var map = {};
+      (files || []).forEach(function (f) { map[new URL(f, location.href).href] = new URL(f + "?v=" + v, location.href).href; });
+      var m = document.createElement("script");
+      m.type = "importmap";
+      m.textContent = JSON.stringify({ imports: map });
+      document.head.appendChild(m);
+      var l = document.querySelector('link[href="css/common.css"]');
+      if (l) l.href = "css/common.css?v=" + v;
+    }
+    window.__appV = v || "";
+    var s = document.createElement("script");
+    s.type = "module";
+    s.src = entry + (v ? "?v=" + v : "");
+    document.head.appendChild(s);
+  }
+  var done = false, once = function (v, f) { if (!done) { done = true; go(v, f); } };
+  setTimeout(function () { once("", []); }, 4000);   // 4秒たっても読めなければ、番号なしで
+  fetch("version.json?t=" + Date.now(), { cache: "no-store" }).then(function (r) { return r.json(); })
+    .then(function (j) { once(j && j.v, j && j.files); }, function () { once("", []); });
+})();
+</script>
 </head>
 <body>
 <div class="wrap narrow">

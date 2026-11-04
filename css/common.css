@@ -378,6 +378,9 @@ ul.plain{margin:0;padding-left:1.2em}
 .arow.head{font-size:12px;font-weight:700;color:var(--muted)}
 .arow .inp{width:100%;min-width:0}
 .a-spec{overflow-wrap:anywhere}
+.arow.done .inp{opacity:.45}   /* もう納品書で入っている品物（11/4） */
+.a-done{display:block;margin-top:2px}
+.a-done .linkbtn{margin-left:8px}
 .a-amt{text-align:right;font-weight:700}
 .atotal{display:flex;justify-content:flex-end;align-items:center;gap:10px;flex-wrap:wrap;font-weight:800}
 .atotal .yen-in{width:170px}

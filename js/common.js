@@ -191,6 +191,35 @@ export function initTheme() {
   paintTheme();
 }
 
+/* ---------- 新しいプログラムに自動でかえる（11/4） ----------
+   GitHub Pages はプログラムを10分ブラウザに残してよいことにしていて、開いたままのアプリは読みなおすまで古いプログラムのまま。
+   ページ（*.html）は、version.json（毎回サーバーから読む）の番号をプログラムの住所につけて読む（tools/stamp.mjs で番号を作る）。
+   ここでは5分ごと・画面にもどったときに番号を見て、新しくなっていたら、使っていないとき（開いている画面も、入れている欄もない）に読みなおす。
+   読みなおすのは、画面がうしろにあるときか、10分さわっていないとき（見ている一覧が急にかわらないように） */
+export function watchVersion() {
+  const v0 = window.__appV;
+  if (!v0) return;   // 番号なしで読んだとき（version.json が読めなかったなど）は、見ない
+  let want = false, last = Date.now();
+  ["pointerdown", "keydown", "wheel", "touchstart"].forEach(t => document.addEventListener(t, () => { last = Date.now(); }, { capture: true, passive: true }));
+  const busy = () => {
+    const sh = document.getElementById("sheet"), a = document.activeElement;
+    return (sh && !sh.hidden) || !!(a && a.matches && a.matches("input, textarea, select")) || !!document.querySelector("[data-dirty]");
+  };
+  const tryReload = () => { if (want && !busy() && (document.hidden || Date.now() - last > 10 * 60 * 1000)) location.reload(); };
+  const check = async () => {
+    if (!want) {
+      try {
+        const j = await (await fetch("version.json?t=" + Date.now(), { cache: "no-store" })).json();
+        want = !!(j && j.v && j.v !== v0);
+      } catch (err) { return; }
+    }
+    tryReload();
+  };
+  setInterval(check, 5 * 60 * 1000);
+  setInterval(tryReload, 60 * 1000);
+  document.addEventListener("visibilitychange", () => (document.hidden ? tryReload() : check()));
+}
+
 /* ---------- ホーム画面アプリ ---------- */
 export async function registerSW() {
   if (!("serviceWorker" in navigator)) return false;

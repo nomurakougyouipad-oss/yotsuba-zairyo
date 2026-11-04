@@ -11,7 +11,7 @@ import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet, keepPlace } from "./common.js";
 import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
-import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany, azkText, orderPdf, pdfLine, npSlipsOf, npDupOf, deliveredRows, notInOrder, checksOrd, sameThing, removeNpSlip, setRowOrd } from "./chumon.js";
+import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany, azkText, orderPdf, pdfLine, npSlipsOf, npDupOf, deliveredRows, notInOrder, checksOrd, sameThing, removeNpSlip, setRowOrd, lineDone } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel, shopOf, pageLink, SHOPS } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
@@ -858,7 +858,7 @@ export function startOfficeApp(main, me) {
     // 欄は js/kingaku.js（材料屋のアプリと同じ。Kg・¥/kg つき。2-4）
     const form = `
       ${o.status === "wait" ? '<p class="hint">入れると「届いた」になります。</p>' : ""}
-      ${slipFormHTML(o)}
+      ${slipFormHTML(o, { done: doneOf(o) })}
       <div class="row"><button type="button" class="btn primary" data-slipsave>納品書の金額を入れる</button></div>`;
     const dayText = s => s.slice(5).replace("-", "/").replace(/^0/, "");   // 2026-10-20 → 10/20
     return `
@@ -869,12 +869,13 @@ export function startOfficeApp(main, me) {
             <div class="row"><button type="button" class="btn primary" data-slipfixsave>直して入れる</button><button type="button" class="btn" data-slipfixno>やめる</button></div>
           </li>` : `
           <li>
-            <div class="sl-top"><span class="sl-lab">納品書${s.no ? "　No." + esc(s.no) : ""}${s.date ? "　" + esc(dayText(s.date)) : ""}</span>
+            <div class="sl-top"><span class="sl-lab">納品書${s.no ? "　No." + esc(s.no) : ""}${s.date ? "　" + esc(dayText(s.date)) : ""}${s.pages ? `　（${s.pages}枚つづき）` : ""}</span>
               ${s.src === "sup" ? `<span class="suptag">${s.fixBy ? "材料屋が入れた → 事務所が直した" : "材料屋が入れた"}</span>` : ""}
               ${s.amount != null ? `<span class="money">${yen(s.amount)}</span><span>円</span>` : '<span class="hint">金額なし</span>'}
               ${s.src === "sup" ? `<button type="button" class="linkbtn" data-slipfix="${esc(sid)}">直す</button>` : ""}
               <button type="button" class="linkbtn muted" data-slipdel="${esc(sid)}">消す</button></div>
-            ${s.scan ? `<button type="button" class="linkbtn" data-phview="${esc(s.scan)}">納品書のスキャンを見る</button>` : ""}
+            ${s.scan ? `<button type="button" class="linkbtn" data-phview="${esc(s.scan)}">納品書のスキャンを見る${s.scan2 ? "（1枚目）" : ""}</button>` : ""}
+            ${s.scan2 ? `<button type="button" class="linkbtn" data-phview="${esc(s.scan2)}">納品書のスキャンを見る（2枚目）</button>` : ""}
             ${rowsHTML(o, sid, s, false)}
             <span class="hint">入れた人：${esc(s.by || "")}${s.imp ? "（納品書の取りこみ）" : ""}${s.src === "sup" ? "・材料屋のアプリから" : ""}</span>
             ${s.fixBy ? `<span class="hint">直した人：${esc(s.fixBy)}${s.fixAt ? `（${md(s.fixAt)}）` : ""}。材料屋が入れた金額は ${yen(s.supAmount)}円</span>` : ""}
@@ -884,6 +885,17 @@ export function startOfficeApp(main, me) {
         ${npBlockHTML(o, dayText)}
         <div id="slipFormBox"${sl.length ? " hidden" : ""}>${form}</div>
       </div>`;
+  }
+  /** 手で入れる欄で、もう納品書で入っている品物（11/4 OS26315：2回数えない）→ {品物id: {text, amount}} */
+  function doneOf(o) {
+    const out = {};
+    for (const [lid, l] of Object.entries(o.lines || {})) {
+      const x = lineDone(st.orders, o, lid, l);
+      if (!x) continue;
+      const day = x.s.date ? `${Number(x.s.date.slice(5, 7))}/${Number(x.s.date.slice(8))}` : "";
+      out[lid] = { text: [x.s.no ? "No." + x.s.no : "", day, x.o2.id !== o.id ? `${x.o2.chumonsha || x.o2.supplierName}さんの注文` : ""].filter(Boolean).join("・"), amount: x.r.amount };
+    }
+    return out;
   }
   /** 金額のない紙（送り状・受領書など。11/4）：明細とスキャンだけ。材料費には入らない */
   function npBlockHTML(o, dayText) {

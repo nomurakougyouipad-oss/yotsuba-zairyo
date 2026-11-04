@@ -220,13 +220,15 @@ function slipPrompt(force, parts) {
     "- 注番は英字2文字＋数字5けた（例 AB26123）。chuban には注番だけを書く（担当者の名前や工事名は入れない）。",
     "- 注文番号の欄が空でも、品名・備考・欄外に注番が書いてあれば、それを使う。",
     "- 1枚に注番が2つ以上あるときは、chuban に全部を「,」で区切って書き、rows のそれぞれの chuban に、その行の注番を入れる。注番が1つなら rows の chuban は null でよい。",
+    "- 2枚つづきの納品書などで、紙に「1/2」「2/2」「1頁」「(2/3)」のような何枚目の印があれば、page に何枚目、pages に何枚中かを数字で書く（「2/2」なら page 2・pages 2）。印がなければ、どちらも null。",
+    "- 何枚かつづきの納品書で、その紙に合計（小計）が書いていなければ total は null にする（ほかの紙の合計を推測で入れない）。",
     "- 納品書でないときは isSlip を false、kind に書類の種類を書き、ほかは null か空にする。",
   ].join("\n");
 }
 
 const SLIP_SCHEMA = {
   type: "object", additionalProperties: false,
-  required: ["isSlip", "kind", "supplier", "slipNo", "date", "chuban", "rows", "total", "doubt"],
+  required: ["isSlip", "kind", "supplier", "slipNo", "date", "chuban", "page", "pages", "rows", "total", "doubt"],
   properties: {
     isSlip: { type: "boolean" },
     kind: { type: "string" },
@@ -234,6 +236,8 @@ const SLIP_SCHEMA = {
     slipNo: nullable("string"),
     date: nullable("string"),
     chuban: nullable("string"),
+    page: nullable("number"),    // 2枚つづきの何枚目（11/4 OS26315）
+    pages: nullable("number"),   // 何枚中
     rows: {
       type: "array",
       items: {

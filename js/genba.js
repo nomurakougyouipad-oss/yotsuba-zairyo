@@ -1,10 +1,11 @@
 // 現場のスマホ（index.html）
 // 登録していない → 会社の合言葉 → 名前をえらぶ → 登録ずみの画面（たのむ・カート・送ったもの）
-import { $, esc, initTheme, registerSW } from "./common.js";
+import { $, esc, initTheme, watchVersion, registerSW } from "./common.js";
 import { whoAmI, register, errorText, isIPhoneBrowser } from "./touroku.js";
 import { startGenbaApp } from "./genba-app.js";
 
 initTheme();
+watchVersion();   // 新しいプログラムが出たら、使っていないときに自動で読みなおす（11/4）
 registerSW();
 const main = $("#main");
 start();

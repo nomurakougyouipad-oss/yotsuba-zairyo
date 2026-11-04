@@ -1,11 +1,12 @@
 // 事務所のパソコン（jimusho.html）
 // 登録していない → 事務所の合言葉＋このパソコンの名前 → 登録ずみの画面（上の箱・依頼／注文ごと／工事ごと・⚙ 設定。js/jimusho-app.js）
-import { $, esc, initTheme } from "./common.js";
+import { $, esc, initTheme, watchVersion } from "./common.js";
 import { whoAmI, register, errorText } from "./touroku.js";
 import { startOfficeApp } from "./jimusho-app.js";
 import { refreshPush } from "./tsuuchi.js";
 
 initTheme();
+watchVersion();   // 新しいプログラムが出たら、使っていないときに自動で読みなおす（11/4）
 const main = $("#main");
 start();
 
