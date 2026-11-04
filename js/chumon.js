@@ -242,6 +242,67 @@ export async function addSlip(o, slip, me) {
   return { sid, priceIds, arrived: o.status === "wait" };
 }
 
+/* ---------- 届いた品物（納品書の明細。11/4 事務員さん） ----------
+   - 金額のない紙（送り状・受領書・ガスの仮納品書など）も、明細とスキャンを残す（npSlips。金額は入れない＝材料費は変わらない）。
+     slips に入れると、材料屋のアプリで金額を入れられなくなる（ルールが「納品書がまだない」を見る）ので、別の所にする
+   - 「注文にない品物」：納品書の行と注文の品物をくらべて、品名に同じ言葉（カタカナ・英字の言葉か、漢字2字）がなければ「注文にない」。
+     数はくらべない（1箱と50枚のように単位がちがうことがある）。行の ord（true＝注文の品物／false＝注文にない）で、手で決めなおせる
+   - 加工品・めっきは、品名が図面や「一式」なので、くらべない */
+/** 金額のない紙（入れた順） [[id, paper]] */
+export const npSlipsOf = o => Object.entries(o.npSlips || {}).sort(([, a], [, b]) => (a.at || 0) - (b.at || 0));
+/** 品名のくらべ方：全角・半角、大文字・小文字、空白・ハイフン、× と x のちがいはそろえる */
+const specKey = s => String(s || "").normalize("NFKC").toUpperCase().replace(/[\s\-‐－―ー]/g, "").replace(/[×*＊]/g, "X");
+/** 品名と数がぜんぶ同じか（行の並びは見ない） */
+const itemsKey = rows => rows.map(r => `${specKey(r.spec)}|${r.qty ?? ""}`).sort().join("\n");
+export const sameItems = (a, b) => !!a.length && itemsKey(a) === itemsKey(b);
+export const sameDay = (a, b) => !a || !b || a === b;
+const specNorm = s => String(s || "").normalize("NFKC").toUpperCase().replace(/[-‐－―]/g, "");
+const specWords = s => specNorm(s).match(/[ァ-ヴー]{2,}|[A-Z][A-Z0-9]+/g) || [];
+const specKanji = s => (specNorm(s).match(/[一-龯]{2,}/g) || []).flatMap(w => [...w].slice(1).map((c, i) => w[i] + c));   // 漢字2字ずつ
+/** 同じ品物らしいか（品名に同じ言葉があるか） */
+export function sameThing(a, b) {
+  const A = specWords(a), B = specWords(b);
+  if (A.some(x => B.some(y => x.includes(y) || y.includes(x)))) return true;
+  const K = new Set(specKanji(b));
+  return specKanji(a).some(x => K.has(x));
+}
+/** 注文の品物とくらべる注文か（加工品・めっきは、くらべない） */
+export const checksOrd = o => o.kind !== "kakou" && o.kind !== "mekki";
+/** 納品書の行が「注文にない品物」か。key＝行の番号（注文の品物の番号と同じなら注文の品物＝品物ごとに入れた金額） */
+export function notInOrder(o, key, r) {
+  if (r.ord != null) return !r.ord;
+  if (!checksOrd(o) || (key && (o.lines || {})[key])) return false;
+  return !Object.values(o.lines || {}).some(l => sameThing(l.spec, r.spec));
+}
+/** 金額のない紙が、金額のある納品書と同じ品物か → その納品書 [sid, slip] か null */
+export const npDupOf = (o, p) => slipsOf(o).find(([, s]) => sameItems(Object.values(p.rows || {}), Object.values(s.rows || {})) && sameDay(p.date, s.date)) || null;
+/** 届いた品物：[{ sid, rid, s, r, np, not }]（新しい紙が上）。金額のない紙で、金額のある納品書と同じ品物の紙は出さない（2回出ないように） */
+export function deliveredRows(o) {
+  const papers = [...slipsOf(o).map(([sid, s]) => [sid, s, false]), ...npSlipsOf(o).filter(([, p]) => !npDupOf(o, p)).map(([sid, s]) => [sid, s, true])]
+    .sort(([, a], [, b]) => (b.date || "").localeCompare(a.date || "") || (b.at || 0) - (a.at || 0));
+  return papers.flatMap(([sid, s, np]) => Object.entries(s.rows || {}).map(([rid, r]) => ({ sid, rid, s, r, np, not: notInOrder(o, rid, r) })));
+}
+/** 金額のない紙を入れる。paper = {no?, date, rows:{r01:{spec, qty?, unit?, ord?}}, scan?, imp?}。まだ届いていない注文なら「届いた」にする */
+export async function addNpSlip(o, paper, me) {
+  const id = push(ref(db, `zairyo/orders/${o.id}/npSlips`)).key, base = `zairyo/orders/${o.id}`;
+  const upd = { [`${base}/npSlips/${id}`]: { ...paper, by: me.name, at: serverTimestamp() } };
+  if (o.status === "wait") {
+    upd[`${base}/status`] = "arrived";
+    upd[`${base}/arrivedAt`] = serverTimestamp();
+    upd[`${base}/arrivedBy`] = me.name;
+  }
+  await update(ref(db), upd);
+  return { npId: id, arrived: o.status === "wait" };
+}
+/** 金額のない紙を消す（「届いた」は、そのまま） */
+export async function removeNpSlip(o, id) {
+  await update(ref(db, `zairyo/orders/${o.id}`), { [`npSlips/${id}`]: null });
+}
+/** 行の「注文にない」を決めなおす（ord：true＝注文の品物・false＝注文にない） */
+export async function setRowOrd(o, np, sid, rid, ord) {
+  await update(ref(db, `zairyo/orders/${o.id}/${np ? "npSlips" : "slips"}/${sid}/rows/${rid}`), { ord });
+}
+
 /** 納品書を消す（入れまちがえたとき） */
 export async function removeSlip(o, sid) {
   const rest = slipsOf(o).filter(([id]) => id !== sid);

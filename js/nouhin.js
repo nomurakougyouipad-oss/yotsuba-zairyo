@@ -5,7 +5,7 @@
 // - 注番＋材料屋で注文をさがして「この注文に入れる」。なければ「新しい注文として入れる」か「入れない」
 // - たしかめてほしい所：AI が読みにくかった所・明細の合計と納品書の合計のちがい・金額が読めない行・知らない頭文字
 // - 入れると、注文の「納品書の金額」に入る（5-4 の addSlip と同じ）。まだ届いていない注文は「届いた」になる。
-//   金額のない納品書は「届いた」にするだけ
+//   金額のない納品書は「届いた」にして、明細とスキャンを残す（金額は入れない。11/4）
 // - 7-5b：材料集計表（Excel・CSV・はりつけた表）も同じ画面で読む（js/hyou.js。AI は使わない）。注番＋材料屋＋納品書番号（なければ日付）ごとにまとめる
 // - 7-5c：同じ納品書はもう入っていれば「入れない」にして知らせる（同じ材料屋で同じ納品書番号・同じ注文に同じ金額と日付・この取りこみの中で同じもの）。
 //   10/30（持ち主。事務員さんが中を見ずに入れても困らないように）：どれも「入れない」にしておくだけで、入れる先をえらびなおせば入れられる
@@ -25,12 +25,14 @@
 //   「どの注文に入れますか？」だけかきなおす（全部かきなおすと、押したボタンが入れかわって1回目が効かなかった）。
 //   材料屋・注番の知らせは、いまの材料屋・注番で毎回出す（正しく直したら消える）。説明の箱に「上の注番・材料屋を直すと、合う注文が出ます」。
 //   注番が1字ちがい（となりの2字の入れかわりも）の同じ材料屋の注文があれば「この注文ではありませんか？」（押すと注番を直して、その注文に入れる）
+// - 11/4（事務員さん。明細をアプリで見たい）：金額のない紙も、明細（金額なし）とスキャンを注文の npSlips に残す（材料費は変わらない。chumon.js）。
+//   入れる先の注文の品物にない行があれば「注文にない品物が入っています」。「注文の品物」を押すと、その行は外す（ord:true）
 import { ref, get, push, set, update, query, limitToLast, onValue, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { ref as sref, uploadBytes, deleteObject } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-storage.js";
 import { db, auth, call, storage } from "./firebase.js";
 import { esc, zenkana, toast, openSheet } from "./common.js";
 import { ymd } from "./tanomu.js";
-import { addSlip, markArrived, yen, toPrice, ST, slipsOf } from "./chumon.js";
+import { addSlip, yen, toPrice, ST, slipsOf, npSlipsOf, addNpSlip, sameItems, sameDay, notInOrder } from "./chumon.js";
 import { watchJobs, CHUBAN_RE } from "./nippo.js";
 import { matchSupplier } from "./line-parse.js";
 import { errorText } from "./touroku.js";
@@ -118,15 +120,9 @@ function extractChubans(s) {
 }
 const okDate = s => (/^\d{4}-\d{2}-\d{2}$/.test(s || "") ? s : "");
 
-/* ---------- 同じ紙か（10/30 ②） ---------- */
-/** 品名のくらべ方：全角・半角、大文字・小文字、空白・ハイフン、× と x のちがいはそろえる */
-const specKey = s => String(s || "").normalize("NFKC").toUpperCase().replace(/[\s\-‐－―ー]/g, "").replace(/[×*＊]/g, "X");
-/** 品名と数がぜんぶ同じか（行の並びは見ない） */
-const itemsKey = rows => rows.map(r => `${specKey(r.spec)}|${r.qty ?? ""}`).sort().join("\n");
-const sameItems = (a, b) => !!a.length && itemsKey(a) === itemsKey(b);
+/* ---------- 同じ紙か（10/30 ②。品名と数のくらべ方 sameItems・sameDay は chumon.js） ---------- */
 const noKey = s => String(s || "").normalize("NFKC").toUpperCase().replace(/\s/g, "");
 const sameNo = (a, b) => !!a && !!b && noKey(a) === noKey(b);
-const sameDay = (a, b) => !a || !b || a === b;
 /** 金額のない紙か（どの行にも金額がない・ぜんぶ 0 も同じ。③）。材料集計表は、いつも金額のある表 */
 const noPriceOf = gr => !gr.table && gr.rows.every(r => r.amount == null || r.amount === 0);
 
@@ -288,6 +284,9 @@ export function openImport({ sups, getOrders, me }) {
           const x = { no: s.no, date: s.date, amt: s.amount, rows: Object.values(s.rows || {}) };
           if (np ? sameItems(gr.rows, x.rows) && sameDay(gr.date, x.date) : samePaper(gr, x)) return { o, s, amt: s.amount, priced: np };
         }
+        if (np) for (const [, p] of npSlipsOf(o)) {   // 金額のない紙：前に入れた金額のない紙と同じ紙（11/4）。金額のある紙は止めない
+          if (sameNo(gr.no, p.no) || ((!gr.no || !p.no) && sameDay(gr.date, p.date) && sameItems(gr.rows, Object.values(p.rows || {})))) return { o, s: p, amt: null, paper: true };
+        }
       }
       const mine = cards.flatMap(c => c.groups.map(x => ({ c, x })));
       const at = mine.findIndex(m => m.x === gr);
@@ -342,7 +341,7 @@ export function openImport({ sups, getOrders, me }) {
     /* ---------- 画面 ---------- */
     const sumOf = gr => gr.rows.reduce((s, r) => s + (r.amount || 0), 0);
     const md = ts => { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()}`; };
-    const sumHTML = gr => (noPriceOf(gr) ? "金額のない納品書です（入れると「届いた」にするだけ）。単価か金額を入れると、その金額で入ります" : `明細の合計 <span class="money" data-sum>${yen(sumOf(gr))}</span> 円（税抜）`);
+    const sumHTML = gr => (noPriceOf(gr) ? "金額のない納品書です（入れると「届いた」にして、明細を残します。金額は入りません）。単価か金額を入れると、その金額で入ります" : `明細の合計 <span class="money" data-sum>${yen(sumOf(gr))}</span> 円（税抜）`);
     const pageName = c => `${c.name}${c.page ? `（${c.page}ページ）` : ""}`;
     function dupHTML(gr) {
       const d = dupOf(gr), skip = gr.dest === "skip" ? "「入れない」にしています。入れるときは、どの注文に入れるかをえらびなおしてください。" : "";
@@ -350,10 +349,20 @@ export function openImport({ sups, getOrders, me }) {
       const where = d.o ? `${esc(d.o.supplierName)}・${esc(d.o.chuban)}${d.s.at ? `・${md(d.s.at)} ${esc(d.s.by || "")}` : ""}` : esc(pageName(d.c));
       if (d.priced) return `<p class="okmsg">${d.o ? `金額のある納品書が、もう入っています（${where}）` : `金額のある納品書（${where}）と同じ品物です`}。金額は納品書のほうで入れます。${skip}</p>`;
       const diff = d.amt != null && d.amt !== sumOf(gr) ? `金額がちがいます（${yen(d.amt)}円 と ${yen(sumOf(gr))}円）。どちらかの読みまちがいかもしれません。` : "";
-      return `<p class="okmsg">${d.o ? `この納品書は、もう入っています（${where}）` : `同じ納品書${gr.no ? `（番号 ${esc(gr.no)}）` : ""}が、この取りこみの前のほうにもあります（${where}）`}。${diff}${skip}</p>`;
+      return `<p class="okmsg">${d.o ? `この${d.paper ? "金額のない紙" : "納品書"}は、もう入っています（${where}）` : `同じ納品書${gr.no ? `（番号 ${esc(gr.no)}）` : ""}が、この取りこみの前のほうにもあります（${where}）`}。${diff}${skip}</p>`;
     }
     /** 数がなくて、単価だけの行（金額が出ない。11/2） */
     const needQty = r => r.price != null && r.qty == null && r.amount == null;
+    /** 「注文にない品物が入っています」（11/4）：入れる先の注文の品物にない行。「注文の品物」を押すと、その行は外す（ord:true で入れる） */
+    function notHTML(gr) {
+      const o = (getOrders() || []).find(x => x.id === gr.dest);
+      const nots = o ? gr.rows.map((r, i) => [r, i]).filter(([r]) => notInOrder(o, "", r)) : [];
+      if (!nots.length) return "";
+      const want = Object.values(o.lines || {}).map(l => l.spec).join("・");
+      return `<div class="notbox">注文にない品物が ${nots.length}行 あります
+          <span>アプリの注文（${esc(want.length > 60 ? want.slice(0, 60) + "…" : want)}）にない品物です。引き取りの分などなら、このまま入れてよいです。注文の品物なら「注文の品物」を押してください。</span>
+          <ul>${nots.map(([r, i]) => `<li>${esc(r.spec)}<button type="button" class="linkbtn" data-rord="${i}">注文の品物</button></li>`).join("")}</ul></div>`;
+    }
     /** どの注文に入れますか（11/2 事務員さん。前は「入れる先」で、「入れない」のときに何をすればよいか分からなかった）。
      *  この注番・材料屋の注文がアプリにないときは、その場に説明（引き取りなど→新しい注文／送り状・控え→入れない）。
      *  同じ注番の注文が1つもなければ2つのボタン、ほかの材料屋の注文があれば、えらぶ所。
@@ -366,7 +375,7 @@ export function openImport({ sups, getOrders, me }) {
         `<option value="new"${gr.dest === "new" ? " selected" : ""}>新しい注文として入れる（アプリで注文していない分）</option><option value="skip"${gr.dest === "skip" ? " selected" : ""}>入れない（送り状・控えなど）</option>`;
       const newHint = gr.dest === "new" && gr.chuban ? `<p class="hint">注番 ${esc(gr.chuban)} で、新しい注文を作ってから入れます（工事件名は日報から）。</p>` : "";
       const none = !dupOf(gr) && CHUBAN_RE.test(gr.chuban) && gr.supId && !cand.some(o => o.supplier === gr.supId);
-      if (!none) return `<label class="mini">どの注文に入れますか？<select class="inp" data-f="dest">${opts}</select></label>${newHint}`;
+      if (!none) return `<label class="mini">どの注文に入れますか？<select class="inp" data-f="dest">${opts}</select></label>${newHint}${notHTML(gr)}`;
       const btn = (v, label) => `<button type="button" class="btn" data-dest="${v}" aria-pressed="${gr.dest === v}">${label}</button>`;
       const near = nearOf(gr);
       const dif = ch => [...ch].map((c, i) => (c === gr.chuban[i] ? esc(c) : `<span class="dif">${esc(c)}</span>`)).join("");   // ちがう字に線
@@ -477,6 +486,7 @@ export function openImport({ sups, getOrders, me }) {
       else if (t.dataset.force) readCard(cards[Number(t.dataset.force)], true);
       else if (t.dataset.zoom) zoom(cards[Number(t.dataset.zoom)].thumb);
       else if (t.dataset.dest) { const gr = groupAt(t); gr.dest = t.dataset.dest; gr.picked = true; render(); }   // 「新しい注文として入れる」「入れない」のボタン（11/2）
+      else if (t.dataset.rord) { const gr = groupAt(t), r = gr && gr.rows[Number(t.dataset.rord)]; if (r) { r.ord = true; refresh(); } }   // 「注文にない」の行を、注文の品物にする（11/4）
       else if (t.dataset.near) {   // 「この注文ではありませんか？」の「この注文に入れる」（11/4）：注番をその注文の注番に直して、その注文に入れる
         const gr = groupAt(t), o = (getOrders() || []).find(x => x.id === t.dataset.near);
         if (!gr || !o) return;
@@ -534,7 +544,7 @@ export function openImport({ sups, getOrders, me }) {
           gr.handPriced = !noPriceOf(gr);
           if (!gr.picked) gr.dest = defaultDest(gr);
           refresh();
-        }
+        } else if (f === "spec") refresh();   // 品名を直したら「注文にない品物」も見なおす（11/4）
       } else if (t.dataset.f === "chuban") {
         // 7字そろったら（例 AB26123）、欄から出るのを待たずに、すぐ合う注文をさがしなおす（11/4）。そろっていない間は、欄から出たとき（change）
         const v = fixChuban(t.value);
@@ -579,17 +589,24 @@ export function openImport({ sups, getOrders, me }) {
           const o = created ? await newOrder(gr) : (getOrders() || []).find(x => x.id === gr.dest);
           if (!o) throw new Error("入れる先の注文が見つかりません");
           const item = { orderId: o.id, created, arrived: o.status === "wait", amount: np ? 0 : sumOf(gr), chuban: o.chuban, sup: o.supplier, no: gr.no || "" };
-          if (np) {
-            if (o.status === "wait") await markArrived(o, me);
+          // 明細の行（金額のない紙は、金額なし）。「注文の品物」を押した行は ord:true（11/4）
+          const rows = {};
+          gr.rows.forEach((r, i) => {
+            const x = { spec: r.spec || "（品名なし）" };
+            if (!np) x.amount = Math.round(r.amount || 0);
+            if (r.qty != null) x.qty = r.qty;
+            if (r.unit) x.unit = r.unit;
+            if (!np && r.price != null) x.price = r.price;
+            if (r.ord != null) x.ord = r.ord;
+            rows["r" + String(i + 1).padStart(2, "0")] = x;
+          });
+          if (np) {   // 金額のない紙も、明細とスキャンを残す（11/4。前は「届いた」にするだけ）。材料費は変わらない
+            const paper = { date: gr.date || ymd(0), rows, imp };
+            if (gr.no) paper.no = gr.no;
+            const scan = await scanOf(c);
+            if (scan) paper.scan = scan;
+            item.npId = (await addNpSlip(o, paper, me)).npId;
           } else {
-            const rows = {};
-            gr.rows.forEach((r, i) => {
-              const x = { spec: r.spec || "（品名なし）", amount: Math.round(r.amount || 0) };
-              if (r.qty != null) x.qty = r.qty;
-              if (r.unit) x.unit = r.unit;
-              if (r.price != null) x.price = r.price;
-              rows["r" + String(i + 1).padStart(2, "0")] = x;
-            });
             const slip = { date: gr.date || ymd(0), amount: sumOf(gr), rows, imp };
             if (gr.no) slip.no = gr.no;
             const scan = await scanOf(c);
@@ -676,11 +693,13 @@ export function openImport({ sups, getOrders, me }) {
           upd[`${base}/nouhin`] = rest.length ? rest.reduce((s, [, x]) => s + (Number(x.amount) || 0), 0) : null;
         }
         Object.values(it.priceIds || {}).forEach(p => { upd[`zairyo/prices/${p}`] = null; });
+        if (it.npId) upd[`${base}/npSlips/${it.npId}`] = null;   // 金額のない紙（11/4）
+        const npRest = npSlipsOf(o).filter(([pid]) => pid !== it.npId);
         if (it.created) {
           upd[`${base}/status`] = "cancelled";
           upd[`${base}/cancelledAt`] = serverTimestamp();
           upd[`${base}/cancelledBy`] = me.name;
-        } else if (it.arrived && o.status === "arrived" && !rest.length) {
+        } else if (it.arrived && o.status === "arrived" && !rest.length && !npRest.length) {
           upd[`${base}/status`] = "wait";
           upd[`${base}/arrivedAt`] = null;
           upd[`${base}/arrivedBy`] = null;

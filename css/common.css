@@ -473,8 +473,35 @@ ul.plain{margin:0;padding-left:1.2em}
 .slipform .a-cell{display:flex;flex-direction:column;gap:2px;min-width:0}
 .slipform .a-lab{display:none;font-size:12px;font-weight:700;color:var(--muted)}
 @media (max-width:640px){.slipform .a-lab{display:block}.slipform .a-amt:not(:empty)::before{content:"金額　";font-size:12px;color:var(--muted)}}
-.sl-rows summary{cursor:pointer;font-size:13px;color:var(--muted);font-weight:700;min-height:32px;display:flex;align-items:center}
-.sl-rows ul{margin:4px 0 0;padding-left:1.2em;font-size:13px}
+/* 「▼ 明細を見る（5行）」：わくのあるボタンの形（11/4 事務員さん。前の「明細（5行）」は、ただの字に見えて気づきにくかった）。開くと「▲ 明細をとじる」 */
+.mrows>summary{list-style:none;display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px 8px;min-height:44px;padding:4px 16px;border:1px solid var(--line);border-radius:10px;background:var(--surface2);color:var(--fg);font-weight:700;font-size:14px;cursor:pointer;width:fit-content;max-width:100%}
+.mrows>summary::-webkit-details-marker{display:none}
+.mrows>summary:hover{border-color:var(--amber)}
+.mrows>summary .ar{color:var(--amber);font-size:12px}
+.mrows[open]>summary .op,.mrows:not([open])>summary .cl{display:none}
+.mrows>summary .nc{font-size:12px;font-weight:700;color:var(--on-amber);background:var(--amber-btn);border-radius:4px;padding:0 6px}
+.mrows>.hint{margin-top:4px}
+/* 明細の表・届いた品物の表（11/4） */
+.mtbl-wrap{overflow-x:auto;margin-top:6px}
+.mtbl{width:100%;border-collapse:collapse;font-size:13.5px}
+.mtbl th,.mtbl td{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}
+.mtbl th{color:var(--muted);font-size:12px;white-space:nowrap}
+.mtbl td.n{text-align:right;font-family:var(--f-num);white-space:nowrap}
+.mtbl tr.not td{background:color-mix(in srgb,var(--amber) 10%,transparent)}
+.mtbl tfoot td{font-weight:800;border-bottom:0}
+.mtbl tr[data-open]{cursor:pointer}
+.mtbl tr[data-open]:hover td{background:var(--surface2)}
+.ordtag,.nottag,.oktag{display:inline-block;margin-left:6px;font-size:11.5px;font-weight:700;border-radius:4px;padding:0 5px;white-space:nowrap;vertical-align:1px}
+.ordtag{border:1px solid var(--blue);color:var(--blue);background:none;cursor:pointer;min-height:24px;font-family:inherit}
+.ordtag.not,.nottag{border:1px solid var(--amber);color:var(--amber)}
+.ordtag:hover{background:var(--surface2)}
+.oktag{border:1px solid var(--blue);color:var(--blue)}
+/* 「注文にない品物が入っています」（11/4） */
+.notbox{margin:0;padding:10px 12px;border-radius:10px;border:2px solid var(--amber);background:var(--surface);font-weight:700;font-size:14px}
+.notbox span{display:block;font-weight:400;font-size:13px;color:var(--muted);margin-top:2px}
+.notbox ul{margin:6px 0 0;padding-left:18px;font-weight:400;font-size:13.5px}
+.notbox li .linkbtn{margin-left:8px}
+.subh{margin:0;font-size:13.5px;font-weight:800}
 .prows{display:flex;flex-direction:column;gap:8px}
 .prow{display:grid;grid-template-columns:minmax(0,1fr) auto 6em;gap:6px 10px;align-items:center;padding:6px 0;border-top:1px solid var(--line)}
 .prows .prow:first-child{border-top:0}

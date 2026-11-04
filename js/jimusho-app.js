@@ -11,7 +11,7 @@ import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet, keepPlace } from "./common.js";
 import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
-import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany, azkText, orderPdf, pdfLine } from "./chumon.js";
+import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany, azkText, orderPdf, pdfLine, npSlipsOf, npDupOf, deliveredRows, notInOrder, checksOrd, sameThing, removeNpSlip, setRowOrd } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel, shopOf, pageLink, SHOPS } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
@@ -21,7 +21,8 @@ import { printFax, faxHTML } from "./fax.js";
 import { htmlToPdf, pdfName, downloadBlob, loadPdfLibs } from "./pdf.js";
 import { fileBlockHTML, wireFiles, filesOf, downloadFiles } from "./fairu.js";
 import { openKakouOrder } from "./kakou.js";
-import { slipFormHTML, wireSlipForm, readSlipForm, slipRowText } from "./kingaku.js";
+import { slipFormHTML, wireSlipForm, readSlipForm } from "./kingaku.js";
+import { CHUBAN_RE } from "./nippo.js";
 import { quoteState, isOpenQuote, quoteCard, openQuoteForm, quoteHTML, wireQuote, qLines } from "./mitsumori.js";
 import { openAzukari, azItems, lineSpec } from "./azukari.js";
 
@@ -188,6 +189,8 @@ export function startOfficeApp(main, me) {
     view: "irai", filter: "all", q: "", reqs: null, orders: null, catalog: null, sups: null, places: null,
     src: "",   // "nouhin"＝納品書から作った注文だけ（「注文ごと」「工事ごと」。10/30）
     openOrderId: "",   // いま中身を出している注文
+    mOpen: new Set(),   // 開いている「▼ 明細を見る」（かきなおしても開いたまま。11/4）
+    kojiOpen: {},   // 工事ごとの「届いた品物」を開いたか {注番: true/false}（11/4）
     settingsOpen: false,
     pick: {},        // 依頼ごとの、品物にえらんだ材料屋 {依頼id: {品物id: 材料屋id}}（「注文した」までは、この画面だけ）
     openId: "",      // いま中身を出している依頼
@@ -406,9 +409,25 @@ export function startOfficeApp(main, me) {
     if (!st.orders) { list.innerHTML = '<p class="muted">読んでいます…</p>'; return; }
     const shown = sortOrders(liveOrders().filter(o => st.filter === "all" || o.status === st.filter));
     const cxs = st.filter === "all" ? sortOrders((st.orders || []).filter(o => o.status === "cancelled" && matchOrder(o) && srcOk(o))) : [];
-    list.innerHTML = srcBar() +
+    list.innerHTML = srcBar() + kojiItemsHTML() +
       (shown.length ? `<div class="ocards">${shown.map(orderCard).join("")}</div>` : '<p class="empty">あてはまる注文はありません。</p>') +
       (cxs.length ? `<details class="block hidbox" id="cxOrders"><summary>取り消した注文（${cxs.length}）</summary><div class="ocards">${cxs.map(orderCard).join("")}</div></details>` : "");
+  }
+
+  /** 工事ごとの「届いた品物」（11/4 事務員さん）：さがす欄が注番（工事のカードを押したとき）なら、一覧のいちばん上に、
+   *  その注番の全部の注文（材料屋がちがっても）の納品書の明細を1つの表で。10品までは開いて出す。行を押すと、その注文 */
+  function kojiItemsHTML() {
+    const cb = st.q.trim().normalize("NFKC").toUpperCase();
+    if (!CHUBAN_RE.test(cb)) return "";
+    const os = (st.orders || []).filter(o => o.status !== "cancelled" && o.chuban === cb);
+    const rows = os.flatMap(o => deliveredRows(o).map(x => ({ ...x, o })))
+      .sort((a, b) => (b.s.date || "").localeCompare(a.s.date || "") || (b.s.at || 0) - (a.s.at || 0));
+    if (!rows.length) return "";
+    const total = os.reduce((t, o) => t + (o.nouhin || 0), 0), open = st.kojiOpen[cb] ?? rows.length <= 10;
+    return `<div class="block koji-items"><h3>${esc(cb)} で届いた品物</h3>
+        <p class="hint">材料屋の納品書から。全部の材料屋・全部の注文の分です。行を押すと、その注文が開きます。注文者は、アプリの注文の注文者です（注文にない品物は —）。</p>
+        <details class="mrows" data-koji="${esc(cb)}"${open ? " open" : ""}><summary><span class="ar op">▼</span><span class="op">品物を見る（${rows.length}品・${yen(total)}円）</span><span class="ar cl">▲</span><span class="cl">品物をとじる</span></summary>
+          ${deliveredTable(rows, { sup: true, who: true, total })}</details></div>`;
   }
 
   /* 工事（注番）ごと：注番ごとの注文の数。押すと、その注番の注文だけの一覧 */
@@ -853,20 +872,89 @@ export function startOfficeApp(main, me) {
               ${s.src === "sup" ? `<button type="button" class="linkbtn" data-slipfix="${esc(sid)}">直す</button>` : ""}
               <button type="button" class="linkbtn muted" data-slipdel="${esc(sid)}">消す</button></div>
             ${s.scan ? `<button type="button" class="linkbtn" data-phview="${esc(s.scan)}">納品書のスキャンを見る</button>` : ""}
-            ${s.rows && Object.keys(s.rows).length ? `<details class="sl-rows"><summary>明細（${Object.keys(s.rows).length}行）</summary><ul>${Object.values(s.rows).map(r =>
-              `<li>${esc(slipRowText(r))}</li>`).join("")}</ul></details>` : ""}
+            ${rowsHTML(o, sid, s, false)}
             <span class="hint">入れた人：${esc(s.by || "")}${s.imp ? "（納品書の取りこみ）" : ""}${s.src === "sup" ? "・材料屋のアプリから" : ""}</span>
             ${s.fixBy ? `<span class="hint">直した人：${esc(s.fixBy)}${s.fixAt ? `（${md(s.fixAt)}）` : ""}。材料屋が入れた金額は ${yen(s.supAmount)}円</span>` : ""}
           </li>`).join("")}</ul>
           ${sl.length > 1 ? `<p class="ptotal"><span>納品書の合計</span><span class="money">${yen(o.nouhin)}</span><span>円</span></p>` : ""}
           <div class="row"><button type="button" class="linkbtn" data-slipmore>＋ 納品書をもう1枚入れる</button></div>` : ""}
+        ${npBlockHTML(o, dayText)}
         <div id="slipFormBox"${sl.length ? " hidden" : ""}>${form}</div>
       </div>`;
+  }
+  /** 金額のない紙（送り状・受領書など。11/4）：明細とスキャンだけ。材料費には入らない */
+  function npBlockHTML(o, dayText) {
+    const ps = npSlipsOf(o);
+    if (!ps.length) return "";
+    return `<p class="subh">金額のない紙（送り状・受領書など。材料費には入りません）</p>
+      <ul class="slips">${ps.map(([pid, p]) => {
+        const dup = npDupOf(o, p);
+        return `<li>
+          <div class="sl-top"><span class="sl-lab">金額のない紙${p.no ? "　No." + esc(p.no) : ""}${p.date ? "　" + esc(dayText(p.date)) : ""}</span>
+            <span class="hint">金額なし</span>
+            <button type="button" class="linkbtn muted" data-npdel="${esc(pid)}">消す</button></div>
+          ${dup ? `<span class="hint">金額のある納品書${dup[1].no ? `（No.${esc(dup[1].no)}）` : ""}と同じ品物です。「納品書で届いた品物」には、納品書のほうだけ出します。</span>` : ""}
+          ${p.scan ? `<button type="button" class="linkbtn" data-phview="${esc(p.scan)}">スキャンを見る</button>` : ""}
+          ${rowsHTML(o, pid, p, true)}
+          <span class="hint">入れた人：${esc(p.by || "")}${p.imp ? "（納品書の取りこみ）" : ""}</span>
+        </li>`;
+      }).join("")}</ul>`;
+  }
+  const numText = v => (v == null || v === "" ? "" : Number(v).toLocaleString("ja-JP", { maximumFractionDigits: 3 }));
+  /** 「注文にない」「注文の品物」の印（押すと切りかえ。11/4）。加工品・めっきは出さない */
+  const ordTag = (o, np, sid, rid, not) => (checksOrd(o)
+    ? `<button type="button" class="ordtag${not ? " not" : ""}" data-ord="${np ? "np" : "sl"}|${esc(sid)}|${esc(rid)}" title="押すと「注文の品物」と「注文にない」を切りかえます">${not ? "注文にない" : "注文の品物"}</button>` : "");
+  /** 「▼ 明細を見る（5行）」（11/4 事務員さん：前の「明細（5行）」は、ただの字に見えて気づきにくかった）。開くと表 */
+  function rowsHTML(o, sid, s, np) {
+    const rs = Object.entries(s.rows || {});
+    if (!rs.length) return "";
+    const key = `${o.id}/${np ? "np" : "sl"}/${sid}`, nNot = rs.filter(([rid, r]) => notInOrder(o, rid, r)).length;
+    return `<details class="mrows" data-mkey="${esc(key)}"${st.mOpen.has(key) ? " open" : ""}>
+        <summary><span class="ar op">▼</span><span class="op">明細を見る（${rs.length}行）</span><span class="ar cl">▲</span><span class="cl">明細をとじる</span>${nNot ? `<span class="nc">注文にない ${nNot}</span>` : ""}</summary>
+        <div class="mtbl-wrap"><table class="mtbl"><thead><tr><th>品名</th><th>数</th><th>単位</th>${np ? "" : "<th>単価</th><th>金額</th>"}</tr></thead><tbody>
+          ${rs.map(([rid, r]) => { const not = notInOrder(o, rid, r); return `<tr${not ? ' class="not"' : ""}><td>${esc(r.spec)}${ordTag(o, np, sid, rid, not)}</td><td class="n">${numText(r.qty)}</td><td>${esc(r.unit || "")}</td>${np ? ""
+            : `<td class="n">${r.kg != null && r.perKg != null ? `${numText(r.kg)}kg × ${numText(r.perKg)}円/kg` : numText(r.price)}</td><td class="n">${yen(r.amount)}</td>`}</tr>`; }).join("")}
+        </tbody>${np ? "" : `<tfoot><tr><td colspan="4">合計（税抜）</td><td class="n">${yen(s.amount)}</td></tr></tfoot>`}</table></div>
+        ${checksOrd(o) ? '<p class="hint">「注文の品物」「注文にない」の印は、押すと切りかえられます。</p>' : ""}
+      </details>`;
+  }
+  /** 「注文にない品物が入っています」（11/4）：アプリで頼んだ品物にない、納品書の品物 */
+  function notBoxHTML(o, dr) {
+    const nots = dr.filter(x => x.not);
+    if (!nots.length) return "";
+    return `<p class="notbox">注文にない品物が入っています（納品書 ${new Set(nots.map(x => x.sid)).size}枚・${nots.length}品）
+      <span>アプリで頼んでいない品物です。引き取りの分などなら、このままでよいです。下の「納品書で届いた品物」で、どれか見られます。</span></p>`;
+  }
+  /** 届いた品物の表（注文の画面・工事ごと）。cols：表に出す欄 */
+  function deliveredTable(rows, { sup = false, who = false, total = null } = {}) {
+    const dayText = d => (d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8))}` : "");
+    // 注文者は、アプリの注文の注文者（納品書の字ではない）。注文にない品物は、その人が頼んだとは限らないので「—」（11/4 持ち主 A）
+    const tr = x => `<tr${x.not ? ' class="not"' : ""}${who ? ` data-open="${esc(x.o.id)}"` : ""}><td>${dayText(x.s.date)}</td>${sup ? `<td>${esc(x.o.supplierName)}</td>` : ""}
+      <td>${esc(x.r.spec)}${x.not ? '<span class="nottag">注文にない</span>' : ""}</td><td class="n">${numText(x.r.qty)}${esc(x.r.unit || "")}</td>
+      <td class="n">${x.np ? '<span class="hint">金額なし</span>' : yen(x.r.amount)}</td>${who ? `<td>${x.not ? "—" : esc(x.o.chumonsha || "—")}</td>` : `<td>${x.s.no ? esc(x.s.no) : ""}</td>`}</tr>`;
+    const head = `<thead><tr><th>届いた日</th>${sup ? "<th>材料屋</th>" : ""}<th>品名</th><th>数</th><th>金額</th><th>${who ? "注文者" : "納品書"}</th></tr></thead>`;
+    const foot = total != null ? `<tfoot><tr><td colspan="${sup ? 4 : 3}">納品書の合計（税抜）</td><td class="n">${yen(total)}</td><td></td></tr></tfoot>` : "";
+    return `<div class="mtbl-wrap"><table class="mtbl">${head}<tbody>${rows.map(tr).join("")}</tbody>${foot}</table></div>`;
+  }
+  /** アプリで頼んだ品物が、納品書で届いたか（「届いた 11/2」。11/4）：同じ番号の行か、品名に同じ言葉がある行 */
+  function gotTag(o, dr, lid, l) {
+    if (!checksOrd(o)) return "";
+    const x = dr.slice().reverse().find(x => x.r.ord !== false && (x.rid === lid || sameThing(l.spec, x.r.spec)));
+    return x ? `<span class="oktag">届いた${x.s.date ? ` ${Number(x.s.date.slice(5, 7))}/${Number(x.s.date.slice(8))}` : ""}</span>` : "";
+  }
+  /** 品名・数量の「納品書で届いた品物」（11/4）。はじめは10品まで、のこりは「▼ ほかの n品を見る」 */
+  function deliveredHTML(o, dr) {
+    const key = `${o.id}/more`, rows = dr.map(x => ({ ...x, o })), more = rows.slice(10);
+    return `<p class="subh">納品書で届いた品物（${rows.length}品）</p>
+      ${deliveredTable(rows.slice(0, 10), { total: more.length ? null : o.nouhin })}
+      ${more.length ? `<details class="mrows" data-mkey="${esc(key)}"${st.mOpen.has(key) ? " open" : ""}><summary><span class="ar op">▼</span><span class="op">ほかの ${more.length}品を見る</span><span class="ar cl">▲</span><span class="cl">とじる</span></summary>
+        ${deliveredTable(more, { total: o.nouhin })}</details>` : ""}`;
   }
 
   /* ---------- 注文の中身（右から出る）：届いた・もどす・コピー・取り消して依頼にもどす ---------- */
   function orderHTML(o) {
     const s = ST[o.status] || ST.wait, late = isLate(o, ymd(0)), cx = o.status === "cancelled";
+    const dr = deliveredRows(o);   // 納品書で届いた品物（11/4）
     const osup = st.sups && st.sups[o.supplier], unsent = isUnsent(o), net = !!osup && osup.send === "net";
     const steps = [["注文した", o.orderedAt, true], ["届いた", o.arrivedAt, o.status === "arrived" || o.status === "billed"], ["請求が来た", o.billedAt, o.status === "billed"]];
     if (officeKind(o)) steps.splice(0, 1, ["入れた", o.orderedAt, true], ["送った", o.sentAt, !o.unsent]);   // 加工品・見積から（10/15）
@@ -924,8 +1012,12 @@ export function startOfficeApp(main, me) {
         </div><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
         ${cx ? "" : `<div class="block"><ol class="steps" style="--c:${s.color}">${steps.map(([l, d, done]) => `<li class="${done ? "done" : ""}">${l}<span class="d">${done && d ? md(d) : ""}</span></li>`).join("")}</ol></div>`}
         ${act}
+        ${cx ? "" : notBoxHTML(o, dr)}
         ${cx ? "" : slipBlockHTML(o)}
-        <div class="block"><h3>品名・数量</h3><ul class="g-lines">${Object.entries(o.lines || {}).map(([lid, l]) => `<li>${esc(lineText(l) + azkText(l))}${oAzHTML(o, lid, l)}</li>`).join("")}</ul>
+        <div class="block"><h3>品名・数量</h3>
+          ${dr.length && !cx ? `<p class="subh">${o.kind === "nouhin" ? "注文の品物（納品書から作った注文）" : "アプリで頼んだ品物"}</p>` : ""}
+          <ul class="g-lines">${Object.entries(o.lines || {}).map(([lid, l]) => `<li>${esc(lineText(l) + azkText(l))}${cx ? "" : gotTag(o, dr, lid, l)}${oAzHTML(o, lid, l)}</li>`).join("")}</ul>
+          ${dr.length && !cx ? deliveredHTML(o, dr) : ""}
           ${cx ? "" : `<div class="row"><button type="button" class="btn" data-oedit>注文を直す</button></div>`}</div>
         ${fileBlockHTML(o, !cx)}
         ${logHTML(o)}
@@ -1020,6 +1112,8 @@ export function startOfficeApp(main, me) {
       fillPhotos(p);
       const w = p.querySelector("#orderWrap");
       w.addEventListener("click", e => onOrderClick(e, w).catch(ex => toast(errorText(ex))));
+      // 「▼ 明細を見る」を開いた・とじたを覚える（かきなおしても、そのまま。11/4）。toggle は上に伝わらないので、つかまえる
+      w.addEventListener("toggle", e => { const k = e.target.dataset && e.target.dataset.mkey; if (k) { if (e.target.open) st.mOpen.add(k); else st.mOpen.delete(k); } }, true);
       // ファイル（注文書・図面）をつける・出す・消す（10/15。js/fairu.js）
       wireFiles(w, () => (st.orders || []).find(x => x.id === id), me, { onErr: ex => toast(errorText(ex)), redraw: () => openOrder(id, true) });
       // 納品書の金額の欄（js/kingaku.js）：入れたら計算。入れかけの欄は、データが変わっても、かきなおさない（data-dirty）
@@ -1042,7 +1136,7 @@ export function startOfficeApp(main, me) {
   }
 
   async function onOrderClick(e, w) {
-    const t = e.target.closest("[data-oaz],[data-oazsave],[data-oazoff],[data-oazno],[data-oquote],[data-oedit],[data-arrive],[data-osent],[data-oapp],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-slipmore],[data-slipfix],[data-slipfixsave],[data-slipfixno],[data-billgo],[data-unbill],[data-chuban]");
+    const t = e.target.closest("[data-oaz],[data-oazsave],[data-oazoff],[data-oazno],[data-oquote],[data-oedit],[data-arrive],[data-osent],[data-oapp],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-npdel],[data-ord],[data-slipmore],[data-slipfix],[data-slipfixsave],[data-slipfixno],[data-billgo],[data-unbill],[data-chuban]");
     if (!t || t.disabled) return;
     const d = t.dataset, o = (st.orders || []).find(x => x.id === st.openOrderId);
     if (!o) return;
@@ -1131,6 +1225,17 @@ export function startOfficeApp(main, me) {
       if (t.dataset.armed !== "1") { t.dataset.armed = "1"; t.textContent = "もう一度押すと消えます"; return; }   // 消すときは2回押す
       await busy("消しています…", () => removeSlip(o, d.slipdel));
       toast("納品書を消しました");
+    } else if (d.npdel) {   // 金額のない紙を消す（11/4。「届いた」は、そのまま）
+      if (t.dataset.armed !== "1") { t.dataset.armed = "1"; t.textContent = "もう一度押すと消えます"; return; }
+      await busy("消しています…", () => removeNpSlip(o, d.npdel));
+      toast("金額のない紙を消しました");
+    } else if (d.ord) {   // 「注文の品物」⇔「注文にない」（11/4）
+      const [kind, sid, rid] = d.ord.split("|"), np = kind === "np";
+      const r = ((((np ? o.npSlips : o.slips) || {})[sid] || {}).rows || {})[rid];
+      if (!r) return;
+      const not = notInOrder(o, rid, r);
+      await busy("しまっています…", () => setRowOrd(o, np, sid, rid, not));
+      toast(not ? "「注文の品物」にしました" : "「注文にない」にしました");
     } else if (d.billgo) {
       const amt = toPrice(w.querySelector("#amtS").value);
       if (amt == null) { w.querySelector("#eBill").textContent = "請求書の金額を入れてください"; return; }
@@ -1388,6 +1493,8 @@ export function startOfficeApp(main, me) {
     else if (t.id === "setBack") showSettings(false);
     else if (t.id === "clearQ") { st.q = ""; st.filter = "all"; st.src = ""; $("#q", main).value = ""; draw(); }
   });
+  // 工事ごとの「届いた品物」を開いた・とじたを覚える（一覧をかきなおしても、そのまま。11/4）
+  main.addEventListener("toggle", e => { const k = e.target.dataset && e.target.dataset.koji; if (k) st.kojiOpen[k] = e.target.open; }, true);
   main.addEventListener("keydown", e => {
     const c = e.target.closest && e.target.closest("[data-req],[data-open],[data-quote]");
     if (c && e.target === c && (e.key === "Enter" || e.key === " ")) {
