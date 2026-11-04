@@ -404,6 +404,9 @@ ul.plain{margin:0;padding-left:1.2em}
 .meta div{display:flex;gap:6px}
 .meta dt{color:var(--muted)}
 .meta dd{margin:0;font-weight:500}
+.meta .tan{margin-left:8px}   /* 「注文者 大石　担当 田中」（11/4） */
+.kcard .ktan{font-size:13px;color:var(--muted)}   /* 工事ごとのカードの「担当 田中」（11/4） */
+.kcard .ktan b{color:var(--fg);font-weight:500}
 .hl{color:var(--amber);font-weight:700}
 .card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid var(--line);padding-top:8px;margin-top:auto}
 .amt{display:flex;align-items:baseline;gap:6px;font-size:13px;color:var(--muted)}

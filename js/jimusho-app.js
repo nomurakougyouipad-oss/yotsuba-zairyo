@@ -359,6 +359,7 @@ export function startOfficeApp(main, me) {
         <dl class="meta">
           <div><dt>希望日</dt><dd>${esc(kibouText(r.kibou))}</dd></div>
           <div><dt>届け先</dt><dd>${esc(r.basho || "—")}</dd></div>
+          ${r.tantou ? `<div><dt>担当</dt><dd>${esc(r.tantou)}</dd></div>` : ""}
           <div><dt>送った</dt><dd>${md(r.sentAt)} ${hm(r.sentAt)}</dd></div>
           ${r.contactedName ? `<div><dt>連絡ずみ</dt><dd class="hl">${esc(r.contactedName)}</dd></div>` : ""}
           ${cx ? `<div><dt>取り消し</dt><dd>${r.cancelledAt ? `${md(r.cancelledAt)} ${hm(r.cancelledAt)}・` : ""}${r.cancelledBy ? `事務所（${esc(r.cancelledBy)}）` : "現場"}${r.cancelReason ? `・${esc(r.cancelReason)}` : ""}</dd></div>` : ""}
@@ -384,7 +385,7 @@ export function startOfficeApp(main, me) {
         <dl class="meta">
           <div><dt>希望日</dt><dd${late ? ' class="late"' : ""}>${esc(kibouText(o.kibou))}${late ? "（すぎています）" : ""}</dd></div>
           <div><dt>届け先</dt><dd>${esc(o.basho || "—")}</dd></div>
-          <div><dt>注文者</dt><dd>${esc(o.chumonsha || "—")}</dd></div>
+          <div><dt>注文者</dt><dd>${esc(o.chumonsha || "—")}</dd>${o.tantou ? `<dt class="tan">担当</dt><dd>${esc(o.tantou)}</dd>` : ""}</div>
           <div><dt>${o.kind === "nouhin" ? "入れた" : "注文した"}</dt><dd>${md(o.orderedAt)}</dd></div>
           ${deliverPlan(o) ? `<div><dt>届く予定</dt><dd>${esc(deliverPlan(o))}</dd></div>` : ""}
           ${nr ? `<div><dt>アプリに送った</dt><dd>${md(o.supSentAt)} ${hm(o.supSentAt)}</dd></div>` : ""}
@@ -445,9 +446,11 @@ export function startOfficeApp(main, me) {
       const latest = os.reduce((x, o) => (o.orderedAt || 0) > (x.orderedAt || 0) ? o : x, os[0]);
       const total = os.reduce((t, o) => t + (cost(o) || 0), 0), noAmt = os.filter(o => cost(o) == null).length;
       const mekki = os.filter(o => o.kind === "mekki").reduce((t, o) => t + (cost(o) || 0), 0);   // めっき代（材料費に入っている。10/15）
+      // 担当（工事の担当。11/4）：新しい注文の担当から。ちがう担当がいれば3人まで並べて、それより多ければ「ほか」。空なら出さない
+      const tans = [...new Set(os.slice().sort((a, b) => (b.orderedAt || 0) - (a.orderedAt || 0)).map(o => (o.tantou || "").trim()).filter(Boolean))];
       return `
         <button type="button" class="kcard" data-kouji="${esc(cb)}" style="--c:${color}">
-          <span class="kouji"><span class="chuban">${esc(cb)}</span><span class="kenmei">${esc(zenkana(latest.kenmei))}</span></span>
+          <span class="kouji"><span class="chuban">${esc(cb)}</span><span class="kenmei">${esc(zenkana(latest.kenmei))}</span>${tans.length ? `<span class="ktan">担当 <b>${esc(tans.slice(0, 3).join("・"))}</b>${tans.length > 3 ? " ほか" : ""}</span>` : ""}</span>
           <span class="kstats"><span>注文 <b>${os.length}</b> 件</span><span>材料がまだ届いていない <b>${w}</b></span><span>請求まだ <b>${a}</b></span></span>
           <span class="kcost"><span class="lab">材料費</span><span><span class="num big">${yen(total)}</span><span class="yen">円</span></span>
             ${mekki ? `<span class="khint">うち めっき代 ${yen(mekki)}円</span>` : ""}
