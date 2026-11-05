@@ -80,6 +80,8 @@ async function openScan(file) {
         await pg.render({ canvasContext: x, viewport: vp }).promise;
         return c;
       },
+      // ページの中の字（パソコンで作った PDF だけ。摘要の注番をさがすのに使う。11/5）
+      text: async k => (await (await doc.getPage(k + 1)).getTextContent()).items.map(i => i.str).join(" "),
     };
   }
   const bmp = await createImageBitmap(file);
@@ -131,6 +133,17 @@ function extractChubans(s) {
   return [...new Set((v.match(/[A-Z]{2}\s*2[0-9OIL]{4}(?![0-9])/g) || []).map(x => fixChuban(x)))];
 }
 const okDate = s => (/^\d{4}-\d{2}-\d{2}$/.test(s || "") ? s : "");
+/** 摘要・備考・欄外の字（AI が写した remarks）と、PDF の中の字から注番をさがす（注文番号の欄も品名の欄も空のとき。11/5）
+ *  小野建の納品書兼請求書は、摘要に「ND26113 / 渡部」。うしろの名前は入れない（extractChubans が注番の形だけ取る）。
+ *  2つ以上あるときは、日報にある注番だけにしぼる（known）。しぼれなければ、そのまま（あとで「注番が A・B とあります」と出る） */
+function noteChubans(texts, known) {
+  for (const t of texts) {
+    let c = extractChubans(t);
+    if (c.length > 1 && known) { const k = c.filter(x => known.has(x)); if (k.length) c = k; }
+    if (c.length) return c;
+  }
+  return [];
+}
 
 /* ---------- 同じ紙か（10/30 ②。品名と数のくらべ方 sameItems・sameDay は chumon.js） ---------- */
 const noKey = s => String(s || "").normalize("NFKC").toUpperCase().replace(/\s/g, "");
@@ -139,9 +152,14 @@ const sameNo = (a, b) => !!a && !!b && noKey(a) === noKey(b);
 const noPriceOf = gr => !gr.table && gr.rows.every(r => r.amount == null || r.amount === 0);
 
 const pageNum = v => { const n = num(v); return n != null && n >= 1 && n <= 20 ? Math.round(n) : null; };
-function toGroups(res, supList) {
-  const head = extractChubans(res.chuban);
+function toGroups(res, supList, extra = {}) {
+  let head = extractChubans(res.chuban);
   const notes = [];
+  // 注文番号の欄にも、品名の欄にも注番がなければ、摘要・備考（AI が写した字）→ PDF の中の字の順にさがす（11/5 小野建）
+  if (!head.length && !(res.rows || []).some(r => extractChubans(r.chuban).length || extractChubans(r.name).length)) {
+    head = noteChubans([res.remarks, extra.text], extra.known);
+    if (head.length) notes.push("注番は摘要・備考の欄から読みました（注文番号の欄は空）");
+  }
   let fromName = false;
   const rows = (res.rows || []).map(r => {
     const qty = num(r.qty), price = num(r.price);
@@ -265,6 +283,7 @@ export function openImport({ sups, getOrders, me }) {
           c.thumb = thumbOf(cv);
           c.parts = scanParts(cv);
           c.full = await new Promise(res => cv.toBlob(res, "image/jpeg", 0.85));   // 入れるときに Storage に保存する
+          c.text = c.scan.text ? await c.scan.text(c.k).catch(() => "") : "";   // PDF の中の字（摘要の注番さがし。11/5）
         }
         render();
         const r = (await call("zairyoAi", { timeout: 300000 })({ task: "slip", images: c.parts, force })).data;
@@ -272,7 +291,7 @@ export function openImport({ sups, getOrders, me }) {
         if (!s.isSlip) { c.status = "notslip"; c.kind = s.kind || "納品書ではない書類"; }
         else {
           c.status = "done";
-          c.groups = toGroups(s, supList);
+          c.groups = toGroups(s, supList, { text: c.text, known: jobs ? new Set(jobs.all.keys()) : null });
           if (!c.groups.length) { c.status = "err"; c.err = "品物の行が読めませんでした"; }
           else joinPages(c);   // 2枚つづきのつづきの紙なら、前の紙につなげる（11/4）
           // 入れる先は、自分でえらんでいない紙は全部決めなおす（あとから読んだ金額のある紙と、前に読んだ金額のない紙が同じ品物のときのため。②）

@@ -221,7 +221,8 @@ function slipPrompt(force, parts) {
     "- 単価や金額が書いていない納品書（ガスの仮納品書など）は、price と amount を null にする。",
     "- 日付は YYYY-MM-DD。和暦なら西暦にする（令和8年＝2026年）。",
     "- 注番は英字2文字＋数字5けた（例 AB26123）。chuban には注番だけを書く（担当者の名前や工事名は入れない）。",
-    "- 注文番号の欄が空でも、品名・備考・欄外に注番が書いてあれば、それを使う。",
+    "- 注文番号の欄が空でも、品名・摘要・備考・欄外（合計の近くなど）に注番が書いてあれば、それを使う。「ND26113 / 渡部」「ND26113渡部/西動力」のように、注番のうしろに担当者の名前や工事の名前がついていても、chuban には注番（ND26113）だけを書く。",
+    "- remarks には、摘要・備考・欄外に書いてある字を、そのまま写す（100字まで。なければ空の字）。注番が書いてあるかどうかに関係なく写す。",
     "- 1枚に注番が2つ以上あるときは、chuban に全部を「,」で区切って書き、rows のそれぞれの chuban に、その行の注番を入れる。注番が1つなら rows の chuban は null でよい。",
     "- 2枚つづきの納品書などで、紙に「1/2」「2/2」「1頁」「(2/3)」のような何枚目の印があれば、page に何枚目、pages に何枚中かを数字で書く（「2/2」なら page 2・pages 2）。印がなければ、どちらも null。",
     "- 何枚かつづきの納品書で、その紙に合計（小計）が書いていなければ total は null にする（ほかの紙の合計を推測で入れない）。",
@@ -231,7 +232,7 @@ function slipPrompt(force, parts) {
 
 const SLIP_SCHEMA = {
   type: "object", additionalProperties: false,
-  required: ["isSlip", "kind", "supplier", "slipNo", "date", "chuban", "page", "pages", "rows", "total", "doubt"],
+  required: ["isSlip", "kind", "supplier", "slipNo", "date", "chuban", "page", "pages", "rows", "total", "doubt", "remarks"],
   properties: {
     isSlip: { type: "boolean" },
     kind: { type: "string" },
@@ -253,6 +254,7 @@ const SLIP_SCHEMA = {
     },
     total: nullable("number"),
     doubt: { type: "array", items: { type: "string" } },
+    remarks: nullable("string"),   // 摘要・備考・欄外の字（そこに注番を書く材料屋がある。11/5 小野建）
   },
 };
 
