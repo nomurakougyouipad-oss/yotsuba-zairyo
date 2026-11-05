@@ -12,7 +12,7 @@ import { $, esc, zenkana, toast, runChecks, checkRow, openSheet, closeSheet, loa
 import { errorText } from "./touroku.js";
 import { watchJobs } from "./nippo.js";
 import { jobPicker } from "./kouji.js";
-import { normCatalog, openItem, buildSpec, lineText, loadCart, saveCart, newForm, fmtQty, ymd, kibouText } from "./tanomu.js";
+import { normCatalog, openItem, buildSpec, dropHidden, lineText, loadCart, saveCart, newForm, fmtQty, ymd, kibouText } from "./tanomu.js";
 import { yen, linePrice, priceText, reqMoney, deliverPlan } from "./chumon.js";
 import { attachHTML, fillPhotos, deletePhoto, openWebSearch } from "./shashin.js";
 
@@ -113,7 +113,9 @@ export function startGenbaApp(main, me) {
       for (const l of linesOf(r)) {
         const it = st.catalog.item.get(l.key);
         if (!it) continue;   // 品物一覧から消えた品物は出さない
-        const spec = buildSpec(it, l.vals || {});
+        const vals = { ...(l.vals || {}) };
+        dropHidden(it, vals);   // 出さない行の値は品名に入れない（FSGP の厚さ など。11/5）
+        const spec = buildSpec(it, vals);
         const k = `${l.key}|${spec}|${l.note || ""}`;
         const cur = m.get(k);
         if (cur) Object.assign(cur, { n: cur.n + 1, qty: l.qty, unit: l.unit, at: r.sentAt });

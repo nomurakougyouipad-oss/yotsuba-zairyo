@@ -147,6 +147,23 @@ export function aliasToLearn(raw, sup, sups) {
   return k;
 }
 
+/* ---------- 品名の行と、サイズ・数だけの行（11/5） ----------
+   「テフロンサンド リングパッキン T/#9010-A-5-S T2.8」「5k×100A ×1枚」「10k×100A ×6枚」のように、品名の行（数なし）のあとに
+   サイズ・数だけの行がつづくときは、その行の数だけ品物に分ける（どの品物でも） */
+/** サイズ・数だけの行か（splitLine の形 {spec, qty}。数があって、品名の字（ひらがな・カタカナ・漢字）がない） */
+export const isSizeOnly = p => !!p && p.qty != null && !!p.spec && !/[ぁ-んァ-ヴー一-龯々]/.test(p.spec);
+/** 行の並び（splitLine の形）→ 品名の行がかかるサイズの行の { サイズの行の番号: 品名の行の番号 } */
+export function headsOf(parts) {
+  const head = {};
+  for (let i = 0; i + 1 < parts.length; i++) {
+    if (parts[i].qty != null || !parts[i].spec || !isSizeOnly(parts[i + 1])) continue;
+    let j = i + 1;
+    for (; j < parts.length && isSizeOnly(parts[j]); j++) head[j] = i;
+    i = j - 1;
+  }
+  return head;
+}
+
 /* ---------- 覚えた当て方（7-4） ----------
    一度たしかめて入れた品名の書き方は /zairyo/master/itemMemo に覚えて、次から AI なしで当てる。
    くらべる形は、全角半角・大文字小文字・空白・「×」「x」「*」のちがいをそろえたもの */

@@ -15,7 +15,7 @@ import { normalizeChuban } from "./kouji.js";
 import { watchJobs, CHUBAN_RE } from "./nippo.js";
 import { photoPicker, deletePhoto } from "./shashin.js";
 import { errorText } from "./touroku.js";
-import { parseLineText, parseKibou, findPlace, matchSupplier, aliasToLearn, maskTel } from "./line-parse.js";
+import { parseLineText, parseKibou, findPlace, matchSupplier, aliasToLearn, maskTel, headsOf } from "./line-parse.js";
 import { createMatcher } from "./line-match.js";
 import { isAppSup } from "./chumon.js";
 
@@ -35,7 +35,11 @@ export function splitLine(raw) {
   const spec = s.slice(0, m.index).replace(/(?:[\s×*:、,・]|(?<=[\s0-9])[xX])+$/, "").trim();
   return { spec, qty: Number(m[1]), unit: m[2] };
 }
-const itemLines = text => String(text || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean).map(splitLine);
+/** 品名・数量の行（品名の行のあとにサイズ・数だけの行がつづくときは、その行の数だけ品物に分ける。AI を使わないときも同じ。11/5） */
+const itemLines = text => {
+  const ps = String(text || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean).map(splitLine), head = headsOf(ps), heads = new Set(Object.values(head));
+  return ps.flatMap((p, i) => (heads.has(i) ? [] : head[i] != null ? [{ ...p, spec: `${ps[head[i]].spec} ${p.spec}` }] : [p]));
+};
 
 /** LINE・電話の注文を入れる画面を開く
  *  opts = { sups: 材料屋 {id: {...}}, places: 届け先 {id: {...}}, catalog: 品物一覧（normCatalog）, me: {name}, onPlaced(注文の番号) } */

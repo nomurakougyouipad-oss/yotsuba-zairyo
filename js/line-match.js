@@ -4,12 +4,15 @@
 // - 品物ではない行（ミルシートお願いします など）はメモへ。「品物にする」でもどせる
 // - 入れたときに、たしかめた当て方を覚える（次から同じ書き方は AI なしで当たる。2行までの品物）
 // - AI が使えないときは、品名は文のまま入る（7-1 の形）
+// - 11/5（事務員さん）：品名は、出さない行（FSGP のときの厚さ など）の値を入れずに作る（前は覚えた当て方・AI の s40 が FSGP に付いた）。
+//   溶接継手（エルボ・チーズ・レジューサ）で SS400 と来たら、オレンジで「FSGP か PT370 か、えらんでください」。
+//   品名の行のあとに、サイズ・数だけの行がつづくときは、その行の数だけ品物に分ける。LINE の型番（T/#9010-A-5-S T2.8 など）は品名に残す
 import { ref, get, update } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, call } from "./firebase.js";
 import { esc } from "./common.js";
-import { buildSpec, fmtQty, rowShown } from "./tanomu.js";
+import { buildSpec, fmtQty, rowShown, dropHidden, chipHint } from "./tanomu.js";
 import { errorText } from "./touroku.js";
-import { memoDbKey } from "./line-parse.js";
+import { memoDbKey, headsOf } from "./line-parse.js";
 
 /** box … 表示する入れ物、catalog … normCatalog の品物一覧、splitLine … 1行を {spec, qty, unit} にする、onState() … ようすが変わったとき */
 export function createMatcher({ box, catalog, splitLine, onState }) {
@@ -18,8 +21,27 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
   const ITEM = catalog.item;
   const units = catalog.units || [];
 
-  const rowSpec = r => (r.key ? buildSpec(ITEM.get(r.key), r.vals) : r.body);
+  /** 出さない行（「この行を出すとき」に合わない行）の値をのぞいた値（品名・注文の行・覚える当て方に使う。11/5） */
+  const shownVals = (it, vals) => { const v = { ...(vals || {}) }; dropHidden(it, v); return v; };
+  /** 品名に残す型番（11/5）：「#」と英字が入った言葉（T/#9010-A-5-S など）か No.○○ と、すぐあとの厚さ（T2.8 など）。#240 のような数だけのものは残さない */
+  const modelOf = s => {
+    const m = String(s || "").match(/(?:^|\s)((?:\S*[A-Za-z]\S*#\S*|\S*#\S*[A-Za-z]\S*|No\.\s?\S+)(?:\s+[Tt]\d+(?:\.\d+)?)?)/);
+    return m ? m[1].trim() : "";
+  };
+  const rowSpec = r => {
+    if (!r.key) return r.body;
+    const s = buildSpec(ITEM.get(r.key), shownVals(ITEM.get(r.key), r.vals));
+    return r.model && !s.toUpperCase().includes(r.model.toUpperCase()) ? `${s} ${r.model}` : s;
+  };
   const rowUnit = r => r.unit || (r.key ? ITEM.get(r.key).unit : "") || "個";
+  /** 突き合わせ溶接の継手（11/5 事務員さん）：SS400 と来たら、FSGP（SGP の管）か PT370（STPG・STPT の管）かをえらんでもらう */
+  const WELD = new Set(["tsugite:elbow", "tsugite:tee", "tsugite:reducer"]);
+  const WELD_ASK = "SS400 と書いてあります。FSGP か PT370 か、えらんでください";
+  /** 厚さ（スケジュール）が書いてあるか：s40・S40・Sch40・SCH.80・40S・10s・25A10s など。90ES 80A・SS400・SUS304 は厚さではない */
+  const hasThick = s => {
+    const t = String(s || "").normalize("NFKC");
+    return /(?<![A-Z])S(?:CH)?\.?\s?(?:5|10|20|40|80|160)(?![\d.A-Z])/i.test(t) || /(?<![\d.])(?:5|10|20|40|80|160)\s?S(?![A-Z])/i.test(t);
+  };
   const mkRow = (ls, key, vals, guess, qty, unit, how) => {
     const it = key && ITEM.get(key) && !ITEM.get(key).free ? ITEM.get(key) : null;
     const body = ls.map(i => match.parts[i].spec).filter(Boolean).join(" ");
@@ -27,9 +49,43 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
       lines: ls, raw: ls.map(i => match.raws[i]).join(" ／ "), body, orig: body,   // orig＝覚えるときの元の書き方（なおしても変えない）
       key: it ? key : null, vals: { ...(vals || {}) }, qty: qty == null ? null : qty, unit: unit || (it ? it.unit : ""), how,
       ask: [...(guess || [])].filter(k => it && it.opts.some(o => o[0] === k && !o[2]) && rowShown(it, k, vals || {})),   // 「えらばなくてもよい」行・出さない行（10/21）は聞かない
+      askNote: {}, model: it ? modelOf(body) : "",
     };
+    // 溶接継手の材質のよび方をそろえる：管の名前（STPT・STPG → PT370、SGP → FSGP。事務員さんの見分け方 11/5）
+    if (it && WELD.has(r.key) && /^(STPT|STPG)/i.test(r.vals["材質"] || "")) r.vals["材質"] = "PT370";
+    if (it && WELD.has(r.key) && /^SGP$/i.test(r.vals["材質"] || "")) r.vals["材質"] = "FSGP";
+    if (it && WELD.has(r.key) && r.vals["材質"] === "SS400") {
+      delete r.vals["材質"];
+      if (!r.ask.includes("材質")) r.ask.unshift("材質");
+      r.askNote["材質"] = WELD_ASK;
+    }
+    // 溶接継手の厚さは、LINE に書いてあるときだけ入れる。書いていなければ AI・覚えた当て方の厚さは使わずに聞く（11/5 持ち主）
+    if (it && WELD.has(r.key) && !hasThick(body)) Object.keys(r.vals).filter(k => /^厚さ/.test(k)).forEach(k => delete r.vals[k]);
+    if (it && WELD.has(r.key) && r.vals["材質"]) askMore(r);
     if (r.qty == null) r.ask.push("数");
     return r;
+  };
+  /** 溶接継手の厚さ：書いてある厚さ（s40・40S・Sch40 など）を、いまの材質で出ている厚さの行にうつす。
+   *  PT370 は「厚さ（PT370）」の s40・s80 だけ、SUS304 は今まで通りの行（11/5）。合うボタンがないときは聞く */
+  const fixThick = r => {
+    const it = r.key && WELD.has(r.key) ? ITEM.get(r.key) : null;
+    if (!it || !r.vals["材質"]) return;
+    const shown = it.opts.find(([k]) => /^厚さ/.test(k) && rowShown(it, k, r.vals));
+    if (!shown || r.vals[shown[0]]) return;
+    const was = Object.keys(r.vals).filter(k => /^厚さ/.test(k) && k !== shown[0] && r.vals[k]).map(k => r.vals[k])[0];
+    if (!was) return;
+    const num = s => (String(s).match(/\d+/) || [])[0];
+    const hit = shown[1].find(b => num(b) === num(was));
+    if (hit) r.vals[shown[0]] = hit;
+    else r.askNote[shown[0]] = `${was} と書いてあります。${r.vals["材質"]} は ${shown[1].join("・")} です。どれですか？`;
+  };
+  /** えらんだら出てくる行（PT370 にしたら厚さ など）で、まだ値がない行も聞く（11/5） */
+  const askMore = r => {
+    const it = r.key ? ITEM.get(r.key) : null;
+    if (!it) return;
+    fixThick(r);
+    it.opts.forEach(([k, , opt]) => { if (!opt && !r.vals[k] && !r.ask.includes(k) && rowShown(it, k, r.vals)) r.ask.splice(r.ask.includes("数") ? r.ask.indexOf("数") : r.ask.length, 0, k); });
+    r.ask = r.ask.filter(k => k === "数" || rowShown(it, k, r.vals));   // えらんで出なくなった行は聞かない
   };
 
   /* ---------- 当てる ---------- */
@@ -41,29 +97,38 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
     if (my !== seq) return;
     match = { src: text, raws, parts: raws.map(splitLine), rows: [], notes: [], busy: false, err: "" };
     const { parts } = match, todo = [];
+    // 品名の行（数なし）のあとに、サイズ・数だけの行がつづくときは、その行の数だけ品物に分ける（11/5。line-parse.js headsOf）。
+    // 例「テフロンサンド リングパッキン T/#9010-A-5-S T2.8」「5k×100A ×1枚」「10k×100A ×6枚」→ 2つ（どちらも品名の行つき）
+    const head = headsOf(parts), heads = new Set(Object.values(head));   // head[サイズの行] ＝ その上の品名の行
+    const specOf = i => (head[i] != null ? `${parts[head[i]].spec} ${parts[i].spec}` : parts[i].spec);
+    const linesOf = i => (head[i] != null ? [head[i], i] : [i]);
     for (let i = 0; i < parts.length; i++) {
-      const m = memo[memoDbKey(parts[i].spec)];
-      const m2 = !m && i + 1 < parts.length ? memo[memoDbKey(parts[i].spec + " " + parts[i + 1].spec)] : null;   // 見出し＋サイズの2行
-      if (m && m.note) match.notes.push(i);
-      else if (m) match.rows.push(mkRow([i], m.free ? null : m.key, m.free ? {} : m.vals, [], parts[i].qty, parts[i].unit, "memo"));
+      if (heads.has(i)) continue;   // 品名の行は、下のサイズの行といっしょに当てる
+      const m = memo[memoDbKey(specOf(i))];
+      const m2 = !m && head[i] == null && i + 1 < parts.length && head[i + 1] == null ? memo[memoDbKey(parts[i].spec + " " + parts[i + 1].spec)] : null;   // 見出し＋サイズの2行
+      if (m && m.note) match.notes.push(...linesOf(i));
+      else if (m) match.rows.push(mkRow(linesOf(i), m.free ? null : m.key, m.free ? {} : m.vals, [], parts[i].qty, parts[i].unit, "memo"));
       else if (m2 && !m2.note) { match.rows.push(mkRow([i, i + 1], m2.free ? null : m2.key, m2.free ? {} : m2.vals, [], parts[i + 1].qty, parts[i + 1].unit, "memo")); i++; }
       else todo.push(i);
     }
+    match.notes = [...new Set(match.notes)];
     match.busy = todo.length > 0;
     render();
     if (!todo.length) return;
     try {
-      const r = (await call("zairyoAi", { timeout: 180000 })({ task: "match", lines: todo.map(i => ({ i, text: raws[i] })) })).data;
+      // 品名の行につづくサイズの行は、品名の行をつけた文で当てる（番号はサイズの行）
+      const r = (await call("zairyoAi", { timeout: 180000 })({ task: "match", lines: todo.map(i => ({ i, text: head[i] != null ? `${raws[head[i]]} ${raws[i]}` : raws[i] })) })).data;
       if (my !== seq) return;
       const covered = new Set(r.notes);
       r.notes.forEach(i => match.notes.push(i));
       r.rows.forEach(x => {
         x.lines.forEach(i => covered.add(i));
         const last = parts[x.lines[x.lines.length - 1]];
-        match.rows.push(mkRow(x.lines, x.key, x.vals, x.guess, x.qty != null ? x.qty : last.qty, x.unit || last.unit, x.key ? "ai" : "free"));
+        const ls = [...new Set(x.lines.flatMap(linesOf))].sort((a, b) => a - b);
+        match.rows.push(mkRow(ls, x.key, x.vals, x.guess, x.qty != null ? x.qty : last.qty, x.unit || last.unit, x.key ? "ai" : "free"));
       });
       // AI がどこにも入れなかった行は、文のままの品物にする
-      todo.filter(i => !covered.has(i)).forEach(i => match.rows.push(mkRow([i], null, {}, [], parts[i].qty, parts[i].unit, "free")));
+      todo.filter(i => !covered.has(i)).forEach(i => match.rows.push(mkRow(linesOf(i), null, {}, [], parts[i].qty, parts[i].unit, "free")));
       match.rows.sort((a, b) => a.lines[0] - b.lines[0]);
       match.busy = false;
     } catch (ex) {
@@ -81,8 +146,10 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
       if (k === "数") return '<div class="mtr-ask"><span>数が書いてありません。「なおす」で入れてください</span></div>';
       const ch = (optsOf(r).find(o => o[0] === k) || [k, []])[1];
       const g0 = r.vals[k] || "";
-      return `<div class="mtr-ask"><span>${esc(k)}が書いてありません。どれですか？</span><div class="pick sm">` +
-        [...new Set([g0, ...ch])].filter(Boolean).map(v => `<button type="button" data-mask="${esc(k)}" data-r="${i}" data-v="${esc(v)}"${v === g0 ? ' class="rec"' : ""}>${esc(v)}${v === g0 ? "<small>おすすめ</small>" : ""}</button>`).join("") +
+      // ボタンの下の小さい字（⚙ 設定の「ボタンの下の字」。FSGP「SGP の管用・スケジュールなし」など。11/5）
+      const sub = v => (v === g0 ? "おすすめ" : chipHint(it, k, v));
+      return `<div class="mtr-ask"><span>${esc(r.askNote[k] || `${k}が書いてありません。どれですか？`)}</span><div class="pick sm">` +
+        [...new Set([g0, ...ch])].filter(Boolean).map(v => `<button type="button" data-mask="${esc(k)}" data-r="${i}" data-v="${esc(v)}"${v === g0 ? ' class="rec"' : ""}>${esc(v)}${sub(v) ? `<small>${esc(sub(v))}</small>` : ""}</button>`).join("") +
         "</div></div>";
     }).join("");
     return `
@@ -142,6 +209,7 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
       const r = match.rows[Number(d.r)];
       r.vals[d.mask] = d.v;
       r.ask = r.ask.filter(k => k !== d.mask);
+      askMore(r);   // えらんだら出てくる行も聞く（PT370 にしたら厚さ。11/5）
       render();
     } else if (d.medit) {
       const r = match.rows[Number(d.medit)];
@@ -210,7 +278,7 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
     lines: () => match.rows.map(r => {
       const it = r.key ? ITEM.get(r.key) : null;
       const l = { spec: rowSpec(r).slice(0, 300), qty: r.qty, unit: rowUnit(r) };
-      if (it) Object.assign(l, { key: r.key, cat: it.cat, name: it.name, vals: { ...r.vals } });
+      if (it) Object.assign(l, { key: r.key, cat: it.cat, name: it.name, vals: shownVals(it, r.vals) });
       return l;
     }),
     /** 品物ではない行の文（メモに足す） */
@@ -219,7 +287,7 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
     async remember() {
       const upd = {}, at = Date.now();
       match.rows.filter(r => r.lines.length <= 2 && r.orig).forEach(r => {
-        upd[memoDbKey(r.orig)] = r.key ? { key: r.key, vals: { ...r.vals }, at } : { free: true, at };
+        upd[memoDbKey(r.orig)] = r.key ? { key: r.key, vals: shownVals(ITEM.get(r.key), r.vals), at } : { free: true, at };   // 出さない行の値は覚えない（11/5）
       });
       match.notes.forEach(i => { const k = memoDbKey(match.parts[i].spec); if (k) upd[k] = { note: true, at }; });
       if (Object.keys(upd).length) await update(ref(db, "zairyo/master/itemMemo"), upd);

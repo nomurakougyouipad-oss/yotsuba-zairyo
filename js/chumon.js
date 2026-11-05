@@ -77,8 +77,10 @@ export function mailSubject(o) {
 /** LINE・電話で入れた注文か（依頼なし・加工品などでもない。事務所の「来たところ」が「LINE・電話」の注文） */
 export const isLineOrder = o => !!o && !o.reqId && !o.kind;
 /** LINE・電話で入れた注文を、あとから注文書で送るときの一言（材料屋さんが2回用意しないように。メールの本文のいちばん上・PDF・FAX の紙に。11/2 持ち主）。
- *  電話か LINE かは見分けない（はりつけた文があるかでは、まちがうことがあるため。1つの言い方にする 11/2 持ち主）。ほかの注文は "" */
-export const lineOrderNote = o => (isLineOrder(o) ? "先ほどお電話・LINEでお願いした分の注文書です。" : "");
+ *  電話か LINE かは見分けない（はりつけた文があるかでは、まちがうことがあるため。1つの言い方にする 11/2 持ち主）。ほかの注文は ""
+ *  注文の画面の「この一文を入れる」をはずした注文（noLineNote）には入れない（いつもそうとは限らないため。11/5 事務員さん） */
+export const LINE_NOTE = "先ほどお電話・LINEでお願いした分の注文書です。";
+export const lineOrderNote = o => (isLineOrder(o) && !o.noLineNote ? LINE_NOTE : "");
 /** メールに注文書の PDF をつける注文か（加工品・めっきは、自分で作った注文書をつけているので、つけない。11/2） */
 export const orderPdf = o => !!o && o.kind !== "kakou" && o.kind !== "mekki";
 /** メールで PDF をつけるときの、本文のいちばん上の1行（PDF・LINE・コピーには入れない。11/2 持ち主 C） */
