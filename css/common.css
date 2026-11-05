@@ -337,8 +337,11 @@ ul.plain{margin:0;padding-left:1.2em}
 .badge{font-family:var(--f-num);font-weight:600;font-size:12px;background:var(--amber-btn);color:var(--on-amber);border-radius:9px;min-width:18px;height:18px;padding:0 5px;display:inline-grid;place-items:center;margin-left:6px}
 .filter-note{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:14px;color:var(--muted)}
 .filter-note b{color:var(--fg)}
-/* 納品書から作った注文があるときだけ、一覧の上に出す（10/30） */
-.src-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;margin-bottom:12px;padding:8px 12px;border:1px solid var(--line);border-left:6px solid var(--blue);border-radius:10px;background:var(--surface);font-size:14px}
+/* 納品書から作った注文があるときだけ、一覧の上に出す（10/30）。11/5：まちがいの知らせに見えないように、色の帯にしない・1行の小さい字 */
+.src-bar{display:flex;align-items:center;margin:-4px 0 6px;font-size:13px;color:var(--muted);white-space:nowrap;min-width:0}
+.src-bar .src-t{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.src-bar .src-n{flex:none;margin-right:10px}
+.src-bar .linkbtn{flex:none;font-size:13px}
 .ocards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:12px}
 .ocard{background:var(--surface);border:1px solid var(--line);border-top:5px solid var(--c);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;cursor:pointer;min-width:0}
 .ocard:hover{border-color:var(--muted);border-top-color:var(--c)}

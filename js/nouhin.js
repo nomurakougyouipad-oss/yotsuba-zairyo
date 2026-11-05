@@ -47,6 +47,10 @@ import { errorText } from "./touroku.js";
 import { TABLE_OK, readTableFile, textToTable, tableToRows } from "./hyou.js";
 
 const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/";
+// 字の形が入っていない文字の PDF（小野建の納品書兼請求書＝ＭＳ明朝・90ms-RKSJ-H など）は、字の決まり（cMap）がないと字が出ずに白い絵になる（11/5）。
+// cdnjs には cMap がないので、同じ版を jsDelivr から読む
+const PDFJS_DATA = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/";
+const PDF_OPTS = { cMapUrl: PDFJS_DATA + "cmaps/", cMapPacked: true, standardFontDataUrl: PDFJS_DATA + "standard_fonts/" };
 const FIRST_PAGES = 5;        // これより多いページは「読む」を押してから（お金がかかるので）
 const SCAN_OK = /\.(pdf|jpe?g|png|webp)$/i;
 const byOrder = ([, a], [, b]) => (a.order ?? 999) - (b.order ?? 999);
@@ -64,7 +68,7 @@ function loadPdfjs() {
 async function openScan(file) {
   if (/\.pdf$/i.test(file.name) || file.type === "application/pdf") {
     const pdfjs = await loadPdfjs();
-    const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), ...PDF_OPTS }).promise;
     return {
       count: doc.numPages,
       page: async k => {

@@ -252,11 +252,15 @@ export function startOfficeApp(main, me) {
       .some(v => String(v || "").normalize("NFKC").toLowerCase().includes(q));
   }
   const srcOk = o => !st.src || o.kind === st.src;
+  /** 上の箱のしぼりこみに合うか。「納品書だけで入った注文」だけを見るときは、さがしていなければ請求ずみを出さない
+   *  （11/5 持ち主。請求ずみは、上の「請求ずみ」を押すか、さがすと出る） */
+  const statusOk = o => (st.filter === "all" ? !(st.src && o.status === "billed" && !st.q.trim()) : o.status === st.filter);
   const liveOrders = () => (st.orders || []).filter(o => o.status !== "cancelled" && matchOrder(o) && srcOk(o));
-  /** 納品書から作った注文があるときだけ、一覧の上に出す（押すと、それだけの一覧。10/30） */
+  /** 納品書から作った注文があるときだけ、一覧の上に出す（押すと、それだけの一覧。10/30）。
+   *  まちがいの知らせに見えないように、目立つ色の帯にしないで1行の小さい字にする（11/5 事務員さんが心配した） */
   function srcBar() {
-    const n = st.src ? 0 : (st.orders || []).filter(o => o.status !== "cancelled" && o.kind === "nouhin").length;
-    return n ? `<div class="src-bar"><span>納品書から作った注文（アプリで注文していない）が ${n}件 あります</span><button type="button" class="btn" data-src="nouhin">それだけ見る</button></div>` : "";
+    const n = st.src ? 0 : (st.orders || []).filter(o => o.status !== "cancelled" && o.status !== "billed" && o.kind === "nouhin").length;   // まだ請求していない分だけ（11/5）
+    return n ? `<div class="src-bar"><span class="src-t">アプリを通さず、納品書だけで入った注文（引き取りなど）</span><span class="src-n">：まだ請求していない ${n}件</span><button type="button" class="linkbtn muted" data-src="nouhin">見る</button></div>` : "";
   }
 
   /* ---------- 上の箱・タブ ---------- */
@@ -283,7 +287,9 @@ export function startOfficeApp(main, me) {
     });
     const parts = [];
     if (ordersView && st.filter !== "all") parts.push(`「<b>${ST[st.filter].label}</b>」だけ`);
-    if (ordersView && st.src) parts.push("「<b>納品書から作った注文</b>」だけ");
+    if (ordersView && st.src) parts.push(st.filter === "all" && !st.q.trim()
+      ? "「<b>納品書だけで入った注文</b>」の、まだ請求していない分だけ（請求ずみは、上の「請求ずみ」を押すか、さがすと出ます）"
+      : "「<b>納品書だけで入った注文</b>」だけ");
     if (st.q.trim()) parts.push(`「<b>${esc(st.q.trim())}</b>」でさがし中`);
     const note = $("#filterNote", main);
     note.hidden = !parts.length;
@@ -408,7 +414,7 @@ export function startOfficeApp(main, me) {
 
   function drawOrders(list) {
     if (!st.orders) { list.innerHTML = '<p class="muted">読んでいます…</p>'; return; }
-    const shown = sortOrders(liveOrders().filter(o => st.filter === "all" || o.status === st.filter));
+    const shown = sortOrders(liveOrders().filter(statusOk));
     const cxs = st.filter === "all" ? sortOrders((st.orders || []).filter(o => o.status === "cancelled" && matchOrder(o) && srcOk(o))) : [];
     list.innerHTML = srcBar() + kojiItemsHTML() +
       (shown.length ? `<div class="ocards">${shown.map(orderCard).join("")}</div>` : '<p class="empty">あてはまる注文はありません。</p>') +
@@ -435,7 +441,7 @@ export function startOfficeApp(main, me) {
   function drawKouji(list) {
     if (!st.orders) { list.innerHTML = '<p class="muted">読んでいます…</p>'; return; }
     const groups = new Map();
-    liveOrders().filter(o => st.filter === "all" || o.status === st.filter).forEach(o => {
+    liveOrders().filter(statusOk).forEach(o => {
       if (!groups.has(o.chuban)) groups.set(o.chuban, []);
       groups.get(o.chuban).push(o);
     });
