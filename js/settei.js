@@ -12,6 +12,7 @@ import { pushState, enablePush, disablePush, testPush } from "./tsuuchi.js";
 import { printFax } from "./fax.js";
 import { SHOPS } from "./shashin.js";
 import { normCatalog, buildSpec, rowDef, dropHidden, chipHint } from "./tanomu.js";
+import { isLineOrder } from "./chumon.js";
 
 const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["memo", "覚えた当て方"], ["notify", "通知"], ["company", "会社・注文書"], ["backup", "バックアップ"], ["ai", "AI"]];
 const TAB_KEY = "yotsuba-zairyo-settab";
@@ -27,6 +28,7 @@ const PATH = {
   memo: "zairyo/master/itemMemo",  // LINE の品名の、覚えた当て方（7-4）
   notify: "zairyo/notify/tokens",  // 通知がオンのパソコン（10/14。js/tsuuchi.js）
   reqs: "zairyo/requests",        // 依頼（品物一覧の「手で書いた品物」を数えるため。10/14）
+  orders: "zairyo/orders",        // 注文（LINE・電話の注文で文のまま入った品物も「手で書いた品物」に数えるため。読むだけ。11/6）
   info: "zairyo/officeInfo",      // 会社の名前・住所など・決まり文句・注文する人の電話番号（事務所だけ読める。注文の文・FAX。10/14）
   supAccess: "zairyo/supAccess",  // 材料屋のアプリの専用リンクの鍵（2回目。事務所だけ読める。書くのはサーバーのプログラム）
   year: "common/chubanYear",      // 注番の年（2けた）。12/20〜25 ごろに事務所が切りかえる（日付からは決めない）
@@ -382,56 +384,85 @@ function catalogHTML() {
       </details>`).join("")}`;
 }
 
-/* ---------- 手で書いた品物（スマホの「自由に書く」。10/14） ----------
-   依頼の行のうち「自由に書く」の品物を、書いた名前ごとに数える（取り消した依頼は数えない）。
-   空白・全角半角のちがいは同じものにする。書き方のちがうもの（キャスター／キャスタ）は別に数える。
-   「タブに足す」で、えらんだ種類に、その名前のボタンなしの品物を足す */
-let freePick = "";   // 「タブに足す」を開いている名前
+/* ---------- 手で書いた品物（スマホの「自由に書く」。10/14。11/6 LINE・電話の注文の文のままの品物も） ----------
+   ・スマホ：依頼の行のうち「自由に書く」の品物（取り消した依頼は数えない）
+   ・LINE・電話の注文：品物一覧に当たらずに文のまま入った行（key のない行。取り消した注文は数えない。
+     加工品・納品書から作った注文・見積は入れない＝isLineOrder）
+   まとめるのは「数のしるし（x・×3・3個など）」と「空白・かっこの前後の空白のちがい」だけ（11/6 持ち主 案B）。
+   似た名前（キャスター／キャスタ）や番手（#80／#240）、サイズ（M12×50）はまとめない。
+   「タブに足す」で、えらんだ種類に、その名前のボタンなしの品物を足す。名前は、いちばん多い書き方（数のしるしをのぞいたもの）を入れておく */
+let freePick = "";   // 「タブに足す」を開いている品物（まとめた形 key）
 const normName = s => String(s ?? "").normalize("NFKC").replace(/\s+/g, " ").trim();
+// 数の単位（kg・L は「1kg」「18L」のように品物の大きさのこともあるので、数のしるしにしない）
+const COUNT_UNIT = "本|枚|個|組|箱|缶|巻|式|セット|丁|ケ|コ|ヶ|袋|台|対|足|束|ロール";
+// 終わりの数のしるし（LINE の読み方 splitLine と同じ決まり。11/6）：
+//   「x3個」「×3本」（数＋単位のすぐ前の x・× は、前が英字でもとる＝25Ax3個・定尺4mx2本。英字が2つ以上つづいたうしろの x は残す＝BOX）・
+//   「 3個」（数字・英字・# のすぐうしろはとらない）・「×3」「x3」（単位がないときは、数字・英字のすぐうしろはとらない＝M12×50・6x50 は残す）・
+//   残った「×」「:」など・おわりに1つ残った英字の x（前の読み方で数の前の x が残った「定尺4mx」「25Ax」も。英字が2つ以上つづいたうしろは残す＝BOX）。
+//   数字のすぐあとの mm・cm・kg のうしろの x はとる（「100mmx4個」「16kgx1缶」）
+const SIGN_X = "(?:(?<![A-Za-z]{2})[xX]|(?<=[0-9](?:[mMcC][mM]|[kK][gG]))[xX])";
+const QTY_TAIL = new RegExp(`(?:(?:×|\\*|${SIGN_X})\\s*[0-9]+(?:\\.[0-9]+)?\\s*(?:${COUNT_UNIT})|\\s*(?<![A-Za-z0-9.#])[0-9]+(?:\\.[0-9]+)?\\s*(?:${COUNT_UNIT})|(?<![A-Za-z0-9.])[×xX*]\\s*[0-9]+(?:\\.[0-9]+)?|\\s*[×*:、,・]|${SIGN_X})$`);
+/** 書き方から数のしるしをのぞく（「スーパーカット(切断刃)x」→「スーパーカット(切断刃)」） */
+export const dropQty = s => { let v = normName(s); for (let i = 0; i < 5; i++) { const t = v.replace(QTY_TAIL, "").trim(); if (t === v) break; v = t; } return v; };
+/** まとめる形：数のしるしをのぞいて、かっこの前後の空白をとる（「ケンマロン (#240)」と「ケンマロン(#240)」は同じ） */
+export const freeKey = s => dropQty(s).replace(/\s*([()[\]「」【】<>])\s*/g, "$1");
 
 function freeList(cats) {
   const freeKeys = new Set(), have = new Set();
   for (const [, c] of cats) for (const [, it] of entries(c.items)) {
     if (it.free) freeKeys.add(`${c.id}:${it.id}`);
-    else have.add(normName(it.name));
+    else have.add(freeKey(it.name));
   }
   const m = new Map();
+  const add = (spec, from, at, unit, cat) => {
+    const key = freeKey(spec), form = dropQty(spec);
+    if (!key) return;
+    const x = m.get(key) || { key, phone: 0, line: 0, at: 0, unit: "", cat: "", forms: new Map() };
+    x[from]++;
+    const f = x.forms.get(form) || { n: 0, at: 0 };
+    f.n++; f.at = Math.max(f.at, at);
+    x.forms.set(form, f);
+    if (at >= x.at) Object.assign(x, { at, unit: unit || x.unit, cat: cat || x.cat });
+    m.set(key, x);
+  };
   for (const r of Object.values(S.reqs || {})) {
     if (!r || r.status === "cancelled") continue;
-    for (const l of Object.values(r.lines || {})) {
-      if (!l || !freeKeys.has(l.key)) continue;
-      const name = normName(l.spec);
-      if (!name) continue;
-      const x = m.get(name) || { name, n: 0, at: 0, unit: "", cat: "" };
-      x.n++;
-      if ((r.sentAt || 0) >= x.at) Object.assign(x, { at: r.sentAt || 0, unit: l.unit || x.unit, cat: String(l.key).split(":")[0] });
-      m.set(name, x);
-    }
+    for (const l of Object.values(r.lines || {})) if (l && freeKeys.has(l.key)) add(l.spec, "phone", r.sentAt || 0, l.unit, String(l.key).split(":")[0]);
   }
-  return [...m.values()].map(x => ({ ...x, have: have.has(x.name) })).sort((a, b) => b.n - a.n || b.at - a.at).slice(0, 30);
+  for (const o of Object.values(S.orders || {})) {
+    if (!isLineOrder(o) || o.status === "cancelled") continue;
+    for (const l of Object.values(o.lines || {})) if (l && !l.key) add(l.spec, "line", o.orderedAt || 0, l.unit, "");
+  }
+  return [...m.values()].map(x => {
+    // 名前：いちばん多い書き方（同じ数なら、新しく書いたほう）
+    const name = [...x.forms].sort(([, a], [, b]) => b.n - a.n || b.at - a.at)[0][0];
+    return { ...x, name, n: x.phone + x.line, have: have.has(x.key) };
+  }).sort((a, b) => b.n - a.n || b.at - a.at).slice(0, 30);
 }
 
 function freeBlock(cats, units) {
-  if (!S.reqs) return '<div class="block"><h3>手で書いた品物</h3><p class="muted">読んでいます…</p></div>';
+  if (!S.reqs || !S.orders) return '<div class="block"><h3>手で書いた品物</h3><p class="muted">読んでいます…</p></div>';
   const list = freeList(cats);
   const md = ms => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()}`; };
   const row = x => {
-    const open = freePick === x.name;
+    const open = freePick === x.key;
     const ciOf = (cats.find(([, c]) => c.id === x.cat) || cats[cats.length - 1])[0];
+    const from = [x.phone ? `スマホ ${x.phone}回` : "", x.line ? `LINE・電話 ${x.line}回` : ""].filter(Boolean).join("・");
     return `
-      <li><span class="iname"><b>${esc(x.name)}</b> <span class="muted">${x.n}回・最後 ${md(x.at)}</span></span>
+      <li><span class="iname"><b>${esc(x.name)}</b> <span class="muted">${from}・最後 ${md(x.at)}</span></span>
         ${x.have ? '<span class="tag">タブにあります</span>'
           : open ? `<form class="row" data-form="freeadd">
+              <input id="fname" class="inp" data-fname value="${esc(x.name)}" maxlength="60" aria-label="タブに足す名前">
               <select id="fcat" class="inp" aria-label="足す種類（タブ）">${cats.map(([ci, c]) => `<option value="${ci}"${ci === ciOf ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
               <select id="funit" class="inp" aria-label="単位">${units.map(u => `<option${u === (x.unit || "個") ? " selected" : ""}>${esc(u)}</option>`).join("")}</select>
               <button class="btn primary">足す</button><button type="button" class="btn" data-freeno>やめる</button></form>`
-          : `<button type="button" class="btn" data-freepick="${esc(x.name)}">タブに足す</button>`}</li>`;
+          : `<button type="button" class="btn" data-freepick="${esc(x.key)}">タブに足す</button>`}</li>`;
   };
   return `
-    <div class="block"><h3>手で書いた品物（スマホの「自由に書く」）</h3>${list.length ? `
-      <p class="hint">現場がスマホの「自由に書く」に書いて送った品物です（多い順）。よく使うものは「タブに足す」で、えらんだ種類のタブに足せます。</p>
+    <div class="block"><h3>手で書いた品物（スマホの「自由に書く」・LINE・電話の注文）</h3>${list.length ? `
+      <p class="hint">スマホの「自由に書く」と、LINE・電話の注文で品物一覧に当たらなかった品物です（多い順。×3・3個などの数と、空白のちがいだけ1つにまとめます）。よく使うものは「タブに足す」で足せます（名前は直せます）。</p>
       <ul class="ilist">${list.map(row).join("")}</ul>`
-      : '<p class="muted">まだありません。現場がスマホの「自由に書く」に書いて送ると、ここに出ます。</p>'}
+      : '<p class="muted">まだありません。現場がスマホの「自由に書く」に書いて送るか、LINE・電話の注文で品物一覧に当たらない品物を入れると、ここに出ます。</p>'}
     </div>`;
 }
 
@@ -892,9 +923,11 @@ async function onClick(e) {
     toast(`${s.name} の読みかえから「${gone}」を外しました`);
   } else if (d.freepick) {
     freePick = d.freepick;
+    $("#fname", body)?.remove();   // 前に開いた品物の名前を持ちこさない（新しく開いた品物の、いちばん多い書き方を入れる）
     draw(true);
   } else if ("freeno" in d) {
     freePick = "";
+    $("#fname", body)?.remove();
     draw(true);
   } else if (d.optfree) {
     // 行ごとの「えらばなくてもよい」（10/14）。オフの行は、現場がえらばないとカートに入れられない
@@ -1121,9 +1154,10 @@ async function onSubmit(form) {
     await set(ref(db, `${PATH.sup}/${id}/alias`), [...list, word]);
     toast(`${s.name} の読みかえに「${word}」を足しました`);
   } else if (kind === "freeadd") {
-    const name = freePick, ci = $("#fcat", form).value, unit = $("#funit", form).value, c = S.catalog.cats[ci];
-    if (!name || !c) return;
-    if (entries(c.items).some(([, it]) => normName(it.name) === name)) return toast(`${name} は「${c.name}」にもうあります`);
+    const name = normName($("[data-fname]", form).value).replace(/[{}]/g, ""), ci = $("#fcat", form).value, unit = $("#funit", form).value, c = S.catalog.cats[ci];
+    if (!c) return;
+    if (!name) return toast("足す名前を入れてください");
+    if (entries(c.items).some(([, it]) => freeKey(it.name) === freeKey(name))) return toast(`${name} は「${c.name}」にもうあります`);
     freePick = "";
     await addItem(ci, name.replace(/[{}]/g, "").slice(0, 60), unit);
     toast(`「${name}」を ${c.name} のタブに足しました（ボタンなし。「ボタンを直す」で足せます）`);
