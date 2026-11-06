@@ -431,7 +431,8 @@ function freeList(cats) {
   }
   for (const o of Object.values(S.orders || {})) {
     if (!isLineOrder(o) || o.status === "cancelled") continue;
-    for (const l of Object.values(o.lines || {})) if (l && !l.key) add(l.spec, "line", o.orderedAt || 0, l.unit, "");
+    // 品物一覧に当たってから品名を直した行（直すと key が消えて、品物の名前 name だけ残る）は数えない（11/6 持ち主）
+    for (const l of Object.values(o.lines || {})) if (l && !l.key && !l.name) add(l.spec, "line", o.orderedAt || 0, l.unit, "");
   }
   return [...m.values()].map(x => {
     // 名前：いちばん多い書き方（同じ数なら、新しく書いたほう）

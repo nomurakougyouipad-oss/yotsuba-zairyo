@@ -7,6 +7,7 @@
 // - 11/5（事務員さん）：品名は、出さない行（FSGP のときの厚さ など）の値を入れずに作る（前は覚えた当て方・AI の s40 が FSGP に付いた）。
 //   溶接継手（エルボ・チーズ・レジューサ）で SS400 と来たら、オレンジで「FSGP か PT370 か、えらんでください」。
 //   品名の行のあとに、サイズ・数だけの行がつづくときは、その行の数だけ品物に分ける。LINE の型番（T/#9010-A-5-S T2.8 など）は品名に残す
+// - 11/6（事務員さん）：溶接継手の FSGP は「FSGP（黒）」（SGP・FSGP と書いてあれば FSGP（黒））。「白」と書いてあれば黒にしないで、文のまま
 import { ref, get, update } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, call } from "./firebase.js";
 import { esc } from "./common.js";
@@ -34,26 +35,33 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
     return r.model && !s.toUpperCase().includes(r.model.toUpperCase()) ? `${s} ${r.model}` : s;
   };
   const rowUnit = r => r.unit || (r.key ? ITEM.get(r.key).unit : "") || "個";
-  /** 突き合わせ溶接の継手（11/5 事務員さん）：SS400 と来たら、FSGP（SGP の管）か PT370（STPG・STPT の管）かをえらんでもらう */
+  /** 突き合わせ溶接の継手（11/5 事務員さん）：SS400 と来たら、FSGP（黒）（SGP の管）か PT370（STPG・STPT の管）かをえらんでもらう */
   const WELD = new Set(["tsugite:elbow", "tsugite:tee", "tsugite:reducer"]);
-  const WELD_ASK = "SS400 と書いてあります。FSGP か PT370 か、えらんでください";
+  /** FSGP のボタンは「FSGP（黒）」だけ（11/6 事務員さん：小野建に色を言うため。白はあまり頼まない） */
+  const FSGP = "FSGP（黒）";
+  const WELD_ASK = `SS400 と書いてあります。${FSGP} か PT370 か、えらんでください`;
+  /** FSGP・SGP・FSGP黒・FSGP(黒) など → FSGP（黒）にそろえる材質か（白は入れない） */
+  const isFsgp = v => /^F?SGP\s*[(（]?\s*黒?\s*[)）]?$/i.test(String(v || "").normalize("NFKC").trim());
   /** 厚さ（スケジュール）が書いてあるか：s40・S40・Sch40・SCH.80・40S・10s・25A10s など。90ES 80A・SS400・SUS304 は厚さではない */
   const hasThick = s => {
     const t = String(s || "").normalize("NFKC");
     return /(?<![A-Z])S(?:CH)?\.?\s?(?:5|10|20|40|80|160)(?![\d.A-Z])/i.test(t) || /(?<![\d.])(?:5|10|20|40|80|160)\s?S(?![A-Z])/i.test(t);
   };
   const mkRow = (ls, key, vals, guess, qty, unit, how) => {
-    const it = key && ITEM.get(key) && !ITEM.get(key).free ? ITEM.get(key) : null;
     const body = ls.map(i => match.parts[i].spec).filter(Boolean).join(" ");
+    // 溶接継手で LINE に「白」と書いてあるときは、FSGP（黒）にしないで、書いたまま（文のまま）入れる（11/6 事務員さん）。
+    // SUS304・PT370 など、ほかの材質がはっきりしているときは今まで通り
+    const white = WELD.has(key) && /白/.test(body) && (!(vals || {})["材質"] || isFsgp(vals["材質"]) || vals["材質"] === "SS400");
+    const it = key && !white && ITEM.get(key) && !ITEM.get(key).free ? ITEM.get(key) : null;
     const r = {
       lines: ls, raw: ls.map(i => match.raws[i]).join(" ／ "), body, orig: body,   // orig＝覚えるときの元の書き方（なおしても変えない）
       key: it ? key : null, vals: { ...(vals || {}) }, qty: qty == null ? null : qty, unit: unit || (it ? it.unit : ""), how,
       ask: [...(guess || [])].filter(k => it && it.opts.some(o => o[0] === k && !o[2]) && rowShown(it, k, vals || {})),   // 「えらばなくてもよい」行・出さない行（10/21）は聞かない
-      askNote: {}, model: it ? modelOf(body) : "",
+      askNote: {}, model: it ? modelOf(body) : "", white,
     };
-    // 溶接継手の材質のよび方をそろえる：管の名前（STPT・STPG → PT370、SGP → FSGP。事務員さんの見分け方 11/5）
+    // 溶接継手の材質のよび方をそろえる：管の名前（STPT・STPG → PT370、SGP・FSGP → FSGP（黒）。事務員さんの見分け方 11/5・11/6）
     if (it && WELD.has(r.key) && /^(STPT|STPG)/i.test(r.vals["材質"] || "")) r.vals["材質"] = "PT370";
-    if (it && WELD.has(r.key) && /^SGP$/i.test(r.vals["材質"] || "")) r.vals["材質"] = "FSGP";
+    if (it && WELD.has(r.key) && isFsgp(r.vals["材質"])) r.vals["材質"] = FSGP;
     if (it && WELD.has(r.key) && r.vals["材質"] === "SS400") {
       delete r.vals["材質"];
       if (!r.ask.includes("材質")) r.ask.unshift("材質");
@@ -155,7 +163,7 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
     return `
       <li class="mtr${r.ask.length ? " ask" : it ? "" : " free"}" data-r="${i}">
         <div class="mtr-main"><span class="mtr-spec">${esc(rowSpec(r))}</span><span class="mtr-qty num">${r.qty != null ? `×${esc(fmtQty(r.qty))}<small>${esc(rowUnit(r))}</small>` : ""}</span></div>
-        ${r.how === "memo" ? '<span class="tag">前にえらんだ品物</span>' : !it ? '<span class="tag">一覧にない品物（文のまま）</span>' : ""}
+        ${r.white && !it ? `<span class="tag">文のまま（「白」なので ${FSGP} にしていません）</span>` : r.how === "memo" ? '<span class="tag">前にえらんだ品物</span>' : !it ? '<span class="tag">一覧にない品物（文のまま）</span>' : ""}
         <div class="mtr-foot"><span class="mtr-src">LINE：${esc(r.raw)}</span>${r.editing ? "" : `<button type="button" class="linkbtn muted" data-medit="${i}">なおす</button>`}</div>
         ${askHTML}
         ${r.editing ? editorHTML(r, i) : ""}
