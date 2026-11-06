@@ -617,10 +617,36 @@
           "$other": { ".validate": false }
         }
       },
+      "freeMap": {
+        ".read": "auth != null && auth.token.dc_role == 'office' && root.child('daicho/devices/' + auth.uid + '/role').val() == 'office'",
+        ".write": "auth != null && auth.token.dc_role == 'office' && root.child('daicho/devices/' + auth.uid + '/role').val() == 'office'",
+        "$id": {
+          ".validate": "newData.hasChildren(['name', 'to'])",
+          "name": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 80" },
+          "to": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" },
+          "$other": { ".validate": false }
+        }
+      },
+      "groups": {
+        ".read": "auth != null && auth.token.dc_role == 'office' && root.child('daicho/devices/' + auth.uid + '/role').val() == 'office'",
+        ".write": "auth != null && auth.token.dc_role == 'office' && root.child('daicho/devices/' + auth.uid + '/role').val() == 'office'",
+        "map": {
+          "$code": { ".validate": "$code.matches(/^[A-Z]{2}$/) && newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" }
+        },
+        "names": {
+          "$name": { ".validate": "newData.isBoolean()" }
+        },
+        "$other": { ".validate": false }
+      },
       "settei": {
         ".read": "auth != null && auth.token.dc_role == 'office' && root.child('daicho/devices/' + auth.uid + '/role').val() == 'office'",
         ".write": "auth != null && auth.token.dc_role == 'office' && root.child('daicho/devices/' + auth.uid + '/role').val() == 'office'",
         "matDate": { ".validate": "newData.val() == 'ordered' || newData.val() == 'arrived' || newData.val() == 'billed'" },
+        "kessanMonth": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 12" },
+        "cutDay": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 28" },
+        "uri": {
+          "$cat": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000" }
+        },
         "$other": { ".validate": false }
       }
     }
