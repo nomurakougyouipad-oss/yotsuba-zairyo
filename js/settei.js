@@ -731,7 +731,8 @@ function memoAnswer(m, cat) {
   if (m.note) return "品物ではない行（メモに入れる）";
   if (m.free) return "一覧にない品物（文のまま）";
   const it = cat && cat.item.get(m.key);
-  return it ? buildSpec(it, m.vals || {}) || it.name : `品物一覧にない品物（${m.key}）`;
+  const extra = (m.vals || {})["書いたまま"] || "";   // どの行にも入らない言葉（品名のおわりに残す。line-match.js。11/9）
+  return it ? `${buildSpec(it, m.vals || {}) || it.name}${extra ? " " + extra : ""}` : `品物一覧にない品物（${m.key}）`;
 }
 
 function memoHTML() {

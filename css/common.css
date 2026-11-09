@@ -752,6 +752,7 @@ ul.plain{margin:0;padding-left:1.2em}
 .mtr-ask{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--amber)}
 .pick.sm button{min-height:40px;padding:6px 12px;font-size:14px}
 .pick button.rec{border-style:dashed;border-color:var(--amber)}
+.pick button.oth{border-style:dashed;color:var(--muted)}   /* 「なおす」の「ほか…」（ボタンにない値を書く。11/9） */
 .pick button small{font-family:var(--f-ja);font-size:11px;margin-left:4px;color:var(--muted);font-weight:700}
 .mtr-az{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
 .tgl{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 12px;font-weight:700;font-size:13px;min-height:36px}

@@ -97,8 +97,11 @@ function matchPrompt(item, list) {
     "- lines には、その品物に使った行の番号をすべて入れる（見出しの行も入れる）。\n" +
     "- 品物ではない行（例：ミルシートお願いします、届け先の住所、↑、使い道のメモ）は rows に入れず、notes に行番号を入れる。どの行も rows か notes のどちらかに入れる。\n" +
     "- key は品物一覧のキー。当てはまる品物がないときは null（そのときも、品物の行なら rows に入れる）。\n" +
-    "- vals は、ひな形の {} の名前と値の組。えらべる値にあるときは、その書き方にそろえる（例：25A10s → 呼び径 25A・厚さ 10s／6000 → 定尺6m／t3.2 は 厚さ t3.2）。えらべる値にないサイズは、同じ書き方で書く。\n" +
+    "- vals は、ひな形の {} の名前と値の組。えらべる値にあるときは、その書き方にそろえる（例：25A10s → 呼び径 25A・厚さ 10s／6000 → 定尺6m／t3.2 は 厚さ t3.2）。えらべる値にないサイズは、同じ書き方で書く。" +
+    "えらべる値にない種類・規格なども、合う名前の行があれば、その行に書いてあるまま入れる（例：WN フランジ → 種類 WN／30K → 規格 30K）。\n" +
     "- LINE に書いていない値（例：材質がない）は、いちばんありそうな値を vals に入れ、その名前を guess に入れる。書いてある値は guess に入れない。\n" +
+    "- extra には、LINE に書いてあるのに vals のどの値にも入らない、品物を決める大事な言葉を、書いてあるまま入れる（例：SOH、ハブ付、WN、片ねじ、JIS、ステンレス用）。" +
+    "品物一覧の名前・ひな形・えらべる値と同じ意味の言葉（平鋼＝フラットバー、同径チーズ＝溶接チーズ、ﾌﾗﾝｼﾞ＝フランジ、6000＝定尺6m など）、数・単位、材料屋へのお願いの言葉は入れない。なければ空の字。key が null のときも空の字。\n" +
     "- qty は数（数字だけ）、unit は単位（本・枚・個 など）。書いていなければ null。";
 }
 
@@ -110,12 +113,13 @@ const MATCH_SCHEMA = {
     rows: {
       type: "array",
       items: {
-        type: "object", additionalProperties: false, required: ["lines", "key", "vals", "guess", "qty", "unit"],
+        type: "object", additionalProperties: false, required: ["lines", "key", "vals", "guess", "extra", "qty", "unit"],
         properties: {
           lines: { type: "array", items: { type: "integer" } },
           key: nullable("string"),
           vals: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "value"], properties: { name: { type: "string" }, value: { type: "string" } } } },
           guess: { type: "array", items: { type: "string" } },
+          extra: { type: "string" },   // どの値にも入らない大事な言葉（SOH・WN など。品名のおわりに残す。11/9）
           qty: nullable("number"),
           unit: nullable("string"),
         },
@@ -145,6 +149,7 @@ function cleanMatch(res, item, allowed) {
     const q = r.qty == null || r.qty === "" ? null : Number(r.qty);
     rows.push({
       lines: ls.sort((a, b) => a - b), key: it ? r.key : null, vals, guess,
+      extra: it ? String(r.extra ?? "").replace(/\s+/g, " ").trim().slice(0, 60) : "",
       qty: Number.isFinite(q) && q > 0 && q < 100000 ? q : null, unit: r.unit ? String(r.unit).trim().slice(0, 10) : "",
     });
   }

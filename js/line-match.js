@@ -8,10 +8,13 @@
 //   溶接継手（エルボ・チーズ・レジューサ）で SS400 と来たら、オレンジで「FSGP か PT370 か、えらんでください」。
 //   品名の行のあとに、サイズ・数だけの行がつづくときは、その行の数だけ品物に分ける。LINE の型番（T/#9010-A-5-S T2.8 など）は品名に残す
 // - 11/6（事務員さん）：溶接継手の FSGP は「FSGP（黒）」（SGP・FSGP と書いてあれば FSGP（黒））。「白」と書いてあれば黒にしないで、文のまま
+// - 11/9（事務員さん・持ち主）：「なおす」は、行ごとにボタンでえらびなおせる（前は字の欄だけで、書いてある字に合う候補しか出なかった）。
+//   どの行にも入らない言葉（SOH・ハブ付・WN など。AI が extra で返す）は、品名のおわりに残す（前は消えて、まちがった注文になった）。
+//   溶接フランジは、LINE に書いていない「種類・形・規格」を、はじめからえらんでおくボタン（SOP・FF・10K）で入れて聞かない（材質はいつも聞く）
 import { ref, get, update } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, call } from "./firebase.js";
 import { esc } from "./common.js";
-import { buildSpec, fmtQty, rowShown, dropHidden, chipHint } from "./tanomu.js";
+import { buildSpec, fmtQty, rowShown, rowDef, dropHidden, chipHint } from "./tanomu.js";
 import { errorText } from "./touroku.js";
 import { memoDbKey, headsOf } from "./line-parse.js";
 
@@ -29,10 +32,17 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
     const m = String(s || "").match(/(?:^|\s)((?:\S*[A-Za-z]\S*#\S*|\S*#\S*[A-Za-z]\S*|No\.\s?\S+)(?:\s+[Tt]\d+(?:\.\d+)?)?)/);
     return m ? m[1].trim() : "";
   };
+  /** どの行にも入らない言葉を、覚えた当て方にしまう名前（vals の中。11/9） */
+  const EXTRA = "書いたまま";
+  /** LINE に書いていなければ、はじめからえらんでおくボタンで入れて聞かない行（11/9 持ち主：溶接フランジの種類・形・規格だけ。材質はいつも聞く） */
+  const LINE_DEF = { "tsugite:flange": ["種類", "形", "規格"] };
+  const normU = s => String(s || "").normalize("NFKC").toUpperCase().replace(/\s+/g, "");
+  /** 品名：品物一覧のひな形 ＋ 型番 ＋ どの行にも入らない言葉（もう品名に入っていれば足さない） */
   const rowSpec = r => {
     if (!r.key) return r.body;
-    const s = buildSpec(ITEM.get(r.key), shownVals(ITEM.get(r.key), r.vals));
-    return r.model && !s.toUpperCase().includes(r.model.toUpperCase()) ? `${s} ${r.model}` : s;
+    let s = buildSpec(ITEM.get(r.key), shownVals(ITEM.get(r.key), r.vals));
+    for (const add of [r.model, r.extra]) if (add && !normU(s).includes(normU(add))) s = `${s} ${add}`;
+    return s;
   };
   const rowUnit = r => r.unit || (r.key ? ITEM.get(r.key).unit : "") || "個";
   /** 突き合わせ溶接の継手（11/5 事務員さん）：SS400 と来たら、FSGP（黒）（SGP の管）か PT370（STPG・STPT の管）かをえらんでもらう */
@@ -47,18 +57,26 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
     const t = String(s || "").normalize("NFKC");
     return /(?<![A-Z])S(?:CH)?\.?\s?(?:5|10|20|40|80|160)(?![\d.A-Z])/i.test(t) || /(?<![\d.])(?:5|10|20|40|80|160)\s?S(?![A-Z])/i.test(t);
   };
-  const mkRow = (ls, key, vals, guess, qty, unit, how) => {
+  /** extra … どの行にも入らない言葉（AI の答え。覚えた当て方では vals の「書いたまま」） */
+  const mkRow = (ls, key, vals0, guess, qty, unit, how, extra) => {
     const body = ls.map(i => match.parts[i].spec).filter(Boolean).join(" ");
+    const vals = { ...(vals0 || {}) };
+    const ex = String(extra || vals[EXTRA] || "").trim().slice(0, 200);
+    delete vals[EXTRA];
     // 溶接継手で LINE に「白」と書いてあるときは、FSGP（黒）にしないで、書いたまま（文のまま）入れる（11/6 事務員さん）。
     // SUS304・PT370 など、ほかの材質がはっきりしているときは今まで通り
-    const white = WELD.has(key) && /白/.test(body) && (!(vals || {})["材質"] || isFsgp(vals["材質"]) || vals["材質"] === "SS400");
+    const white = WELD.has(key) && /白/.test(body) && (!vals["材質"] || isFsgp(vals["材質"]) || vals["材質"] === "SS400");
     const it = key && !white && ITEM.get(key) && !ITEM.get(key).free ? ITEM.get(key) : null;
     const r = {
       lines: ls, raw: ls.map(i => match.raws[i]).join(" ／ "), body, orig: body,   // orig＝覚えるときの元の書き方（なおしても変えない）
-      key: it ? key : null, vals: { ...(vals || {}) }, qty: qty == null ? null : qty, unit: unit || (it ? it.unit : ""), how,
-      ask: [...(guess || [])].filter(k => it && it.opts.some(o => o[0] === k && !o[2]) && rowShown(it, k, vals || {})),   // 「えらばなくてもよい」行・出さない行（10/21）は聞かない
-      askNote: {}, model: it ? modelOf(body) : "", white,
+      key: it ? key : null, vals: { ...vals }, qty: qty == null ? null : qty, unit: unit || (it ? it.unit : ""), how,
+      ask: [...(guess || [])].filter(k => it && it.opts.some(o => o[0] === k && !o[2]) && rowShown(it, k, vals)),   // 「えらばなくてもよい」行・出さない行（10/21）は聞かない
+      askNote: {}, model: it ? modelOf(body) : "", white, extra: it ? ex : "",
     };
+    // 溶接フランジの種類・形・規格は、LINE に書いていなければ（AI が guess にした・値がない）はじめからえらんでおくボタンで入れて聞かない（11/9 持ち主）
+    const quiet = it ? (LINE_DEF[r.key] || []).filter(k => rowDef(it, k)) : [];
+    quiet.forEach(k => { if (!r.vals[k] || (guess || []).includes(k)) r.vals[k] = rowDef(it, k); });
+    r.ask = r.ask.filter(k => !quiet.includes(k));
     // 溶接継手の材質のよび方をそろえる：管の名前（STPT・STPG → PT370、SGP・FSGP → FSGP（黒）。事務員さんの見分け方 11/5・11/6）
     if (it && WELD.has(r.key) && /^(STPT|STPG)/i.test(r.vals["材質"] || "")) r.vals["材質"] = "PT370";
     if (it && WELD.has(r.key) && isFsgp(r.vals["材質"])) r.vals["材質"] = FSGP;
@@ -133,7 +151,7 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
         x.lines.forEach(i => covered.add(i));
         const last = parts[x.lines[x.lines.length - 1]];
         const ls = [...new Set(x.lines.flatMap(linesOf))].sort((a, b) => a - b);
-        match.rows.push(mkRow(ls, x.key, x.vals, x.guess, x.qty != null ? x.qty : last.qty, x.unit || last.unit, x.key ? "ai" : "free"));
+        match.rows.push(mkRow(ls, x.key, x.vals, x.guess, x.qty != null ? x.qty : last.qty, x.unit || last.unit, x.key ? "ai" : "free", x.extra));
       });
       // AI がどこにも入れなかった行は、文のままの品物にする
       todo.filter(i => !covered.has(i)).forEach(i => match.rows.push(mkRow(linesOf(i), null, {}, [], parts[i].qty, parts[i].unit, "free")));
@@ -164,6 +182,7 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
       <li class="mtr${r.ask.length ? " ask" : it ? "" : " free"}" data-r="${i}">
         <div class="mtr-main"><span class="mtr-spec">${esc(rowSpec(r))}</span><span class="mtr-qty num">${r.qty != null ? `×${esc(fmtQty(r.qty))}<small>${esc(rowUnit(r))}</small>` : ""}</span></div>
         ${r.white && !it ? `<span class="tag">文のまま（「白」なので ${FSGP} にしていません）</span>` : r.how === "memo" ? '<span class="tag">前にえらんだ品物</span>' : !it ? '<span class="tag">一覧にない品物（文のまま）</span>' : ""}
+        ${it && r.extra ? `<span class="tag">「${esc(r.extra)}」は、どの行にも入らないので品名に残しました</span>` : ""}
         <div class="mtr-foot"><span class="mtr-src">LINE：${esc(r.raw)}</span>${r.editing ? "" : `<button type="button" class="linkbtn muted" data-medit="${i}">なおす</button>`}</div>
         ${askHTML}
         ${r.editing ? editorHTML(r, i) : ""}
@@ -176,13 +195,20 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
         const k = `${c.id}:${x.id}`;
         return `<option value="${esc(k)}"${e.key === k ? " selected" : ""}>${esc(x.name)}</option>`;
       }).join("") + "</optgroup>").join("") + "</select>";
+    // 行ごとに、スマホと同じボタン（えらんでいるものは色つき。もう一度押すとやめる）と、ボタンにない値を書く欄（11/9）。
+    // 前は字の欄（候補つき）だけで、字が入っている行は、その字に合う候補しか出なかった（呼び径しかえらべないように見えた）
     const fields = it
-      ? it.opts.map(([k, ch], j) => `<label class="mte-f"><span>${esc(k)}</span><input class="inp" data-mev="${esc(k)}" list="mdl${i}_${j}" value="${esc(e.vals[k] || "")}" autocomplete="off">` +
-        `<datalist id="mdl${i}_${j}">${ch.map(x => `<option value="${esc(x)}"></option>`).join("")}</datalist></label>`).join("")
+      ? it.opts.filter(([k]) => rowShown(it, k, e.vals)).map(([k, ch, opt]) => {
+        const v = e.vals[k] || "", other = !!v && !ch.includes(v);
+        return `<div class="mte-f wide"><span>${esc(k)}${opt ? "（えらばなくてもよい）" : ""}</span><div class="pick sm">` +
+          ch.map(c => { const h = chipHint(it, k, c); return `<button type="button" data-mepick="${esc(k)}" data-r="${i}" data-v="${esc(c)}" aria-pressed="${v === c}">${esc(c)}${h ? `<small>${esc(h)}</small>` : ""}</button>`; }).join("") +
+          `<button type="button" class="oth" data-meoth aria-pressed="${other}">ほか…</button>` +
+          `</div><input class="inp" data-mev="${esc(k)}" value="${other ? esc(v) : ""}" placeholder="${esc(k)}を書く" aria-label="${esc(k)}を書く" autocomplete="off"${other ? "" : " hidden"}></div>`;
+      }).join("") + `<label class="mte-f wide"><span>品名のおわりに足す字（どの行にも入らない言葉。なければ空）</span><input class="inp" data-meextra value="${esc(e.extra || "")}" autocomplete="off"></label>`
       : `<label class="mte-f wide"><span>品名（文のまま）</span><input class="inp" data-mefree value="${esc(e.body)}"></label>`;
     const u0 = e.unit || (it ? it.unit : "個");
     return `<div class="mte"><label class="mte-f wide"><span>品物</span>${kind}</label><div class="mte-grid">${fields}
-        <label class="mte-f"><span>数</span><input class="inp" data-meq inputmode="decimal" value="${e.qty == null ? "" : esc(fmtQty(e.qty))}"></label>
+        <label class="mte-f"><span>数</span><input class="inp" data-meq inputmode="decimal" value="${e.qtyText != null ? esc(e.qtyText) : e.qty == null ? "" : esc(fmtQty(e.qty))}"></label>
         <label class="mte-f"><span>単位</span><select class="inp" data-meu>${[...new Set([u0, ...units])].map(u => `<option${u === u0 ? " selected" : ""}>${esc(u)}</option>`).join("")}</select></label></div>
       <p class="err" data-meerr></p>
       <div class="row"><button type="button" class="btn primary" data-mok="${i}">これでよい</button><button type="button" class="linkbtn muted" data-mcancel="${i}">やめる</button></div></div>`;
@@ -222,10 +248,21 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
     } else if (d.medit) {
       const r = match.rows[Number(d.medit)];
       r.editing = true;
-      r.ed = { key: r.key, vals: { ...r.vals }, body: r.body, qty: r.qty, unit: rowUnit(r) };
+      r.ed = { key: r.key, vals: { ...r.vals }, body: r.body, qty: r.qty, unit: rowUnit(r), extra: r.extra || "" };
       render();
       const sel = box.querySelector(`[data-mek="${d.medit}"]`);
       if (sel) sel.focus();
+    } else if (d.mepick) {
+      // 「なおす」の行のボタン（11/9）：押したボタンにする。もう一度押すと、えらぶのをやめる
+      const r = match.rows[Number(d.r)], v = r.ed.vals;
+      if (v[d.mepick] === d.v) delete v[d.mepick]; else v[d.mepick] = d.v;
+      render();
+    } else if ("meoth" in d) {
+      // 「ほか…」：ボタンにない値を書く欄を出す（スマホと同じ）
+      const inp = t.closest(".mte-f").querySelector("[data-mev]");
+      inp.hidden = false;
+      t.setAttribute("aria-pressed", "true");
+      inp.focus();
     } else if (d.mcancel) {
       match.rows[Number(d.mcancel)].editing = false;
       render();
@@ -234,9 +271,10 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
       const q = parseFloat(String(li.querySelector("[data-meq]").value).normalize("NFKC"));
       e2.unit = li.querySelector("[data-meu]").value;
       if (!(q > 0 && q < 100000)) { err.textContent = "数を入れてください"; return; }
-      const spec = e2.key ? buildSpec(ITEM.get(e2.key), e2.vals) : String(e2.body || "").trim();
+      const spec = e2.key ? buildSpec(ITEM.get(e2.key), shownVals(ITEM.get(e2.key), e2.vals)) : String(e2.body || "").trim();
       if (!spec) { err.textContent = e2.key ? "値を1つ以上入れてください" : "品名を入れてください"; return; }
-      Object.assign(r, { key: e2.key, vals: e2.key ? e2.vals : {}, body: e2.key ? r.body : spec, qty: q, unit: e2.unit, ask: [], editing: false, how: "edit" });
+      Object.assign(r, { key: e2.key, vals: e2.key ? e2.vals : {}, body: e2.key ? r.body : spec, qty: q, unit: e2.unit, ask: [], editing: false, how: "edit",
+        extra: e2.key ? String(e2.extra || "").trim().slice(0, 200) : "" });
       render();
     } else if (d.mnote) {
       const i = Number(d.mnote), p = match.parts[i];
@@ -251,16 +289,26 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
   box.addEventListener("input", e => {
     const t = e.target, r = t.closest("[data-r]") && rowAt(t);
     if (!r || !r.ed) return;
-    if (t.dataset.mev) { const v = t.value.trim(); if (v) r.ed.vals[t.dataset.mev] = v; else delete r.ed.vals[t.dataset.mev]; }
+    if (t.dataset.mev) {
+      const v = t.value.trim();
+      if (v) r.ed.vals[t.dataset.mev] = v; else delete r.ed.vals[t.dataset.mev];
+      // ボタンにない値を書いたら、その行のボタンの色を消す（書いた値が品名に入る）
+      if (v) t.closest(".mte-f").querySelectorAll("[data-mepick]").forEach(b => b.setAttribute("aria-pressed", "false"));
+    }
     if ("mefree" in t.dataset) r.ed.body = t.value;
+    if ("meextra" in t.dataset) r.ed.extra = t.value;
+    if ("meq" in t.dataset) r.ed.qtyText = t.value;   // ボタンを押して書きなおしても、書いた数がのこるように（11/9）
   });
   box.addEventListener("change", e => {
     const t = e.target;
+    if ("meu" in t.dataset) { const r = rowAt(t); if (r && r.ed) r.ed.unit = t.value; return; }
     if (!t.dataset.mek) return;
     const r = match.rows[Number(t.dataset.mek)], old = r.ed.key ? ITEM.get(r.ed.key) : null, it = t.value ? ITEM.get(t.value) : null;
     if (!r.ed.unit || (old && r.ed.unit === old.unit)) r.ed.unit = it ? it.unit : r.ed.unit;
     r.ed.key = t.value || null;
     if (it) { const keep = {}; it.opts.forEach(([k]) => { if (r.ed.vals[k]) keep[k] = r.ed.vals[k]; }); r.ed.vals = keep; }
+    // 品物をかえたら、聞かずに入れる行（溶接フランジの種類・形・規格）は、はじめからえらんでおくボタンにしておく（11/9）
+    if (it) (LINE_DEF[t.value] || []).forEach(k => { if (!r.ed.vals[k] && rowDef(it, k)) r.ed.vals[k] = rowDef(it, k); });
     render();
     const sel = box.querySelector(`[data-mek="${t.dataset.mek}"]`);
     if (sel) sel.focus();
@@ -295,7 +343,8 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
     async remember() {
       const upd = {}, at = Date.now();
       match.rows.filter(r => r.lines.length <= 2 && r.orig).forEach(r => {
-        upd[memoDbKey(r.orig)] = r.key ? { key: r.key, vals: shownVals(ITEM.get(r.key), r.vals), at } : { free: true, at };   // 出さない行の値は覚えない（11/5）
+        // 出さない行の値は覚えない（11/5）。どの行にも入らない言葉は「書いたまま」で覚える（次も品名に残す。11/9）
+        upd[memoDbKey(r.orig)] = r.key ? { key: r.key, vals: { ...shownVals(ITEM.get(r.key), r.vals), ...(r.extra ? { [EXTRA]: r.extra } : {}) }, at } : { free: true, at };
       });
       match.notes.forEach(i => { const k = memoDbKey(match.parts[i].spec); if (k) upd[k] = { note: true, at }; });
       if (Object.keys(upd).length) await update(ref(db, "zairyo/master/itemMemo"), upd);
