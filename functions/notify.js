@@ -11,7 +11,12 @@
 // - 材料屋のアプリ（2-6・10/16 持ち主 1A・2B・3A）：注文が変わったら zairyoNotifyOrder が知らせる
 //   材料屋の端末へ：【新しい注文】（アプリに送った）・【直しました】・【取り消し】。LINE・電話の注文は、もう知っているので知らせない
 //   事務所のパソコンへ：【受けました】（届ける日つき）だけ。夜も休みもすぐ送る。トークンは /zairyo/notify/supTokens/{トークン} = {uid, sup, name, ua, at}
+// - 11/10（持ち主）：依頼が来てから30分たっても、まだ注文していない依頼があれば、事務所にもう一度だけ知らせる（zairyoRemindRequests）。
+//   5分ごとに見まわる（夜も土日も）。「まだ注文していない」は事務所の上の箱と同じ数え方（status "sent"。一部だけ注文した依頼も入る）。
+//   同じ依頼で知らせるのは1回だけ（知らせた依頼は /zairyo/notify/reminded/{依頼} = 時刻。サーバーだけが書く）。3日より前の依頼では知らせない
+//   出し方（押すか × を押すまで残す・押すと依頼の一覧）は sw.js（tag saisoku）
 import { onValueCreated, onValueWritten } from "firebase-functions/v2/database";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions/v2";
 import { getMessaging } from "firebase-admin/messaging";
 import { db } from "./lib.js";
@@ -105,6 +110,50 @@ export const zairyoNotifyRequest = onValueCreated({ ...OPTS, ref: "/zairyo/reque
   if (r.status !== "sent" || typeof r.sentAt !== "number" || Date.now() - r.sentAt > FRESH_MS) return;
   const targets = await officeTokens();
   await sendTo(targets, requestMessage(event.params.id, r));
+});
+
+/* ---------- まだ注文していない依頼を、もう一度だけ知らせる（11/10） ---------- */
+const REMIND_AFTER = 30 * 60 * 1000;             // 来てから30分
+const REMIND_MAX_AGE = 3 * 24 * 3600 * 1000;     // 3日より前の依頼では知らせない（バックアップからもどしたときなど）
+const REMINDED = "zairyo/notify/reminded";       // 知らせた依頼 {依頼: 時刻}
+/** 時刻 → "11/10 9:05"（日本の時刻） */
+const whenText = ts => { const d = new Date(ts + 9 * 3600 * 1000); return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, "0")}`; };
+
+/** 知らせの文。open＝まだ注文していない依頼ぜんぶ、due＝こんど知らせる依頼（古い順） */
+export function remindMessage(open, due) {
+  const shown = due.slice(0, 3).map(([, r]) => `${show(r.chumonsha) || "名前なし"}さん ${show(r.chuban)}（${whenText(r.sentAt)}に来た）`);
+  const rest = open.length - shown.length;
+  return {
+    title: `まだ注文していない依頼が${open.length}件あります`,
+    body: [...shown, rest > 0 ? `ほか${rest}件` : ""].filter(Boolean).join("\n").slice(0, 200),
+    tag: "saisoku",
+    url: URL_OFFICE,
+  };
+}
+/** 見まわりで決めること（データベースは読まない。ためしやすいように）。
+ *  reqs＝/zairyo/requests、marks＝/zairyo/notify/reminded → { due: [依頼], gone: {もう要らない印: null}, msg: 知らせの文 | null } */
+export function remindPlan(reqs, marks, now) {
+  const open = Object.entries(reqs || {}).filter(([, r]) => r && r.status === "sent" && typeof r.sentAt === "number").sort(([, a], [, b]) => a.sentAt - b.sentAt);
+  const done = marks || {};
+  const due = open.filter(([id, r]) => now - r.sentAt >= REMIND_AFTER && now - r.sentAt <= REMIND_MAX_AGE && !done[id]);
+  const openIds = new Set(open.map(([id]) => id));
+  const gone = Object.fromEntries(Object.keys(done).filter(id => !openIds.has(id)).map(id => [id, null]));   // 注文した・取り消した・消えた依頼の印は片づける
+  return { due: due.map(([id]) => id), gone, msg: due.length ? remindMessage(open, due) : null };
+}
+export const zairyoRemindRequests = onSchedule({
+  region: "asia-southeast1", schedule: "every 5 minutes", timeZone: "Asia/Tokyo", retryCount: 0, maxInstances: 1, memory: "256MiB", timeoutSeconds: 60,
+}, async () => {
+  const now = Date.now();
+  const [reqs, marks] = await Promise.all([db().ref("zairyo/requests").get(), db().ref(REMINDED).get()]);
+  const plan = remindPlan(reqs.val(), marks.val(), now);
+  const upd = { ...plan.gone };
+  if (plan.msg) {
+    const targets = await officeTokens();
+    const r = await sendTo(targets, plan.msg);
+    // 同じ依頼で知らせるのは1回だけ。1つも送れなかったとき（通信のまちがいなど）は、次の見まわりでもう一度。通知がオンのパソコンがないときは、知らせたことにする
+    if (r.ok || !targets.length) plan.due.forEach(id => { upd[id] = now; });
+  }
+  if (Object.keys(upd).length) await db().ref(REMINDED).update(upd);
 });
 
 /* ---------- 材料屋のアプリ（2-6）：注文が変わったら知らせる ---------- */

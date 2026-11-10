@@ -185,6 +185,7 @@ function netLinesHTML(sup, lines) {
 }
 
 export function startOfficeApp(main, me) {
+  const TITLE0 = document.title;   // 「よつば資材便｜事務所」（依頼がないときのタブの名前）
   const st = {
     view: "irai", filter: "all", q: "", reqs: null, orders: null, catalog: null, sups: null, places: null,
     src: "",   // "nouhin"＝納品書から作った注文だけ（「注文ごと」「工事ごと」。10/30）
@@ -280,6 +281,8 @@ export function startOfficeApp(main, me) {
         st.orders ? base.filter(o => o.status === s).length : "…",
         `data-filter="${s}" aria-pressed="${ordersView && st.filter === s}"`)).join("");
     const all = (st.reqs || []).filter(isNew).length, cxn = (st.reqs || []).filter(genbaCxUnseen).length;
+    // ブラウザのタブの名前に、まだ注文していない依頼の数（上の箱と同じ数え方。0件のときは今まで通り。11/10 持ち主）
+    document.title = st.reqs && all ? `（${all}）新しい依頼｜よつば資材便` : TITLE0;
     main.querySelectorAll("#seg [data-view]").forEach(b => {
       b.setAttribute("aria-selected", b.dataset.view === st.view);
       if (b.dataset.view === "irai") b.innerHTML = "依頼" + (all ? `<span class="badge">${all}</span>` : "") + (cxn ? `<span class="badge hot" title="現場が取り消した依頼（まだ見ていない）">取消${cxn}</span>` : "");
@@ -1542,6 +1545,19 @@ export function startOfficeApp(main, me) {
     $("#setView", main).hidden = !on;
     if (on && !st.settingsOpen) { renderSettings($("#settei", main)); st.settingsOpen = true; }
     window.scrollTo(0, 0);
+  }
+
+  // 依頼の通知を押したとき（sw.js が知らせる。11/10）：読みなおさずに「依頼」のタブに切りかえる（書きかけの注文などは、そのまま）
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", e => {
+      if (!e.data || e.data.type !== "zairyo-view" || e.data.view !== "irai") return;
+      if (!$("#setView", main).hidden) showSettings(false);
+      st.view = "irai"; st.filter = "all"; st.src = "";
+      if (st.q) { st.q = ""; const q = $("#q", main); if (q) q.value = ""; }   // さがしていた字で、新しい依頼がかくれないように
+      draw();
+      window.scrollTo({ top: 0 });
+    });
+    try { navigator.serviceWorker.startMessages(); } catch (err) { }
   }
 
   /* ---------- データ ---------- */

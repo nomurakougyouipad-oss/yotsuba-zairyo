@@ -17,7 +17,7 @@ export { zairyoBackup } from "./backup.js";
 // AI（Claude）の入口は ai.js（11章 7-3）
 export { zairyoAi } from "./ai.js";
 // プッシュ通知（現場から新しい依頼・ためしの通知）は notify.js（10/14）。材料屋のアプリの知らせ（zairyoNotifyOrder）も（2-6）
-export { zairyoNotifyRequest, zairyoNotifyTest, zairyoNotifyOrder } from "./notify.js";
+export { zairyoNotifyRequest, zairyoNotifyTest, zairyoNotifyOrder, zairyoRemindRequests } from "./notify.js";
 // 預かり（11/2 シンプル版）：注文が「届いた」になったら、預かりの残りをへらす（zairyoAzukariUse）は azukari.js
 export { zairyoAzukariUse } from "./azukari.js";
 
