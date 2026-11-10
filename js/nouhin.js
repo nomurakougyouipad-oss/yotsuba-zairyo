@@ -33,14 +33,14 @@
 //   C 手で入れた納品書の金額がある注文は、「入れない／置きかえる／べつの納品書として足す」をえらぶまで入れない。手で入れた金額と同じ紙なら「入れない／置きかえる」
 // - 11/4（OS26315 大岡産業 No.21269 の 2枚つづき：2/2 を読むと番号が同じで「もう入っています」→「移す」で 1/2 が動き、手入力で5行が2回）：
 //   2枚つづき（同じ材料屋・同じ伝票番号・同じ注番で、中身がちがう紙）は1枚の納品書としてあつかう。AI は「1/2」「2/2」も読む（page・pages）。
-//   いっしょに読んだら1つにまとめる（joinPages。スキャンは scan・scan2）。あとから読んだつづきの紙は、前に入れた納品書に自動で足す（chumon.js addToSlip）。
+//   いっしょに読んだら1つにまとめる（joinPages。スキャンは scan・scan2・3枚目から scans/3 …（11/10））。あとから読んだつづきの紙は、前に入れた納品書に自動で足す（chumon.js addToSlip）。
 //   この紙の行がぜんぶ入っているときだけ「もう入っています」。合計は最後の紙の合計でくらべる（totalDoubt）。まとめて取り消すと、足した行と金額だけ消す
 import { ref, get, push, set, update, query, limitToLast, onValue, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { ref as sref, uploadBytes, deleteObject } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-storage.js";
 import { db, auth, call, storage } from "./firebase.js";
 import { esc, zenkana, toast, openSheet } from "./common.js";
 import { ymd } from "./tanomu.js";
-import { addSlip, yen, toPrice, ST, slipsOf, npSlipsOf, addNpSlip, sameItems, sameDay, notInOrder, handSlipsOf, moveSlip, matchScore, bestOrder, linesShort, rowIn, addToSlip } from "./chumon.js";
+import { addSlip, yen, toPrice, toSigned, slipScans, ST, slipsOf, npSlipsOf, addNpSlip, sameItems, sameDay, notInOrder, handSlipsOf, moveSlip, matchScore, bestOrder, linesShort, rowIn, addToSlip } from "./chumon.js";
 import { watchJobs, getJob, CHUBAN_RE } from "./nippo.js";
 import { matchSupplier } from "./line-parse.js";
 import { errorText } from "./touroku.js";
@@ -118,7 +118,7 @@ function thumbOf(c) {
 }
 
 /* ---------- 読んだものを、注番ごとのまとまりにする（試作の scanToGroups） ---------- */
-const num = v => (typeof v === "number" && Number.isFinite(v) ? v : toPrice(v));
+const num = v => (typeof v === "number" && Number.isFinite(v) ? v : toSigned(v));   // マイナス（出精値引など）もよい（11/10）
 /** 単価・金額の欄に出す形（3けたごとにカンマ。直すときはカンマがあってもよい＝toPrice が読む） */
 const comma = v => (v == null || v === "" ? "" : Number(v).toLocaleString("ja-JP", { maximumFractionDigits: 3 }));
 const REPAIR = /修理|工賃|技術料|出張費/;   // 修理・工賃の行（工賃は日報から台帳へ行くので、材料費には入れない）
@@ -370,7 +370,7 @@ export function openImport({ sups, getOrders, me }) {
         y.doubt = [...new Set([...y.doubt, ...g.doubt])];
         if (!y.picked) y.dest = defaultDest(y);
         c.groups = [];
-        c.joined = { no: g.no, to: pageName(x) };
+        c.joined = { no: g.no, to: pageName(x), pages: y.pages };
         return;
       }
     }
@@ -471,7 +471,7 @@ export function openImport({ sups, getOrders, me }) {
       const on = gr.dest === d.o.id, before = d.before, more = d.add.length < gr.rows.length, sum = before + addSum(d);
       const ok = gr.total != null && Math.abs(gr.total - sum) <= 1;
       return `<div class="dest-q">
-          <h4>2枚つづきの納品書（No.${esc(d.s.no || gr.no)}）の、つづきの紙です</h4>
+          <h4>${Math.max(Number(gr.pages) || 0, Number(d.s.pages) || 0) >= 2 ? Math.max(Number(gr.pages) || 0, Number(d.s.pages) || 0) + "枚" : "何枚か"}つづきの納品書（No.${esc(d.s.no || gr.no)}）の、つづきの紙です</h4>
           <p>${esc(d.o.supplierName)}・${esc(d.o.chuban)}［${esc(linesShort(d.o, 24))}］の注文に入っている前の紙に、${on ? "この紙の行を足します" : "足しません（「入れない」にしています）"}。</p>
           <p class="hint">前の紙 ${yen(before)}円 ＋ この紙${more ? `のうち、まだ入っていない ${d.add.length}行` : ""} ${yen(addSum(d))}円 ＝ ${yen(sum)}円${ok ? `（最後の紙の合計 ${yen(gr.total)}円 と同じです）` : ""}</p>
           ${on ? '<button type="button" class="linkbtn muted" data-hact="skip">足さない（入れない）</button>' : `<button type="button" class="linkbtn" data-best="${esc(d.o.id)}">前の紙に足す</button>`}
@@ -589,7 +589,7 @@ export function openImport({ sups, getOrders, me }) {
       else if (c.status === "reading") body = '<p class="muted">AI が読んでいます…</p>';
       else if (c.status === "err") body = `<p class="warn">${esc(c.err)}</p><button type="button" class="btn" data-read="${ci}">もう一度読む</button>`;
       else if (c.status === "notslip") body = `<p class="warn">材料の納品書ではないようです（${esc(c.kind)}）。入れません。</p><button type="button" class="linkbtn" data-force="${ci}">納品書として読む</button>`;
-      else if (c.joined) body = `<p class="okmsg">2枚つづきの納品書（No.${esc(c.joined.no)}）のつづきの紙です。前の紙（${esc(c.joined.to)}）といっしょにしました。</p>`;   // 11/4
+      else if (c.joined) body = `<p class="okmsg">${c.joined.pages >= 2 ? c.joined.pages + "枚" : "何枚か"}つづきの納品書（No.${esc(c.joined.no)}）のつづきの紙です。前の紙（${esc(c.joined.to)}）といっしょにしました。</p>`;   // 11/4
       else body = c.groups.map((gr, gi) => groupHTML(gr, ci, gi)).join("");
       return `
         <section class="imp-card">
@@ -696,7 +696,7 @@ export function openImport({ sups, getOrders, me }) {
         const np0 = noPriceOf(gr);
         if (f === "spec") r.spec = t.value.replace(/\s*\n\s*/g, " ").trim();   // 品名は1行（折りかえして見せるだけ）
         else if (f === "unit") r.unit = t.value.trim();
-        else r[f] = toPrice(t.value);
+        else r[f] = f === "qty" ? toPrice(t.value) : toSigned(t.value);   // 単価・金額はマイナスもよい（出精値引など。11/10）
         const am = t.closest("[data-r]").querySelector('[data-rf="amount"]');
         if ((f === "qty" || f === "price") && r.qty != null && r.price != null && !am.dataset.touched) {
           r.amount = Math.round(r.qty * r.price);
@@ -800,10 +800,11 @@ export function openImport({ sups, getOrders, me }) {
             if (gr.no) slip.no = gr.no;
             const scan = await scanOf(c);
             if (scan) slip.scan = scan;
-            if (gr.cards && gr.cards.length > 1) {   // この取りこみで2枚をつないだ納品書（11/4）：2枚目のスキャンも
+            if (gr.cards && gr.cards.length > 1) {   // この取りこみで2枚・3枚…をつないだ納品書（11/4・11/10）：2枚目は scan2、3枚目からは scans/3 …
               const scan2 = await scanOf(gr.cards[1]);
               if (scan2) slip.scan2 = scan2;
-              slip.pages = Math.max(2, gr.pages || 0);
+              for (let i = 2; i < gr.cards.length && i < 20; i++) { const sc = await scanOf(gr.cards[i]); if (sc) (slip.scans = slip.scans || {})[String(i + 1)] = sc; }
+              slip.pages = Math.min(20, Math.max(2, gr.pages || 0, gr.cards.length));
             }
             const r = await addSlip(o, slip, me, { replace: act && act.kind === "replace" ? act.sids : [] });   // C「置きかえる」は手で入れた金額を消す
             item.slipId = r.sid;
@@ -888,7 +889,12 @@ export function openImport({ sups, getOrders, me }) {
             Object.values(it.rowKeys || {}).forEach(k => { upd[`${base}/slips/${it.slipId}/rows/${k}`] = null; });
             upd[`${base}/slips/${it.slipId}/amount`] = Math.max(0, (Number(s.amount) || 0) - (Number(it.amount) || 0));
             upd[`${base}/nouhin`] = Math.max(0, slipsOf(o).reduce((t, [, x]) => t + (Number(x.amount) || 0), 0) - (Number(it.amount) || 0));
-            if (s.scan2 && Object.values(rec.files || {}).some(f => f.scan === s.scan2)) { upd[`${base}/slips/${it.slipId}/scan2`] = null; upd[`${base}/slips/${it.slipId}/pages`] = null; }   // つづきの紙のスキャンは消える
+            // つづきの紙のスキャンは消える（2枚目 scan2・3枚目から scans/○。11/10）。のこりが1枚なら「何枚中」も消す
+            const mineScan = sc => Object.values(rec.files || {}).some(f => f.scan === sc);
+            let left = slipScans(s).length;
+            if (s.scan2 && mineScan(s.scan2)) { upd[`${base}/slips/${it.slipId}/scan2`] = null; left--; }
+            Object.entries(s.scans || {}).forEach(([k, sc]) => { if (mineScan(sc)) { upd[`${base}/slips/${it.slipId}/scans/${k}`] = null; left--; } });
+            if (left < 2 && left < slipScans(s).length) upd[`${base}/slips/${it.slipId}/pages`] = null;   // 「何枚中」は紙の印なので、2枚以上のこれば、そのまま
           }
           Object.values(it.priceIds || {}).forEach(p => { upd[`zairyo/prices/${p}`] = null; });
           if (Object.keys(upd).length) await update(ref(db), upd);

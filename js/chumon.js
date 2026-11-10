@@ -209,6 +209,19 @@ export function toPrice(v) {
   const n = parseFloat(s);
   return Number.isFinite(n) ? n : null;
 }
+/** 入れた字を数にする。マイナスもよい（-・−・‐・▲・△・(8,462)。出精値引などの行。11/10 大岡産業 No.21324）。数でなければ null */
+export function toSigned(v) {
+  let s = String(v ?? "").normalize("NFKC").replace(/[,，、円¥￥\s]/g, ""), neg = false;
+  const m = s.match(/^\((.+)\)$/);
+  if (m) { neg = true; s = m[1]; }
+  if (/^[-−‐▲△]/.test(s)) { neg = !neg; s = s.slice(1); }
+  const n = toPrice(s);
+  return n == null ? null : neg ? -n : n;
+}
+/** 単価の記録にする行か（単価があって、値引きなどのマイナスの行でない。11/10） */
+const priceRow = r => r && r.price != null && Number(r.price) >= 0 && !(Number(r.amount) < 0);
+/** 納品書のスキャン（1枚目・2枚目・3枚目から＝scans/3…。11/10 3枚つづき）→ [置き場所] */
+export const slipScans = s => [s && s.scan, s && s.scan2, ...Object.entries((s && s.scans) || {}).sort(([a], [b]) => Number(a) - Number(b)).map(([, v]) => v)].filter(Boolean);
 /** 材料費＝請求書の金額。まだなら納品書の金額（どちらもなければ null） */
 export const cost = o => (o.seikyu != null ? o.seikyu : o.nouhin != null ? o.nouhin : null);
 /** 納品書（入れた順） [[id, slip]] */
@@ -255,7 +268,7 @@ export async function addSlip(o, slip, me, { replace = [] } = {}) {
   }
   const priceIds = [];
   for (const [lid, r] of Object.entries(slip.rows || {})) {
-    if (r.price == null) continue;
+    if (!priceRow(r)) continue;   // 出精値引などのマイナスの行は、単価の記録にしない（11/10）
     const pk = push(ref(db, "zairyo/prices")).key;
     priceIds.push(pk);
     const line = (o.lines || {})[lid] || {};
@@ -297,6 +310,7 @@ export const checksOrd = o => o.kind !== "kakou" && o.kind !== "mekki";
 /** 納品書の行が「注文にない品物」か。key＝行の番号（注文の品物の番号と同じなら注文の品物＝品物ごとに入れた金額） */
 export function notInOrder(o, key, r) {
   if (r.ord != null) return !r.ord;
+  if (Number(r.amount) < 0) return false;   // 出精値引などの値引きの行（マイナス）は品物ではないので「注文にない」にしない（11/10）
   if (!checksOrd(o) || (key && (o.lines || {})[key])) return false;
   return !Object.values(o.lines || {}).some(l => sameThing(l.spec, r.spec));
 }
@@ -385,7 +399,7 @@ export function likeItem(a, b) {
 /** 行 r が、行の並び rows の中にあるか（品名がそろえて同じで数も同じ、または同じ品物らしくて数が同じ。金額があれば金額も同じ） */
 export const rowIn = (r, rows) => rows.some(x => (specKey(x.spec) === specKey(r.spec) && (x.qty ?? null) === (r.qty ?? null))
   || (likeItem(x.spec, r.spec) && Number(x.qty) === Number(r.qty) && (x.amount == null || r.amount == null || x.amount === r.amount)));
-/** 2枚つづきの納品書の、つづきの紙の行を足す。part = {rows:[{spec, qty?, unit?, price?, amount}], amount, scan?, pages?}
+/** 何枚かつづきの納品書（2枚・3枚…。11/10 3枚つづき）の、つづきの紙の行を足す。part = {rows:[{spec, qty?, unit?, price?, amount}], amount, scan?, pages?}
  *  行は前の行のあとに足す（r06 …）。納品書の金額と、注文の納品書の金額をふやす。単価の記録も残す。
  *  返り値：{ rowKeys: 足した行の番号, priceIds }（まとめて取り消すときに、足した分だけ消す） */
 export async function addToSlip(o, sid, part, me) {
@@ -399,15 +413,22 @@ export async function addToSlip(o, sid, part, me) {
     const k = next();
     rowKeys.push(k);
     upd[`${base}/slips/${sid}/rows/${k}`] = r;
-    if (r.price == null) continue;
+    if (!priceRow(r)) continue;   // 出精値引などのマイナスの行は、単価の記録にしない（11/10）
     const pk = push(ref(db, "zairyo/prices")).key;
     priceIds.push(pk);
     upd[`zairyo/prices/${pk}`] = { spec: r.spec, price: r.price, unit: r.unit || "", sup: o.supplier, supName: o.supplierName, key: "", date: s.date, orderId: o.id, chuban: o.chuban, at: serverTimestamp() };
   }
   upd[`${base}/slips/${sid}/amount`] = (Number(s.amount) || 0) + add;
   upd[`${base}/nouhin`] = slipsOf(o).reduce((t, [, x]) => t + (Number(x.amount) || 0), 0) + add;
-  if (part.pages >= 2) upd[`${base}/slips/${sid}/pages`] = part.pages;
-  if (part.scan) upd[`${base}/slips/${sid}/${s.scan ? "scan2" : "scan"}`] = part.scan;
+  // スキャン：1枚目 scan・2枚目 scan2・3枚目から scans/3・scans/4 …（11/10 3枚つづき。前は3枚目が2枚目の上に書かれた）
+  const had = slipScans(s);
+  if (part.scan && !had.includes(part.scan)) {
+    if (!s.scan) upd[`${base}/slips/${sid}/scan`] = part.scan;
+    else if (!s.scan2) upd[`${base}/slips/${sid}/scan2`] = part.scan;
+    else upd[`${base}/slips/${sid}/scans/${Math.max(2, ...Object.keys(s.scans || {}).map(Number).filter(Number.isFinite)) + 1}`] = part.scan;
+  }
+  const pages = Math.min(20, Math.max(Number(s.pages) || 0, Number(part.pages) || 0, had.length + (part.scan && !had.includes(part.scan) ? 1 : 0)));
+  if (pages >= 2) upd[`${base}/slips/${sid}/pages`] = pages;
   upd[`${base}/log/${logKey(o)}`] = { at: serverTimestamp(), by: me.name || "事務所", what: `納品書${s.no ? " No." + s.no : ""}のつづきの紙（${part.rows.length}行・${yen(add)}円）を足した（${yen(Number(s.amount) || 0)}円 → ${yen((Number(s.amount) || 0) + add)}円）` };
   await update(ref(db), upd);
   return { rowKeys, priceIds };
@@ -444,7 +465,7 @@ export async function removeSlip(o, sid) {
    - 単価は単価の記録（/zairyo/prices）にも残す（slip:"sup"。事務所が直したら入れかえる） */
 const supPriceRecs = (upd, o, slip) => {
   for (const [lid, r] of Object.entries(slip.rows || {})) {
-    if (r.price == null) continue;
+    if (!priceRow(r)) continue;   // マイナスの行は単価の記録にしない（11/10）
     const line = (o.lines || {})[lid] || {};
     upd[`zairyo/prices/${push(ref(db, "zairyo/prices")).key}`] = {
       spec: r.spec, price: r.price, unit: r.unit || "", sup: o.supplier, supName: o.supplierName, key: line.key || "",
