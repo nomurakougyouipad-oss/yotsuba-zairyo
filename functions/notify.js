@@ -15,6 +15,8 @@
 //   5分ごとに見まわる（夜も土日も）。「まだ注文していない」は事務所の上の箱と同じ数え方（status "sent"。一部だけ注文した依頼も入る）。
 //   同じ依頼で知らせるのは1回だけ（知らせた依頼は /zairyo/notify/reminded/{依頼} = 時刻。サーバーだけが書く）。3日より前の依頼では知らせない
 //   出し方（押すか × を押すまで残す・押すと依頼の一覧）は sw.js（tag saisoku）
+// - 11/10（持ち主）：今日ほしい依頼（希望日が今日か過ぎた日。「最短」は入れない）は、新しい依頼の通知の題を【今日ほしい】で始める。
+//   2回目の知らせも30分ではなく10分（ほかの依頼は30分のまま）
 import { onValueCreated, onValueWritten } from "firebase-functions/v2/database";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions/v2";
@@ -40,12 +42,18 @@ function kibouText(k) {
 // 日報の件名の半角カナは、全角にして出す（画面の zenkana と同じ見え方）
 const show = s => String(s ?? "").replace(/[｡-ﾟ]+/g, m => m.normalize("NFKC")).trim();
 
-/** 新しい依頼の通知の文 */
-export function requestMessage(id, r) {
+/** 日本の今日 "YYYY-MM-DD" */
+const todayJst = (now = Date.now()) => new Date(now + 9 * 3600 * 1000).toISOString().slice(0, 10);
+/** 今日ほしい依頼か（希望日が今日か、もう過ぎた日。「最短」は入れない。11/10 持ち主。事務所の画面の isUrgent と同じ） */
+export const isUrgent = (r, now = Date.now()) => /^\d{4}-\d{2}-\d{2}$/.test((r && r.kibou) || "") && r.kibou <= todayJst(now);
+const HOT = "【今日ほしい】";
+
+/** 新しい依頼の通知の文（今日ほしい依頼は、題のはじめに【今日ほしい】。11/10） */
+export function requestMessage(id, r, now = Date.now()) {
   const n = Object.keys(r.lines || {}).length;
   const where = [r.kibou ? `いつ：${kibouText(r.kibou)}` : "", r.basho ? `届け先：${show(r.basho)}` : ""].filter(Boolean).join("　");
   return {
-    title: `現場から新しい依頼（${show(r.chumonsha) || "名前なし"}さん）`.slice(0, 60),
+    title: `${isUrgent(r, now) ? HOT : ""}現場から新しい依頼（${show(r.chumonsha) || "名前なし"}さん）`.slice(0, 60),
     body: [`${show(r.chuban)} ${show(r.kenmei)}・${n}点`.slice(0, 80), where].filter(Boolean).join("\n"),
     tag: `irai_${id}`,
     url: URL_OFFICE,
@@ -114,17 +122,18 @@ export const zairyoNotifyRequest = onValueCreated({ ...OPTS, ref: "/zairyo/reque
 
 /* ---------- まだ注文していない依頼を、もう一度だけ知らせる（11/10） ---------- */
 const REMIND_AFTER = 30 * 60 * 1000;             // 来てから30分
+const REMIND_URGENT = 10 * 60 * 1000;            // 今日ほしい依頼は10分（11/10 持ち主）
 const REMIND_MAX_AGE = 3 * 24 * 3600 * 1000;     // 3日より前の依頼では知らせない（バックアップからもどしたときなど）
 const REMINDED = "zairyo/notify/reminded";       // 知らせた依頼 {依頼: 時刻}
 /** 時刻 → "11/10 9:05"（日本の時刻） */
 const whenText = ts => { const d = new Date(ts + 9 * 3600 * 1000); return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, "0")}`; };
 
 /** 知らせの文。open＝まだ注文していない依頼ぜんぶ、due＝こんど知らせる依頼（古い順） */
-export function remindMessage(open, due) {
-  const shown = due.slice(0, 3).map(([, r]) => `${show(r.chumonsha) || "名前なし"}さん ${show(r.chuban)}（${whenText(r.sentAt)}に来た）`);
+export function remindMessage(open, due, now = Date.now()) {
+  const shown = due.slice(0, 3).map(([, r]) => `${isUrgent(r, now) ? "【今日】" : ""}${show(r.chumonsha) || "名前なし"}さん ${show(r.chuban)}（${whenText(r.sentAt)}に来た）`);
   const rest = open.length - shown.length;
   return {
-    title: `まだ注文していない依頼が${open.length}件あります`,
+    title: `${due.some(([, r]) => isUrgent(r, now)) ? HOT : ""}まだ注文していない依頼が${open.length}件あります`,
     body: [...shown, rest > 0 ? `ほか${rest}件` : ""].filter(Boolean).join("\n").slice(0, 200),
     tag: "saisoku",
     url: URL_OFFICE,
@@ -135,10 +144,10 @@ export function remindMessage(open, due) {
 export function remindPlan(reqs, marks, now) {
   const open = Object.entries(reqs || {}).filter(([, r]) => r && r.status === "sent" && typeof r.sentAt === "number").sort(([, a], [, b]) => a.sentAt - b.sentAt);
   const done = marks || {};
-  const due = open.filter(([id, r]) => now - r.sentAt >= REMIND_AFTER && now - r.sentAt <= REMIND_MAX_AGE && !done[id]);
+  const due = open.filter(([id, r]) => now - r.sentAt >= (isUrgent(r, now) ? REMIND_URGENT : REMIND_AFTER) && now - r.sentAt <= REMIND_MAX_AGE && !done[id]);
   const openIds = new Set(open.map(([id]) => id));
   const gone = Object.fromEntries(Object.keys(done).filter(id => !openIds.has(id)).map(id => [id, null]));   // 注文した・取り消した・消えた依頼の印は片づける
-  return { due: due.map(([id]) => id), gone, msg: due.length ? remindMessage(open, due) : null };
+  return { due: due.map(([id]) => id), gone, msg: due.length ? remindMessage(open, due, now) : null };
 }
 export const zairyoRemindRequests = onSchedule({
   region: "asia-southeast1", schedule: "every 5 minutes", timeZone: "Asia/Tokyo", retryCount: 0, maxInstances: 1, memory: "256MiB", timeoutSeconds: 60,

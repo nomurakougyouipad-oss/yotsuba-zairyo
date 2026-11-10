@@ -315,6 +315,7 @@ ul.plain{margin:0;padding-left:1.2em}
 .st{font-size:12px;font-weight:700}
 .st.s1,.st.s2{color:var(--amber)}
 .st.s3{color:var(--blue)}
+.st.s0{color:var(--muted)}   /* 事務所：注文しない（11/10） */
 .dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0;font-size:14px}
 .dl dt{color:var(--muted);white-space:nowrap}
 .dl dd{margin:0;min-width:0;overflow-wrap:anywhere;white-space:pre-line}
@@ -434,6 +435,18 @@ ul.plain{margin:0;padding-left:1.2em}
 .g-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .g-tag{font-size:12px;font-weight:700;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 6px;white-space:nowrap}
 .g-n{margin-left:auto}
+/* 依頼から注文する画面（11/10）：品物の下の小さいボタン（希望日を変える・注文しない…）・たしかめ・材料屋へのひとこと */
+.lsub{display:flex;flex-wrap:wrap;gap:0 14px;margin-top:2px}
+.lsub .linkbtn{min-height:28px;font-size:12px;font-weight:500}
+.lask{grid-column:1 / -1;display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px dashed var(--line);border-radius:8px;background:var(--surface2)}
+.lask .lab{font-size:13px}
+.lask .row{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.kib-date{max-width:200px}
+.skip-sup{font-size:13px;font-weight:700;color:var(--muted)}
+.skip-sup small{font-weight:500}
+.lrow.skipped .lspec{color:var(--muted)}
+.g-tag.kib-on{color:var(--amber);border-color:var(--amber)}
+.g-note{margin:6px 0 4px}
 .g-lines{margin:0;padding-left:1.2em;font-size:14px;display:flex;flex-direction:column;gap:2px;overflow-wrap:anywhere}
 /* ネットで買う：品物ごとに「ページを開く」「○○でさがす」（10/15） */
 .net-lines{padding-left:0;list-style:none;gap:0}
@@ -668,7 +681,10 @@ ul.plain{margin:0;padding-left:1.2em}
 .ocard.mark-edit{--mk:var(--blue)}
 .ocard.mark-cx{--mk:var(--danger)}
 .ocard.mark-late{--mk:var(--danger)}   /* 事務所：返事なし（2-6） */
-.ocard.mark-new,.ocard.mark-edit,.ocard.mark-cx,.ocard.mark-late{border-left:8px solid var(--mk);border-top-color:var(--mk)}
+.ocard.mark-hot{--mk:var(--danger)}   /* 事務所：今日ほしい依頼（11/10） */
+.ocard.mark-new,.ocard.mark-edit,.ocard.mark-cx,.ocard.mark-late,.ocard.mark-hot{border-left:8px solid var(--mk);border-top-color:var(--mk)}
+.hot-t{color:var(--danger);font-weight:800}
+.tag.hot-tag{background:var(--danger);color:var(--bg);border-color:var(--danger);font-size:12px}
 .ocard.mark-cx .items{text-decoration:line-through;color:var(--muted)}
 .ocard .nr-note{margin:0}
 .sec-h{margin:4px 0 8px;font-size:15px;color:var(--danger)}

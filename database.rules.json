@@ -262,6 +262,13 @@
               "link": { ".validate": "newData.isString() && newData.val().length <= 500 && newData.val().matches(/^https?:\\/\\/.+/)" },
               "supplier": { ".validate": "newData.isString() && newData.val().length <= 40" },
               "orderId": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "skip": {
+                ".validate": "newData.hasChildren(['by', 'at'])",
+                "why": { ".validate": "newData.isString() && newData.val().length <= 100" },
+                "by": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 60" },
+                "at": { ".validate": "newData.isNumber()" },
+                "$other": { ".validate": false }
+              },
               "$other": { ".validate": false }
             }
           },

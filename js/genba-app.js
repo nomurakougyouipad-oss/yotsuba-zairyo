@@ -28,7 +28,9 @@ const isCancelled = r => r.status === "cancelled";
 function progress(r, os = []) {
   if (isCancelled(r)) return { step: 0, label: r.cancelledBy ? "事務所が取り消した" : "取り消した" };   // 事務所が取り消したときは cancelledBy がある（10/14）
   const act = os.filter(o => o.status !== "cancelled");
-  if (!act.length) return { step: 1, label: "事務所で確認中" };
+  // 品物を全部「注文しない」にした依頼（11/10。事務所が、ほかで手配したときなど）
+  const all = Object.values(r.lines || {}), skipped = all.filter(l => l && l.skip).length;
+  if (!act.length) return skipped && skipped === all.length ? { step: 2, label: "事務所：注文しないにした" } : { step: 1, label: "事務所で確認中" };
   const names = [...new Set(act.map(o => o.supplierName))].join("・");
   const orderedAt = Math.min(...act.map(o => o.orderedAt || Infinity));
   const arrived = act.filter(o => o.status === "arrived" || o.status === "billed");
@@ -43,6 +45,7 @@ function progress(r, os = []) {
 }
 /** 品物ごとのようす */
 function lineStatus(l, os, r) {
+  if (l.skip) return { cls: "s0", text: `事務所：注文しない${l.skip.why ? `（${l.skip.why}）` : ""}` };   // 11/10
   const o = l.orderId && os.find(x => x.id === l.orderId && x.status !== "cancelled");
   if (!o) return { cls: "s1", text: "事務所で確認中" };
   if (o.status === "arrived" || o.status === "billed") return { cls: "s3", text: `届いた（${r.basho || o.basho || "届け先"}）` };

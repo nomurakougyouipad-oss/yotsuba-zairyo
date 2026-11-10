@@ -50,6 +50,8 @@ const linesOf = r => Object.values(r.lines || {});
 const isCancelled = r => r.status === "cancelled";
 /** まだ注文しきっていない依頼（status "sent"。一部だけ注文したものも入る） */
 const isNew = r => r.status === "sent";
+/** 今日ほしい依頼（希望日が今日か、もう過ぎた日。「最短」は入れない。11/10 持ち主）。まだ注文しきっていない依頼だけ */
+const isUrgent = r => isNew(r) && /^\d{4}-\d{2}-\d{2}$/.test(r.kibou || "") && r.kibou <= ymd(0);
 /* ---------- 2-6（10/17 持ち主）：事務所の印。① 新しい（注文するまで）② 取り消し（現場が取り消した依頼。「わかりました」まで）
    ③ 返事なし（アプリに送った日のつぎの日（土日はのぞく）になっても、材料屋が受けていない）。④ 受けたは、知らせでわかるのでつけない ---------- */
 const CX_MARK_FROM = Date.parse("2026-10-17T00:00:00+09:00");   // これより前の取り消しは、もう見たことにする
@@ -194,6 +196,9 @@ export function startOfficeApp(main, me) {
     kojiOpen: {},   // 工事ごとの「届いた品物」を開いたか {注番: true/false}（11/4）
     settingsOpen: false,
     pick: {},        // 依頼ごとの、品物にえらんだ材料屋 {依頼id: {品物id: 材料屋id}}（「注文した」までは、この画面だけ）
+    kib: {},         // 依頼ごとの、品物ごとに変えた希望日 {依頼id: {品物id: "最短" | "YYYY-MM-DD"}}（11/10。「注文した」までは、この画面だけ）
+    gnote: {},       // 依頼ごとの、材料屋へのひとこと {依頼id: {まとまり: 文}}（11/10。はじめは現場のメモ）
+    kibAsk: "", skipAsk: "", skipWhy: "",   // 希望日を変えている品物・「注文しない」をたしかめている品物（"依頼id/品物id"）と理由（11/10）
     openId: "",      // いま中身を出している依頼
     cxAsk: "", cxReason: "",   // 「取り消し」をたしかめている依頼と、書いている理由（10/14）
     rsAsk: "",                 // 「取り消しをもどす」をたしかめている依頼
@@ -321,6 +326,31 @@ export function startOfficeApp(main, me) {
   }
   /** 記録に1行足す形（update にまぜる） */
   const logEntry = (reqId, what) => ({ [`log/${push(ref(db, `zairyo/requests/${reqId}/log`)).key}`]: { at: serverTimestamp(), by: me.name || "事務所", what } });
+  /** 品物の希望日を変える（依頼のとおりにしたら、変えていないことにする。11/10） */
+  function setKib(r, id, v) {
+    if (!v || v === (r.kibou || "最短")) delete kibsOf(r)[id];
+    else kibsOf(r)[id] = v;
+  }
+  /** 品物を「注文しない」にする（11/10 事務員さん「1個だけ注文先が決まらない」）。のこりが全部済んだら（注文した・注文しない）依頼は済み */
+  async function skipLine(r, lid, why) {
+    const l = (r.lines || {})[lid];
+    if (!l || l.orderId || isCancelled(r)) return;
+    const w = String(why || "").trim().slice(0, 100);
+    const rest = Object.entries(r.lines || {}).filter(([id, x]) => id !== lid && !x.orderId && !x.skip);
+    const upd = { [`lines/${lid}/skip`]: { why: w, by: (me.name || "事務所").slice(0, 60), at: serverTimestamp() }, ...logEntry(r.id, `「${l.spec}」を注文しないにした${w ? `（${w}）` : ""}`) };
+    if (!rest.length) upd.status = "ordered";
+    await update(ref(db, `zairyo/requests/${r.id}`), upd);
+    toast(`「${l.spec}」を注文しないにしました${rest.length ? "" : "（この依頼は、すべて済みました）"}`);
+  }
+  /** 「注文しない」をもどす（また注文できるようにする） */
+  async function unskipLine(r, lid) {
+    const l = (r.lines || {})[lid];
+    if (!l || !l.skip) return;
+    const upd = { [`lines/${lid}/skip`]: null, ...logEntry(r.id, `「${l.spec}」の「注文しない」をもどした`) };
+    if (r.status === "ordered") upd.status = "sent";
+    await update(ref(db, `zairyo/requests/${r.id}`), upd);
+    toast(`「${l.spec}」を、また注文できるようにしました`);
+  }
   async function cancelReq(id, btn) {
     const r = (st.reqs || []).find(x => x.id === id);
     if (!r || isCancelled(r)) return;
@@ -355,18 +385,19 @@ export function startOfficeApp(main, me) {
 
   /* ---------- 一覧 ---------- */
   function reqCard(r) {
-    const ls = linesOf(r), cx = isCancelled(r);
-    const chip = cx ? "取り消された" : r.ordered ? "一部注文ずみ" : "新しい依頼";
-    const mk = genbaCxUnseen(r) ? "cx" : !cx && !r.ordered ? "new" : "";   // 印（2-6）
+    const ls = linesOf(r), cx = isCancelled(r), done = r.status === "ordered";   // done＝済んだ（注文した・注文しない。11/10）
+    const chip = cx ? "取り消された" : done ? "済み" : r.ordered ? "一部注文ずみ" : "新しい依頼";
+    const hot = !genbaCxUnseen(r) && isUrgent(r);   // 今日ほしい（11/10）
+    const mk = genbaCxUnseen(r) ? "cx" : hot ? "hot" : isNew(r) && !r.ordered ? "new" : "";   // 印（2-6）
     return `
       <article class="ocard${cx && !mk ? " cx" : ""}${mk ? ` mark-${mk}` : ""}" tabindex="0" data-req="${esc(r.id)}" style="--c:${cx ? "var(--grey)" : "var(--amber)"}">
-        ${mk ? `<span class="bigmark">${mk === "cx" ? "取り消し" : "新しい"}</span>` : ""}
+        ${mk ? `<span class="bigmark">${{ cx: "取り消し", hot: "今日ほしい", new: "新しい" }[mk]}</span>` : ""}
         <div class="card-head"><span class="sup">${esc(r.chumonsha)}さんから</span>
-          ${mk ? "" : `<span class="ochip${cx || r.ordered ? "" : " solid"}">${chip}</span>`}</div>
+          ${mk && !(mk === "hot" && r.ordered) ? "" : `<span class="ochip${cx || r.ordered || done ? "" : " solid"}">${chip}</span>`}</div>
         <div class="kouji"><span class="chuban">${esc(r.chuban)}</span><span class="kenmei">${esc(zenkana(r.kenmei))}</span></div>
-        <div class="items">${esc(ls.map(lineText).join("\n"))}</div>
+        <div class="items">${esc(ls.map(l => lineText(l) + (l.skip ? "（注文しない）" : "")).join("\n"))}</div>
         <dl class="meta">
-          <div><dt>希望日</dt><dd>${esc(kibouText(r.kibou))}</dd></div>
+          <div><dt>希望日</dt><dd${hot ? ' class="hot-t"' : ""}>${esc(kibouText(r.kibou))}</dd></div>
           <div><dt>届け先</dt><dd>${esc(r.basho || "—")}</dd></div>
           ${r.tantou ? `<div><dt>担当</dt><dd>${esc(r.tantou)}</dd></div>` : ""}
           <div><dt>送った</dt><dd>${md(r.sentAt)} ${hm(r.sentAt)}</dd></div>
@@ -375,8 +406,8 @@ export function startOfficeApp(main, me) {
         </dl>
         <div class="card-foot"><span class="amt"><span class="num">${ls.length}</span><span>点</span></span>
           <span class="row">${genbaCxUnseen(r) ? `<button type="button" class="btn primary" data-rcxseen="${esc(r.id)}">わかりました</button>`
-            : cx ? `<button type="button" class="btn" data-rrs="${esc(r.id)}">取り消しをもどす</button>` : `<button type="button" class="btn danger" data-rcx="${esc(r.id)}">取り消し</button>`}
-          <button type="button" class="btn${cx ? "" : " primary"}" data-reqopen="${esc(r.id)}">${cx ? "中身を見る" : "材料屋を決める"}</button></span></div>
+            : cx ? `<button type="button" class="btn" data-rrs="${esc(r.id)}">取り消しをもどす</button>` : done ? "" : `<button type="button" class="btn danger" data-rcx="${esc(r.id)}">取り消し</button>`}
+          <button type="button" class="btn${cx || done ? "" : " primary"}" data-reqopen="${esc(r.id)}">${cx || done ? "中身を見る" : "材料屋を決める"}</button></span></div>
         ${st.cxAsk === r.id && !cx ? cxBoxHTML(r) : ""}${st.rsAsk === r.id && cx ? rsBoxHTML(r) : ""}
       </article>`;
   }
@@ -495,14 +526,17 @@ export function startOfficeApp(main, me) {
     if (st.view === "kouji") return drawKouji(list);
     if (st.view === "mitsu") return drawQuotes(list);
     if (!st.reqs) { list.innerHTML = '<p class="muted">読んでいます…</p>'; return; }
-    const news = newReqs();
+    const news = newReqs().sort((a, b) => isUrgent(b) - isUrgent(a));   // 今日ほしい依頼を、いちばん上に（11/10。ほかは今まで通り新しい順）
     const cxNew = st.reqs.filter(r => genbaCxUnseen(r) && matchReq(r));   // 2-6
     const cxs = st.reqs.filter(r => isCancelled(r) && !genbaCxUnseen(r) && matchReq(r));
+    // 「注文しない」にした品物がある、済んだ依頼（11/10）：たたんでおく（まちがえたときに、ここから開いて「もどす」）
+    const skips = st.reqs.filter(r => r.status === "ordered" && linesOf(r).some(l => l.skip) && matchReq(r));
     list.innerHTML =
       (cxNew.length ? `<h3 class="sec-h">現場が取り消した依頼（見たら「わかりました」）</h3><div class="ocards">${cxNew.map(reqCard).join("")}</div>` : "") +
       (news.length
         ? `<div class="ocards">${news.map(reqCard).join("")}</div>`
         : `<p class="empty">${st.q.trim() ? "あてはまる依頼はありません。" : "新しい依頼はありません。<br>現場のスマホから送られた注文が、ここに来ます。"}</p>`) +
+      (skips.length ? `<details class="block hidbox" id="skipBox"><summary>「注文しない」の品物がある、済んだ依頼（${skips.length}）</summary><div class="ocards">${skips.map(reqCard).join("")}</div></details>` : "") +
       (cxs.length ? `<details class="block hidbox" id="cxBox"><summary>取り消した依頼（${cxs.length}）</summary><div class="ocards">${cxs.map(reqCard).join("")}</div></details>` : "");
   }
 
@@ -551,21 +585,45 @@ export function startOfficeApp(main, me) {
       (l.link ? `<a class="shoplink" href="${esc(pageLink(l.link))}" target="_blank" rel="noopener noreferrer">${esc(linkLabel(pageLink(l.link)))} のページを開く</a>` : "");
   }
 
-  /** 材料屋ごとのまとまり（まだ注文していない品物だけ） */
+  /** 品物ごとの希望日（変えていなければ依頼の希望日。11/10） */
+  const kibsOf = r => st.kib[r.id] || (st.kib[r.id] = {});
+  const kibOf = (r, id) => kibsOf(r)[id] || r.kibou || "最短";
+  /** 材料屋ごとのまとまり（まだ注文していない品物だけ。「注文しない」にした品物も入れない）。
+   *  同じ材料屋でも希望日がちがえば、まとまりを分ける（注文も2つになる。11/10 事務員さん）→ { groups: [{key, sid, kibou, ids}], none } */
   function groupsOf(r) {
     const p = picksOf(r), m = new Map(), none = [];
     for (const [id, l] of Object.entries(r.lines || {})) {
-      if (l.orderId) continue;
+      if (l.orderId || l.skip) continue;
       const s = p[id];
       if (!s || !st.sups || !st.sups[s]) { none.push(id); continue; }
-      if (!m.has(s)) m.set(s, []);
-      m.get(s).push(id);
+      const kibou = kibOf(r, id), key = `${s}|${kibou}`;
+      if (!m.has(key)) m.set(key, { key, sid: s, kibou, ids: [] });
+      m.get(key).ids.push(id);
     }
-    return { groups: [...m.entries()], none };
+    return { groups: [...m.values()], none };
   }
+  /** 材料屋へのひとこと（まとまりごと。はじめは現場のメモ。11/10） */
+  const noteOf = (r, key) => { const n = st.gnote[r.id] || (st.gnote[r.id] = {}); return key in n ? n[key] : r.memo || ""; };
   const bashoText = r => ((st.places || {})[r.bashoId] || {}).text || "";
   /** 単位の一覧（品物一覧の units。まだ読めていなければ、よく使うもの） */
   const unitsList = () => (st.catalog && st.catalog.units && st.catalog.units.length ? st.catalog.units : ["個", "本", "組", "枚", "m", "kg", "式", "セット"]);
+
+  /** 品物の希望日を変える（11/10）：最短・今日・あした・日付。依頼のとおりにもどせる */
+  function kibAskHTML(r, id) {
+    const now = kibOf(r, id), t = ymd(0), tm = ymd(1), base = r.kibou || "最短";
+    const b = (v, label) => `<button type="button" data-kibset="${esc(id)}" data-v="${esc(v)}" aria-pressed="${now === v}">${esc(label)}</button>`;
+    return `<div class="lask"><span class="lab">この品物の希望日（同じ材料屋でも、希望日がちがえば注文を分けます）</span>
+      <div class="pick sm">${b("最短", "最短")}${b(t, "今日")}${b(tm, "あした")}</div>
+      <div class="row"><input class="inp kib-date" type="date" data-kibdate="${esc(id)}" min="${t}" value="${/^\d{4}-/.test(now) ? esc(now) : ""}" aria-label="日付をえらぶ">
+        ${now !== base ? `<button type="button" class="linkbtn muted" data-kibset="${esc(id)}" data-v="${esc(base)}">依頼のとおり（${esc(kibouText(base))}）にもどす</button>` : ""}
+        <button type="button" class="linkbtn muted" data-kibclose>とじる</button></div></div>`;
+  }
+  /** 「注文しない」のたしかめ（11/10）。理由は書かなくてもよい */
+  function skipAskHTML(r, id) {
+    return `<div class="lask confirm"><span class="lab">「${esc(r.lines[id].spec)}」を注文しないにしますか？（現場のスマホにも「事務所：注文しない」と出ます）</span>
+      <input class="inp" data-skipwhy maxlength="100" placeholder="理由（例：現場が自分で買う・ほかで手配した）" value="${esc(st.skipWhy)}" aria-label="注文しない理由">
+      <div class="row"><button type="button" class="btn" data-skipyes="${esc(id)}">注文しないにする</button><button type="button" class="linkbtn muted" data-skipno>やめる</button></div></div>`;
+  }
 
   function reqHTML(r) {
     const ls = Object.entries(r.lines || {}), cx = isCancelled(r);
@@ -573,18 +631,26 @@ export function startOfficeApp(main, me) {
     const p = cx ? {} : picksOf(r);
     const orderById = id => (st.orders || []).find(o => o.id === id);
     const rows = ls.map(([id, l]) => {
-      const o = l.orderId ? orderById(l.orderId) : null;
+      const o = l.orderId ? orderById(l.orderId) : null, k = `${r.id}/${id}`;
+      const kb = kibOf(r, id), kbChanged = !l.orderId && !l.skip && kb !== (r.kibou || "最短");
+      // まだ注文していない品物：材料屋をえらぶ ＋ 小さい「希望日を変える」「注文しない…」（11/10。まちがって押さないように目立たなくする）
+      const small = `<div class="lsub">
+          <button type="button" class="linkbtn muted" data-kibask="${esc(id)}">${kbChanged ? `希望日 ${esc(kibouText(kb))}（変える）` : "希望日を変える"}</button>
+          <button type="button" class="linkbtn muted" data-skipask="${esc(id)}">注文しない…</button></div>`;
       const sup = cx ? ""
         : l.orderId ? `<span class="done-sup">✓ 注文ずみ<br>${esc(o ? o.supplierName : "")}</span>`
+        : l.skip ? `<span class="skip-sup">注文しない${l.skip.why ? `<br><small>${esc(l.skip.why)}</small>` : ""}</span>
+            <div class="lsub"><button type="button" class="linkbtn muted" data-unskip="${esc(id)}">もどす（注文する）</button></div>`
         : `<select class="inp" data-pick="${esc(id)}" aria-label="${esc(l.spec)} の材料屋">
             <option value="">材料屋をえらぶ</option>
             ${supList().map(([sid, s]) => `<option value="${esc(sid)}"${p[id] === sid ? " selected" : ""}>${esc(s.name)}</option>`).join("")}
-          </select>`;
+          </select>${small}`;
       return `
-        <div class="lrow${cx ? "" : " has-sup"}${l.orderId ? " ordered" : ""}">
-          <div class="lspec">${catName(l.cat) ? `<span class="tag">${esc(catName(l.cat))}</span>` : ""}${esc(l.spec)}${l.note ? " " + esc(l.note) : ""}${lineAttach(l)}</div>
+        <div class="lrow${cx ? "" : " has-sup"}${l.orderId ? " ordered" : ""}${l.skip ? " skipped" : ""}">
+          <div class="lspec">${catName(l.cat) ? `<span class="tag">${esc(catName(l.cat))}</span>` : ""}${esc(l.spec)}${l.note ? " " + esc(l.note) : ""}${kbChanged ? ` <span class="tag kib-tag">希望日 ${esc(kibouText(kb))}</span>` : ""}${lineAttach(l)}</div>
           <div class="lqty"><span class="num">${esc(fmtQty(l.qty))}</span>${esc(l.unit)}</div>
           ${cx ? "" : `<div class="lsup">${sup}</div>`}
+          ${!cx && st.kibAsk === k ? kibAskHTML(r, id) : ""}${!cx && st.skipAsk === k ? skipAskHTML(r, id) : ""}
         </div>`;
     }).join("");
     const os = ordersOf(r.id).sort((a, b) => (a.orderedAt || 0) - (b.orderedAt || 0));
@@ -597,7 +663,7 @@ export function startOfficeApp(main, me) {
         </div><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
         ${cx ? `<p class="warn">${r.cancelledBy ? `事務所（${esc(r.cancelledBy)}）` : "現場"}が取り消しました${r.cancelledAt ? `（${md(r.cancelledAt)} ${hm(r.cancelledAt)}）` : ""}${r.cancelReason ? `。理由：${esc(r.cancelReason)}` : ""}。注文しないでください。</p>` : ""}
         <div class="block"><dl class="dl">
-          <dt>希望日</dt><dd>${esc(kibouText(r.kibou))}</dd>
+          <dt>希望日</dt><dd${isUrgent(r) ? ' class="hot-t"' : ""}>${esc(kibouText(r.kibou))}${isUrgent(r) ? '　<span class="tag hot-tag">今日ほしい</span>' : ""}</dd>
           <dt>届け先</dt><dd>${esc(r.basho || "—")}</dd>
           <dt>注文者</dt><dd>${esc(r.chumonsha)}</dd>
           <dt>担当者</dt><dd>${esc(r.tantou || "—")}</dd>
@@ -673,46 +739,55 @@ export function startOfficeApp(main, me) {
 
   function groupsHTML(r) {
     const { groups, none } = groupsOf(r);
+    const many = sid => groups.filter(g => g.sid === sid).length > 1;   // 同じ材料屋で、希望日ちがいのまとまりがある
     let h = "<h3>2. 材料屋ごとに注文する</h3>";
     if (groups.length) {
-      h += `<div class="groups">${groups.map(([sid, ids]) => {
-        const s = st.sups[sid];
+      h += `<div class="groups">${groups.map(({ key, sid, kibou, ids }) => {
+        const s = st.sups[sid], K = esc(key);
+        // 希望日（11/10）：依頼とちがうか、同じ材料屋で分かれたときは目立たせる
+        const kTag = `<span class="g-tag${kibou !== (r.kibou || "最短") || many(sid) ? " kib-on" : ""}">希望日 ${esc(kibouText(kibou))}</span>`;
+        // 材料屋へのひとこと（11/10）：注文の文・メール・PDF・FAX・材料屋のアプリに入る。はじめは現場のメモ
+        const note = `<label class="field g-note"><span class="lab">材料屋へのひとこと（注文の文に入ります。なければ空）</span>
+            <textarea class="inp ta" rows="2" maxlength="500" data-gnote="${K}" placeholder="例：午前中に届けてください">${esc(noteOf(r, key))}</textarea></label>`;
         if (s.send === "net") return `
           <div class="group">
-            <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">ネットで買う</span><span class="hint g-n">${ids.length}点</span></div>
+            <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">ネットで買う</span>${kTag}<span class="hint g-n">${ids.length}点</span></div>
             ${netLinesHTML(s, ids.map(id => r.lines[id]))}
             <div class="row"><button type="button" class="btn" data-chuban="${esc(r.chuban)}">注番をコピー</button>
-              <button type="button" class="btn primary" data-gorder="${esc(sid)}">注文した</button></div>
+              <button type="button" class="btn primary" data-gorder="${K}">注文した</button></div>
             <p class="hint">お店のページで買ってから、「注文した」を押してください。注番は、お店の備考などの欄にはりつけておくと、あとで納品書と合わせやすくなります。</p>
           </div>`;
         // 材料屋のアプリで受ける材料屋（2回目・2-2）：「アプリに送る」で注文がとどく（持ち主 B）
         if (isAppSup(s)) return `
           <div class="group">
-            <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">材料屋のアプリ</span><span class="hint g-n">${ids.length}点</span></div>
+            <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">材料屋のアプリ</span>${kTag}<span class="hint g-n">${ids.length}点</span></div>
             <ul class="g-lines">${ids.map(id => { const l = r.lines[id], n = Object.keys(l.photos || {}).length;
               return `<li>${esc(lineText(l))}${n ? ` <span class="tag">写真${n}枚</span>` : ""}${l.link ? ` <span class="tag">リンクつき</span>` : ""}${azRowHTML(r, sid, id)}</li>`; }).join("")}</ul>
-            <div class="row"><button type="button" class="btn primary" data-gapp="${esc(sid)}">アプリに送る（注文する）</button>
-              <button type="button" class="btn" data-gcopy="${esc(sid)}">注文の文をコピー</button></div>
-            <div class="field" data-gfb="${esc(sid)}" hidden><p class="send-note" role="status" hidden></p><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
+            ${note}
+            <div class="row"><button type="button" class="btn primary" data-gapp="${K}">アプリに送る（注文する）</button>
+              <button type="button" class="btn" data-gcopy="${K}">注文の文をコピー</button></div>
+            <div class="field" data-gfb="${K}" hidden><p class="send-note" role="status" hidden></p><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
               <textarea class="inp ta copybox" rows="12" readonly></textarea></div>
             <p class="hint">押すと、${esc(s.name)} のアプリに注文がとどいて「注文した」になります。</p>
           </div>`;
         return `
           <div class="group">
-            <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">${esc(s.to || "御中")}</span><span class="hint g-n">${ids.length}点</span></div>
+            <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">${esc(s.to || "御中")}</span>${kTag}<span class="hint g-n">${ids.length}点</span></div>
             <ul class="g-lines">${ids.map(id => { const l = r.lines[id], n = Object.keys(l.photos || {}).length;
               return `<li>${esc(lineText(l))}${n ? ` <span class="tag">写真${n}枚は別に送る</span>` : ""}${l.link ? ` <span class="tag">リンクつき</span>` : ""}${azRowHTML(r, sid, id)}</li>`; }).join("")}</ul>
-            <div class="row"><button type="button" class="btn" data-gcopy="${esc(sid)}">注文の文をコピー</button>
-              ${sendLabel(s) ? `<button type="button" class="btn" data-gsend="${esc(sid)}">${sendLabel(s)}</button>` : ""}
-              <button type="button" class="btn primary" data-gorder="${esc(sid)}">注文した</button></div>
-            <div class="field" data-gfb="${esc(sid)}" hidden><p class="send-note" role="status" hidden></p><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
+            ${note}
+            <div class="row"><button type="button" class="btn" data-gcopy="${K}">注文の文をコピー</button>
+              ${sendLabel(s) ? `<button type="button" class="btn" data-gsend="${K}">${sendLabel(s)}</button>` : ""}
+              <button type="button" class="btn primary" data-gorder="${K}">注文した</button></div>
+            <div class="field" data-gfb="${K}" hidden><p class="send-note" role="status" hidden></p><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
               <textarea class="inp ta copybox" rows="12" readonly></textarea></div>
           </div>`;
       }).join("")}</div>
-      ${groups.some(([sid]) => st.sups[sid].send !== "net" && !isAppSup(st.sups[sid])) ? '<p class="hint">「注文の文をコピー」（または「メールで送る」「LINE で送る」）で材料屋に送ってから、「注文した」を押してください。</p>' : ""}`;
+      ${groups.some(({ sid }) => st.sups[sid].send !== "net" && !isAppSup(st.sups[sid])) ? '<p class="hint">「注文の文をコピー」（または「メールで送る」「LINE で送る」）で材料屋に送ってから、「注文した」を押してください。</p>' : ""}`;
     }
-    if (none.length) h += `<p class="err">材料屋が決まっていない品物が ${none.length}点 あります（上の 1. でえらんでください）</p>`;
-    if (!groups.length && !none.length) h += "<p>この依頼は、すべて注文しました。</p>";
+    // 材料屋が決まっていない品物があっても、ほかの品物は先に注文できる（11/10 事務員さん。前は赤い字で、先に注文できないように見えた）
+    if (none.length) h += `<p class="hint">材料屋が決まっていない品物が ${none.length}点 あります。ほかの品物は、先に注文できます。決まったら、上の 1. でえらんで注文してください（注文しないときは、品物の下の「注文しない…」）。</p>`;
+    if (!groups.length && !none.length) h += "<p>この依頼は、すべて済みました（注文した・注文しない）。</p>";
     return h;
   }
 
@@ -745,11 +820,19 @@ export function startOfficeApp(main, me) {
       fillPhotos(p);
       const w = p.querySelector("#reqWrap");
       w.addEventListener("change", e => {
+        const kd = e.target.closest("[data-kibdate]");   // 品物の希望日を日付でえらんだ（11/10）
+        if (kd) { if (kd.value) { setKib(r, kd.dataset.kibdate, kd.value); st.kibAsk = ""; openReq(r.id, true); } return; }
         const s = e.target.closest("[data-pick]");
         if (!s) return;
         picksOf(r)[s.dataset.pick] = s.value;
         const gb = w.querySelector("#groupsBox");
         if (gb) gb.innerHTML = groupsHTML(r);
+      });
+      // 材料屋へのひとこと・「注文しない」の理由（11/10）：書いたら覚えておく（かきなおしても消えないように）
+      w.addEventListener("input", e => {
+        const n = e.target.closest("[data-gnote]");
+        if (n) (st.gnote[r.id] || (st.gnote[r.id] = {}))[n.dataset.gnote] = n.value;
+        if (e.target.closest("[data-skipwhy]")) st.skipWhy = e.target.value;
       });
       w.addEventListener("click", e => onPanelClick(e, w).catch(ex => toast(errorText(ex))));
       // 預かりから出す数（11/2）：入れたら「のこり○本は新しく用意」を合わせる（かきなおさない）
@@ -766,12 +849,22 @@ export function startOfficeApp(main, me) {
 
   /** 中身の画面で押したとき */
   async function onPanelClick(e, w) {
-    const t = e.target.closest("[data-redit],[data-gcopy],[data-gsend],[data-gorder],[data-gapp],[data-ocancel],[data-ocyes],[data-ocno],[data-chuban],[data-azw]");
+    const t = e.target.closest("[data-redit],[data-gcopy],[data-gsend],[data-gorder],[data-gapp],[data-ocancel],[data-ocyes],[data-ocno],[data-chuban],[data-azw]," +
+      "[data-kibask],[data-kibset],[data-kibclose],[data-skipask],[data-skipyes],[data-skipno],[data-unskip]");
     if (!t || t.disabled) return;
     const r = (st.reqs || []).find(x => x.id === st.openId);
     if (!r) return;
     const d = t.dataset;
     if (d.chuban) return copyChuban(d.chuban);   // ネットで買う（10/15）
+    // 品物の希望日を変える（11/10）
+    if (d.kibask) { st.kibAsk = st.kibAsk === `${r.id}/${d.kibask}` ? "" : `${r.id}/${d.kibask}`; st.skipAsk = ""; return openReq(r.id, true); }
+    if ("kibclose" in d) { st.kibAsk = ""; return openReq(r.id, true); }
+    if (d.kibset) { setKib(r, d.kibset, d.v); st.kibAsk = ""; return openReq(r.id, true); }
+    // 注文しない（11/10）：小さいボタン → 理由（書かなくてもよい）→「注文しないにする」
+    if (d.skipask) { st.skipAsk = `${r.id}/${d.skipask}`; st.skipWhy = ""; st.kibAsk = ""; return openReq(r.id, true); }
+    if ("skipno" in d) { st.skipAsk = ""; return openReq(r.id, true); }
+    if (d.skipyes) { t.disabled = true; await skipLine(r, d.skipyes, st.skipWhy); st.skipAsk = ""; st.skipWhy = ""; return openReq(r.id, true); }
+    if (d.unskip) { t.disabled = true; await unskipLine(r, d.unskip); return openReq(r.id, true); }
     if (d.azw) {   // 預かりから（11/2）：押すたびに切りかえる。数は、注文の数と預かりの残りの少ないほう（直せる）
       const k = azKey(r, d.azw), l = r.lines[d.azw];
       st.azWant = st.azWant || {};
@@ -784,19 +877,20 @@ export function startOfficeApp(main, me) {
     if ("redit" in d) {   // 依頼を直す（10/14）
       return openReqEdit({ r, orders: ordersOf(r.id), places: st.places, units: unitsList(), me, onDone: () => openReq(r.id) });
     }
-    const draftFor = sid => {
-      const g = groupsOf(r).groups.find(([s]) => s === sid);
+    // まとまり（材料屋＋希望日。11/10）の注文の形。希望日と、材料屋へのひとことも入れる
+    const draftFor = key => {
+      const g = groupsOf(r).groups.find(x => x.key === key);
       if (!g) return null;
-      const az = {};   // 預かりから（11/2）
-      for (const id of g[1]) {
+      const sid = g.sid, az = {};   // 預かりから（11/2）
+      for (const id of g.ids) {
         const q = (st.azWant || {})[azKey(r, id)], m = q != null ? azMatch(sid, r.lines[id]) : null;
         if (m && q > 0) az[id] = { iid: m.iid, qty: Math.min(q, Number(r.lines[id].qty)) };
       }
-      return draftOrder(r, sid, st.sups[sid], g[1], bashoText(r), az);
+      return draftOrder(r, sid, st.sups[sid], g.ids, bashoText(r), az, { kibou: g.kibou, memo: st.sups[sid].send === "net" ? r.memo || "" : noteOf(r, key) });
     };
-    const azCheck = sid => {   // 預かりから出す数が、注文の数・預かりの残りより多くないか（11/2）
-      const g = groupsOf(r).groups.find(([s]) => s === sid);
-      for (const id of (g ? g[1] : [])) {
+    const azCheck = key => {   // 預かりから出す数が、注文の数・預かりの残りより多くないか（11/2）
+      const g = groupsOf(r).groups.find(x => x.key === key), sid = g && g.sid;
+      for (const id of (g ? g.ids : [])) {
         const q = (st.azWant || {})[azKey(r, id)];
         if (q == null) continue;
         const e = azErr(r.lines[id], q, azMatch(sid, r.lines[id]));
@@ -805,9 +899,9 @@ export function startOfficeApp(main, me) {
       return "";
     };
     if (d.gcopy || d.gsend) {
-      const sid = d.gcopy || d.gsend, dr = draftFor(sid);
+      const key = d.gcopy || d.gsend, dr = draftFor(key);
       if (!dr) return;
-      await copyOrSend(dr, d.gsend ? st.sups[sid] : null, w.querySelector(`[data-gfb="${CSS.escape(sid)}"]`), st.info);
+      await copyOrSend(dr, d.gsend ? st.sups[dr.supplier] : null, w.querySelector(`[data-gfb="${CSS.escape(key)}"]`), st.info);
     } else if (d.gorder || d.gapp) {
       const ae = azCheck(d.gorder || d.gapp);
       if (ae) { toast(ae); return; }

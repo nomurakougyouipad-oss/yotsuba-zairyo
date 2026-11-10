@@ -103,8 +103,10 @@ export function sendUrl(sup, o, info = {}, { pdf = orderPdf(o) } = {}) {
 /** ボタンの名前 */
 export const sendLabel = sup => (sup && sup.send === "mail" ? "メールで送る" : sup && sup.send === "line" ? "LINE で送る" : sup && sup.send === "fax" ? "FAX 用に印刷" : "");
 
-/** 依頼のうち、材料屋（supId）にたのむ品物（lineIds）で、注文の形を作る（まだしまわない。文のコピーにも使う） */
-export function draftOrder(r, supId, sup, lineIds, bashoText, az = {}) {   // az＝{品物の番号: {iid, qty}}（事務所が「預かりから」とした。11/2）
+/** 依頼のうち、材料屋（supId）にたのむ品物（lineIds）で、注文の形を作る（まだしまわない。文のコピーにも使う）
+ *  ex（11/10 事務員さん）：kibou＝この注文の希望日（品物ごとに希望日を変えたとき。なければ依頼の希望日）、
+ *  memo＝材料屋へのひとこと（事務所が書く。はじめは現場のメモ。なければ依頼のメモ） */
+export function draftOrder(r, supId, sup, lineIds, bashoText, az = {}, ex = {}) {   // az＝{品物の番号: {iid, qty}}（事務所が「預かりから」とした。11/2）
   const lines = {};
   for (const id of lineIds) {
     const l = r.lines[id];
@@ -116,8 +118,8 @@ export function draftOrder(r, supId, sup, lineIds, bashoText, az = {}) {   // az
   return {
     reqId: r.id, supplier: supId, supplierName: sup.name, to: sup.to || "御中",
     chuban: r.chuban, kenmei: r.kenmei, tantou: r.tantou || "", chumonsha: r.chumonsha || "",
-    kibou: r.kibou || "最短", basho: r.basho || "", bashoText: bashoText || "",
-    contacted: r.contacted === supId, memo: r.memo || "",
+    kibou: ex.kibou || r.kibou || "最短", basho: r.basho || "", bashoText: bashoText || "",
+    contacted: r.contacted === supId, memo: String(ex.memo != null ? ex.memo : r.memo || "").trim().slice(0, 500),
     status: "wait", lines,
   };
 }
@@ -135,8 +137,8 @@ export async function placeOrder(r, draft, me) {
     upd[`zairyo/requests/${r.id}/lines/${id}/supplier`] = draft.supplier;
     upd[`zairyo/requests/${r.id}/lines/${id}/orderId`] = key;
   }
-  // ほかに、まだ注文していない品物がなければ、依頼ぜんぶ注文した
-  const rest = Object.entries(r.lines || {}).filter(([id, l]) => !ids.includes(id) && !l.orderId);
+  // ほかに、まだ注文していない品物がなければ、依頼ぜんぶ注文した（「注文しない」にした品物は数えない。11/10）
+  const rest = Object.entries(r.lines || {}).filter(([id, l]) => !ids.includes(id) && !l.orderId && !l.skip);
   if (!rest.length) upd[`zairyo/requests/${r.id}/status`] = "ordered";
   await update(ref(db), upd);
   return key;

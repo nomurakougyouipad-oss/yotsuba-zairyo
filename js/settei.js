@@ -11,7 +11,7 @@ import { BACKUP_PATHS, countText, readAll, saveBackup, lastBackup } from "./back
 import { pushState, enablePush, disablePush, testPush } from "./tsuuchi.js";
 import { printFax } from "./fax.js";
 import { SHOPS } from "./shashin.js";
-import { normCatalog, buildSpec, rowDef, dropHidden, chipHint } from "./tanomu.js";
+import { normCatalog, buildSpec, rowDef, dropHidden, chipHint, TEE_RT } from "./tanomu.js";
 import { isLineOrder } from "./chumon.js";
 
 const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["memo", "覚えた当て方"], ["notify", "通知"], ["company", "会社・注文書"], ["backup", "バックアップ"], ["ai", "AI"]];
@@ -537,6 +537,7 @@ function btnEditor(ci, ii, it) {
       <label class="mini">品名の形（{ } の所に、その行でえらんだボタンが入ります）
         <input class="inp" data-edit="itpl" ${at} value="${esc(it.tpl || "")}" maxlength="80"></label>
       <span class="hint">例：${esc(exampleSpec(it, opts.map(([, l, v, f]) => [l, v, f])) || "（まだボタンがありません）")}</span>
+      ${String(it.tpl || "").includes(`{${TEE_RT}}`) ? `<span class="hint">{${TEE_RT}} には、枝のサイズが呼び径とちがえば RT（異径）、同じか、えらんでいなければ TEE が入ります（同径は ×枝のサイズ をつけません）</span>` : ""}
       ${opts.map(([oi, label, vals, free]) => `
         <div class="mini">${esc(label)}
           <button type="button" class="sw sm" data-optfree="${ci}" data-ii="${ii}" data-oi="${oi}" aria-pressed="${free}"><span class="knob" aria-hidden="true"></span>えらばなくてもよい</button>
@@ -1082,7 +1083,7 @@ async function onChange(e) {
   } else if (d.edit === "itpl") {
     // 品名の形：{ } の中は、いまある行の名前だけ。行は全部 { } に入っていること（えらんだボタンが品名に入らないと困るので）（10/21）
     const { it, base } = itemOf(d.ci, d.ii), rows = optRows(it).map(([l]) => l);
-    const used = [...v.matchAll(/\{(.+?)\}/g)].map(m => m[1]);
+    const used = [...v.matchAll(/\{(.+?)\}/g)].map(m => m[1]).filter(l => l !== TEE_RT);   // {TEE/RT}（チーズの TEE か RT。11/10）は行でなくてよい
     const unknown = used.filter(l => !rows.includes(l)), missing = rows.filter(l => !used.includes(l));
     const back = msg => { t.value = it.tpl || ""; toast(msg); };
     if (!v) return back("品名の形は空にできません");

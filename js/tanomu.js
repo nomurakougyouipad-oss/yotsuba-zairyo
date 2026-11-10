@@ -51,10 +51,20 @@ export function dropHidden(it, vals) {
   }
 }
 
+/** チーズの「{TEE/RT}」（11/10 事務員さん）：枝のサイズが本体（呼び径）とちがえば RT（異径チーズ）、同じか、えらんでいなければ TEE。
+ *  枝のサイズの行が出ていないとき（ねじ込み継手でチーズでないとき）は何も入れない。⚙ 設定の「品名の形」に {TEE/RT} と書いた品物だけ */
+export const TEE_RT = "TEE/RT", BRANCH = "枝のサイズ（異径）", BASE = "呼び径";
+function teeWord(it, vals) {
+  if (!String(it.tpl || "").includes(`{${TEE_RT}}`)) return "";
+  if (it.opts && it.opts.some(o => o[0] === BRANCH) && !rowShown(it, BRANCH, vals)) return "";
+  return vals[BRANCH] && vals[BRANCH] !== vals[BASE] ? "RT" : "TEE";
+}
 /** えらんだ値から品名を作る（例 "SUS304 六角ボルト M12×50(B,N)"）。えらんでいない所は詰める */
 export function buildSpec(it, vals) {
   if (it.free) return String(vals.__free || "").trim();
-  let s = String(it.tpl || "").replace(/\{(.+?)\}/g, (_, k) => vals[k] || "");
+  const tee = teeWord(it, vals);
+  const v = tee === "TEE" && vals[BRANCH] === vals[BASE] ? { ...vals, [BRANCH]: "" } : vals;   // 同径は「TEE50A」（×50A をつけない）
+  let s = String(it.tpl || "").replace(/\{(.+?)\}/g, (_, k) => (k === TEE_RT ? tee : v[k] || ""));
   s = s.replace(/（\s*）|\(\s*\)/g, "");
   return s.split(/\s+/)
     .map(t => t.replace(/×{2,}/g, "×").replace(/^×+/, "").replace(/×+(?=[（(]|$)/, "").replace(/^-+|-+$/g, ""))
