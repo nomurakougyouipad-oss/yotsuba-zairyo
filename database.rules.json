@@ -458,6 +458,7 @@
           "contacted": { ".validate": "newData.isBoolean()" },
           "memo": { ".validate": "newData.isString() && newData.val().length <= 500" },
           "noLineNote": { ".validate": "newData.val() == true" },
+          "lineNote": { ".validate": "newData.val() == true" },
           "src": { ".validate": "newData.isString() && newData.val().length <= 5000" },
           "status": { ".write": "auth != null && auth.token.zr_role == 'sup' && root.child('zairyo/devices/' + auth.uid + '/role').val() == 'sup' && root.child('zairyo/devices/' + auth.uid + '/sup').val() == auth.token.zr_sup && data.parent().child('supplier').val() == auth.token.zr_sup && data.val() == 'wait' && newData.val() == 'arrived' && newData.parent().child('supState').val() == 'delivered'", ".validate": "newData.isString() && newData.val().matches(/^(wait|arrived|billed|cancelled)$/)" },
           "orderedAt": { ".validate": "newData.isNumber() && (data.exists() || newData.val() == now)" },

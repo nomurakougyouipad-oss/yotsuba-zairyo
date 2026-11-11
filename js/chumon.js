@@ -66,7 +66,7 @@ export function companyLines(c = {}) {
      （jimusho-app.js の copyOrSend）。送り先は、LINE の決まりで毎回自分でえらぶ
    どちらも、押したときに文のコピーもする（うまく入らなかったときに、はりつけられるように）
    - メールに注文書の PDF をつける（11/2 事務員さん。js/pdf.js・jimusho-app.js の copyOrSend）：本文のいちばん上に「注文書（PDF）を添付しております。」。
-     LINE・電話で入れた注文は、その上（と PDF・FAX の紙）に「先ほどお電話・LINEでお願いした分の注文書です。」。加工品・めっきは PDF をつけない */
+     LINE・電話で入れた注文で「この一文を入れる」にチェックしたものは、その上（と PDF・FAX の紙）に「先ほどご連絡した分の注文書です。」（11/11 文を変えた・はじめはチェックなし）。加工品・めっきは PDF をつけない */
 export const COMPANY = "よつば建設工業";
 
 /** メールの件名「注文　注番　件名（よつば建設工業）」 */
@@ -78,9 +78,11 @@ export function mailSubject(o) {
 export const isLineOrder = o => !!o && !o.reqId && !o.kind;
 /** LINE・電話で入れた注文を、あとから注文書で送るときの一言（材料屋さんが2回用意しないように。メールの本文のいちばん上・PDF・FAX の紙に。11/2 持ち主）。
  *  電話か LINE かは見分けない（はりつけた文があるかでは、まちがうことがあるため。1つの言い方にする 11/2 持ち主）。ほかの注文は ""
- *  注文の画面の「この一文を入れる」をはずした注文（noLineNote）には入れない（いつもそうとは限らないため。11/5 事務員さん） */
-export const LINE_NOTE = "先ほどお電話・LINEでお願いした分の注文書です。";
-export const lineOrderNote = o => (isLineOrder(o) && !o.noLineNote ? LINE_NOTE : "");
+ *  注文の画面の「この一文を入れる」をはずした注文（noLineNote）には入れない（いつもそうとは限らないため。11/5 事務員さん）
+ *  11/11 事務員さん：文を「先ほどご連絡した分の注文書です。」にした。はじめは入れない（チェックなし）。
+ *  「この一文を入れる」にチェックした注文（lineNote: true）だけに入れる（前の noLineNote は、もう見ない。前の注文の記録はそのまま） */
+export const LINE_NOTE = "先ほどご連絡した分の注文書です。";
+export const lineOrderNote = o => (isLineOrder(o) && o.lineNote === true ? LINE_NOTE : "");
 /** メールに注文書の PDF をつける注文か（加工品・めっきは、自分で作った注文書をつけているので、つけない。11/2） */
 export const orderPdf = o => !!o && o.kind !== "kakou" && o.kind !== "mekki";
 /** メールで PDF をつけるときの、本文のいちばん上の1行（PDF・LINE・コピーには入れない。11/2 持ち主 C） */

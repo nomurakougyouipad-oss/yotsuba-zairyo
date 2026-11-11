@@ -1079,7 +1079,7 @@ export function startOfficeApp(main, me) {
     const sendArea = net ? `
         <div class="block"><h3>お店のページ（ネットで買う）</h3>${netLinesHTML(osup, Object.values(o.lines || {}))}
           <div class="row"><button type="button" class="btn" data-chuban="${esc(o.chuban)}">注番をコピー</button></div></div>` : `
-        ${isLineOrder(o) && !cx ? `<label class="chk lnote"><input type="checkbox" data-lnote${o.noLineNote ? "" : " checked"}><span>この一文を入れる：「${esc(LINE_NOTE)}」<span class="hint">（メール・FAX・PDF に入ります）</span></span></label>` : ""}
+        ${isLineOrder(o) && !cx ? `<label class="chk lnote"><input type="checkbox" data-lnote${o.lineNote === true ? " checked" : ""}><span>この一文を入れる：「${esc(LINE_NOTE)}」<span class="hint">（メール・FAX・PDF に入ります）</span></span></label>` : ""}
         <div class="row"><button type="button" class="btn" data-ocopy="${esc(o.id)}">注文の文をコピー（メール・LINE用）</button>
           ${sendLabel(osup) ? `<button type="button" class="btn" data-osend="${esc(o.id)}">${sendLabel(osup)}</button>` : ""}</div>
         <div class="field" id="oCopyFb" hidden><p class="send-note" role="status" hidden></p><span class="lab">コピーした文（うまくコピーできなかったときは、ここを選んでコピーしてください）</span>
@@ -1236,12 +1236,12 @@ export function startOfficeApp(main, me) {
       wireFiles(w, () => (st.orders || []).find(x => x.id === id), me, { onErr: ex => toast(errorText(ex)), redraw: () => openOrder(id, true) });
       // 納品書の金額の欄（js/kingaku.js）：入れたら計算。入れかけの欄は、データが変わっても、かきなおさない（data-dirty）
       w.querySelectorAll("[data-slipform]").forEach(box => wireSlipForm(box, () => { box.dataset.dirty = "1"; }));
-      // 「この一文を入れる」（LINE・電話の注文。11/5）：はずすと、メール・FAX・PDF に「先ほどお電話・LINEで…」を入れない（注文に noLineNote）
+      // 「この一文を入れる」（LINE・電話の注文。11/5）：はじめはチェックなし（11/11 事務員さん）。チェックすると、メール・FAX・PDF に「先ほどご連絡した分の注文書です。」を入れる（注文に lineNote）
       w.addEventListener("change", e => {
         if (!("lnote" in e.target.dataset)) return;
         const on = e.target.checked;
-        update(ref(db, `zairyo/orders/${id}`), { noLineNote: on ? null : true })
-          .then(() => toast(on ? "「先ほどお電話・LINEで…」を入れます" : "「先ほどお電話・LINEで…」を入れません"), ex => { e.target.checked = !on; toast(errorText(ex)); });
+        update(ref(db, `zairyo/orders/${id}`), { lineNote: on ? true : null })
+          .then(() => toast(on ? `「${LINE_NOTE}」を入れます` : `「${LINE_NOTE}」を入れません`), ex => { e.target.checked = !on; toast(errorText(ex)); });
       });
       w.addEventListener("input", e => {
         if (e.target.id === "amtS") w.querySelector("#eBill").textContent = "";
