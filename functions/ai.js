@@ -74,21 +74,24 @@ function aiError(err) {
 const arr = v => (Array.isArray(v) ? v : Object.values(v || {})).filter(x => x != null);
 const MATCH_MAX_LINES = 60;
 
-/** データベースの品物一覧 → Map(キー → {name, tpl, opts:[[名前, [値]]], unit})（「自由に書く」と、⚙ 設定でかくした品物はのぞく） */
+/** データベースの品物一覧 → Map(キー → {name, tpl, opts:[[名前, [値], えらばなくてもよいか]], unit})（「自由に書く」と、⚙ 設定でかくした品物はのぞく） */
 async function catalogItems() {
   const raw = (await db().ref("zairyo/master/catalog").get()).val() || {};
   const item = new Map();
   for (const c of arr(raw.cats)) {
     for (const it of arr(c.items)) {
       if (it.free || it.hidden) continue;
-      item.set(`${c.id}:${it.id}`, { name: it.name, tpl: it.tpl || "", unit: it.unit || "", opts: arr(it.opts).map(o => [o[0], arr(o[1])]) });
+      item.set(`${c.id}:${it.id}`, { name: it.name, tpl: it.tpl || "", unit: it.unit || "", opts: arr(it.opts).map(o => [o[0], arr(o[1]), !!o[2]]) });
     }
   }
   return item;
 }
 
+// 11/19（事務員さん）：「キャッチクリップTL-11F（栃木屋）」が「タキゲン キャッチクリップ TL-11F(栃木屋)」になった。
+// 「えらばなくてもよい」行（金物のメーカーなど）まで「いちばんありそうな値」を入れていた。→ その行は、LINE に書いてあるときだけ入れる。
+// ボタンにないメーカーは、ほかのメーカーをえらばずに、書いてあるまま入れる
 function matchPrompt(item, list) {
-  const cat = [...item].map(([k, it]) => `${k}｜${it.name}｜${it.tpl}｜${it.opts.map(([n, v]) => `${n}=${v.join("/")}`).join("；")}｜単位 ${it.unit}`).join("\n");
+  const cat = [...item].map(([k, it]) => `${k}｜${it.name}｜${it.tpl}｜${it.opts.map(([n, v, opt]) => `${n}${opt ? "（えらばなくてもよい）" : ""}=${v.join("/")}`).join("；")}｜単位 ${it.unit}`).join("\n");
   return "あなたは鉄工所の事務員を手伝います。現場の人が LINE に書いた材料の注文を、会社の「品物一覧」に当てはめてください。\n\n" +
     "# 品物一覧（1行に1品物。キー｜名前｜書き方のひな形｜えらべる値｜単位）\n" + cat + "\n\n" +
     "# LINE の品名の行（番号: 文）\n" + list.map(x => `${x.i}: ${x.text}`).join("\n") + "\n\n" +
@@ -100,6 +103,9 @@ function matchPrompt(item, list) {
     "- vals は、ひな形の {} の名前と値の組。えらべる値にあるときは、その書き方にそろえる（例：25A10s → 呼び径 25A・厚さ 10s／6000 → 定尺6m／t3.2 は 厚さ t3.2）。えらべる値にないサイズは、同じ書き方で書く。" +
     "えらべる値にない種類・規格なども、合う名前の行があれば、その行に書いてあるまま入れる（例：WN フランジ → 種類 WN／30K → 規格 30K）。\n" +
     "- LINE に書いていない値（例：材質がない）は、いちばんありそうな値を vals に入れ、その名前を guess に入れる。書いてある値は guess に入れない。\n" +
+    "- ただし「（えらばなくてもよい）」の行（メーカー・異径の枝のサイズ など）は、LINE に書いてあるときだけ vals に入れる。書いていなければ vals にも guess にも入れない（ありそうな値を入れない）。\n" +
+    "- メーカーは、LINE に書いてあるメーカーだけを入れる。えらべる値にないメーカーは、ほかのメーカーをえらばずに、メーカーの行に書いてあるまま入れる" +
+    "（例：取手 A-100（スガツネ）→ 品名 取手・メーカー スガツネ・extra A-100）。メーカー名は extra に入れない。\n" +
     "- extra には、LINE に書いてあるのに vals のどの値にも入らない、品物を決める大事な言葉を、書いてあるまま入れる（例：SOH、ハブ付、WN、片ねじ、JIS、ステンレス用）。" +
     "品物一覧の名前・ひな形・えらべる値と同じ意味の言葉（平鋼＝フラットバー、同径チーズ＝溶接チーズ、ﾌﾗﾝｼﾞ＝フランジ、6000＝定尺6m など）、数・単位、材料屋へのお願いの言葉は入れない。なければ空の字。key が null のときも空の字。\n" +
     "- qty は数（数字だけ）、unit は単位（本・枚・個 など）。書いていなければ null。";
@@ -145,6 +151,7 @@ function cleanMatch(res, item, allowed) {
         if (val && it.opts.some(o => o[0] === name)) vals[name] = val;
       }
     }
+    // 「えらばなくてもよい」行の guess の値を入れるかどうかは、アプリ（line-match.js）が LINE の文とくらべて決める（11/19）
     const guess = it ? arr(r.guess).map(String).filter(k => it.opts.some(o => o[0] === k)) : [];
     const q = r.qty == null || r.qty === "" ? null : Number(r.qty);
     rows.push({

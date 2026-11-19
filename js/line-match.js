@@ -11,6 +11,9 @@
 // - 11/9（事務員さん・持ち主）：「なおす」は、行ごとにボタンでえらびなおせる（前は字の欄だけで、書いてある字に合う候補しか出なかった）。
 //   どの行にも入らない言葉（SOH・ハブ付・WN など。AI が extra で返す）は、品名のおわりに残す（前は消えて、まちがった注文になった）。
 //   溶接フランジは、LINE に書いていない「種類・形・規格」を、はじめからえらんでおくボタン（SOP・FF・10K）で入れて聞かない（材質はいつも聞く）
+// - 11/19（事務員さん）：「キャッチクリップTL-11F（栃木屋）」が「タキゲン キャッチクリップ TL-11F(栃木屋)」になった（AI が書いていないメーカーを入れた）。
+//   「えらばなくてもよい」行（メーカー・異径の枝・FB の種類）は、AI が「書いていない」と言った値を入れない（空のまま）。メーカーは、LINE の文にその名前がなければ入れない。
+//   メーカーが空で、LINE にメーカーのボタンの名前が書いてあれば、それを入れる。メーカーに入れた名前は、品名のおわりに足す字からのぞく
 import { ref, get, update } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, call } from "./firebase.js";
 import { esc } from "./common.js";
@@ -73,6 +76,7 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
       ask: [...(guess || [])].filter(k => it && it.opts.some(o => o[0] === k && !o[2]) && rowShown(it, k, vals)),   // 「えらばなくてもよい」行・出さない行（10/21）は聞かない
       askNote: {}, model: it ? modelOf(body) : "", white, extra: it ? ex : "",
     };
+    if (it) fixOptional(r, it, body, guess);
     // 溶接フランジの種類・形・規格は、LINE に書いていなければ（AI が guess にした・値がない）はじめからえらんでおくボタンで入れて聞かない（11/9 持ち主）
     const quiet = it ? (LINE_DEF[r.key] || []).filter(k => rowDef(it, k)) : [];
     quiet.forEach(k => { if (!r.vals[k] || (guess || []).includes(k)) r.vals[k] = rowDef(it, k); });
@@ -92,6 +96,54 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
     if (r.qty == null) r.ask.push("数");
     return r;
   };
+  /** くらべるための書き方のゆれをそろえる（11/19 持ち主：半角カナ・英字の大文字小文字・ひらがなとカタカナ・かっこ・「磨き」と「ミガキ」など）。品名には使わない */
+  const SAME_WORDS = [["磨き", "ミガキ"], ["磨", "ミガキ"], ["黒皮", "クロカワ"]];
+  const fold = s => {
+    let t = String(s || "").normalize("NFKC").toUpperCase().replace(/[\s()（）「」［］[\]・]/g, "");
+    t = t.replace(/[ぁ-ゖ]/g, c => String.fromCharCode(c.charCodeAt(0) + 0x60));   // ひらがな → カタカナ
+    for (const [a, b] of SAME_WORDS) t = t.split(a).join(b);
+    return t;
+  };
+  /** LINE の文に、その値が書いてあるか（書き方がちがうだけも、書いてあるにする。「ホット材」は「ホット」でもよい） */
+  const written = (body, v) => {
+    const b = fold(body), x = fold(v);
+    return !!x && (b.includes(x) || (x.length > 2 && x.endsWith("材") && b.includes(x.slice(0, -1))));
+  };
+  /** 「えらばなくてもよい」行は、LINE に書いてあるときだけ入れる（11/19 事務員さん：キャッチクリップ TL-11F（栃木屋）が「タキゲン」になった）。
+   *  AI の当てで、その行に値が入っているとき：
+   *  - LINE の文に書いてある（書き方がちがうだけも）→ そのまま
+   *  - メーカーで、AI のとちがうボタンの名前が書いてある → そのボタン
+   *  - AI も「書いていない」と言い（guess）、文にもない → 入れない（空のまま）
+   *  - AI は「書いてある」と言うのに、文に見つからない → 消さずに、オレンジで聞く（11/19 持ち主「あやしいときは聞く」）
+   *  メーカーが空で、LINE にメーカーのボタンの名前が書いてあれば入れる（2つ書いてあればオレンジで聞く）。
+   *  覚えた当て方は、事務員さんがえらんだ値なので、そのまま。メーカーに入れた名前は、品名のおわりに足す字からのぞく */
+  const MAKER = "メーカー";
+  function fixOptional(r, it, body, guess) {
+    const ask = (k, note) => { if (!r.ask.includes(k)) r.ask.push(k); r.askNote[k] = note; r.optAsk = { ...(r.optAsk || {}), [k]: true }; };
+    if (r.how === "ai") {
+      it.opts.filter(o => o[2] && r.vals[o[0]]).forEach(([k, ch]) => {
+        const v = r.vals[k];
+        if (written(body, v)) return;
+        const other = k === MAKER ? ch.filter(c => c && c !== v && written(body, c)) : [];
+        if (other.length === 1) { r.vals[k] = other[0]; return; }
+        if (!other.length && (guess || []).includes(k)) { delete r.vals[k]; return; }
+        ask(k, `「${v}」が LINE に見つかりません。${k}はどれですか？（えらばなくてもよい）`);
+      });
+    }
+    const mk = it.opts.find(o => o[0] === MAKER);
+    if (!mk) return;
+    if (r.how === "ai" && !r.vals[MAKER]) {
+      const hits = mk[1].filter(v => v && written(body, v));
+      if (hits.length === 1) r.vals[MAKER] = hits[0];
+      else if (hits.length > 1) ask(MAKER, `メーカーが ${hits.join("・")} と2つ以上書いてあります。どれですか？（えらばなくてもよい）`);
+    }
+    const v = String(r.vals[MAKER] || "").trim();
+    if (v && r.extra) {
+      const e = v.normalize("NFKC").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), x = r.extra.normalize("NFKC");
+      const y = x.replace(new RegExp(`\\(\\s*${e}\\s*\\)|${e}`, "g"), " ").replace(/\s+/g, " ").trim();
+      if (y !== x.replace(/\s+/g, " ").trim()) r.extra = y;
+    }
+  }
   /** ねじ込み継手の材質（11/19 事務員さん）：SUS304・SUS316L・FCMB（黒）・FCMB（白）・PT370。ソケットだけ SS400 も（「材質（ソケット）」の行）。
    *  「白」「黒」は FCMB（白）・FCMB（黒）。ソケット以外で SS400 なら、オレンジで「FCMB（黒）・FCMB（白）・PT370 のどれか」を聞く（黒・白が書いてあれば、それをおすすめに）。
    *  ソケットで LINE に SS400 と書いてあれば SS400。覚えた当て方は、その値（SS400黒 などの前の値もそろえる） */
@@ -210,9 +262,12 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
       const ch = (optsOf(r).find(o => o[0] === k) || [k, []])[1];
       const g0 = r.vals[k] || "";
       // ボタンの下の小さい字（⚙ 設定の「ボタンの下の字」。FSGP「SGP の管用・スケジュールなし」など。11/5）
-      const sub = v => (v === g0 ? "おすすめ" : chipHint(it, k, v));
+      // 「えらばなくてもよい」行で聞くとき（11/19）：AI の値は「おすすめ」にしないで「AI の当て」。「書かない（空のまま）」もえらべる
+      const opt = !!(r.optAsk && r.optAsk[k]);
+      const sub = v => (v === g0 ? (opt ? "AI の当て" : "おすすめ") : chipHint(it, k, v));
       return `<div class="mtr-ask"><span>${esc(r.askNote[k] || `${k}が書いてありません。どれですか？`)}</span><div class="pick sm">` +
-        [...new Set([g0, ...ch])].filter(Boolean).map(v => `<button type="button" data-mask="${esc(k)}" data-r="${i}" data-v="${esc(v)}"${v === g0 ? ' class="rec"' : ""}>${esc(v)}${sub(v) ? `<small>${esc(sub(v))}</small>` : ""}</button>`).join("") +
+        [...new Set([g0, ...ch])].filter(Boolean).map(v => `<button type="button" data-mask="${esc(k)}" data-r="${i}" data-v="${esc(v)}"${v === g0 && !opt ? ' class="rec"' : ""}>${esc(v)}${sub(v) ? `<small>${esc(sub(v))}</small>` : ""}</button>`).join("") +
+        (opt ? `<button type="button" data-mask="${esc(k)}" data-r="${i}" data-v="">書かない<small>空のまま</small></button>` : "") +
         "</div></div>";
     }).join("");
     return `
@@ -278,7 +333,7 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
     const d = t.dataset;
     if (d.mask) {
       const r = match.rows[Number(d.r)];
-      r.vals[d.mask] = d.v;
+      if (d.v) r.vals[d.mask] = d.v; else delete r.vals[d.mask];   // 「書かない（空のまま）」（11/19）
       r.ask = r.ask.filter(k => k !== d.mask);
       askMore(r);   // えらんだら出てくる行も聞く（PT370 にしたら厚さ。11/5）
       render();
