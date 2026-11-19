@@ -26,6 +26,7 @@ const PATH = {
   dev: "zairyo/devices",          // 登録した端末（事務所だけ読める。消す・合言葉を変えるのはサーバーのプログラム）
   blog: "zairyo/backupLog",       // 自動の保存の結果（サーバーのプログラム zairyoBackup が書く）
   memo: "zairyo/master/itemMemo",  // LINE の品名の、覚えた当て方（7-4）
+  slipAlias: "zairyo/master/slipAlias",  // 納品書の書き方（材料屋ごと。取りこみで「どの注文の品物？」をえらんで覚えた。11/19）
   notify: "zairyo/notify/tokens",  // 通知がオンのパソコン（10/14。js/tsuuchi.js）
   reqs: "zairyo/requests",        // 依頼（品物一覧の「手で書いた品物」を数えるため。10/14）
   orders: "zairyo/orders",        // 注文（LINE・電話の注文で文のまま入った品物も「手で書いた品物」に数えるため。読むだけ。11/6）
@@ -740,7 +741,11 @@ function memoHTML() {
   return `
     <p class="hint">LINE・電話の注文で、品物一覧に当てて入れた品名の書き方を覚えています。次から同じ書き方は、AI を使わずにこの品物に当てます。まちがって覚えたものは、ここで消してください（消すと、次は AI でもう一度当てます）。</p>
     <input id="mQ" class="inp search" type="search" placeholder="書き方・品物でさがす" aria-label="書き方・品物でさがす" value="${esc(mQ)}">
-    <div id="mList" class="set-body">${memoListHTML()}</div>`;
+    <h3 class="set-h">LINE・電話の品名</h3>
+    <div id="mList" class="set-body">${memoListHTML()}</div>
+    <h3 class="set-h">納品書の書き方（材料屋ごと）</h3>
+    <p class="hint">納品書の取りこみで「どの注文の品物？」をえらんで覚えた、材料屋ごとの書き方です。次から同じ書き方は、自動でこの品物に合わせます。まちがってえらんで覚えたものは、ここで消してください（消すと、次はまたえらぶ形にもどります）。</p>
+    <div id="saList" class="set-body">${slipAliasListHTML()}</div>`;
 }
 
 function memoListHTML() {
@@ -758,6 +763,24 @@ function memoListHTML() {
         ${ask === "memo:" + k
           ? `<span class="row"><button type="button" class="btn danger" data-memodelyes="${esc(k)}">消す</button><button type="button" class="btn" data-askno>やめる</button></span>`
           : `<button type="button" class="btn danger" data-memodel="${esc(k)}">消す</button>`}
+      </li>`).join("")}</ul>`;
+}
+
+/** 納品書の書き方（材料屋ごと。11/19）：/zairyo/master/slipAlias/{材料屋}/{書き方}＝{ spec: 注文の品名, at } */
+function slipAliasListHTML() {
+  if (!S.slipAlias || !S.sup) return LOADING;
+  const q = z2h(mQ).trim().toLowerCase();
+  const all = Object.entries(S.slipAlias).flatMap(([sup, m]) => Object.entries(m || {}).map(([k, a]) => ({ sup, k, a: a || {}, name: (S.sup[sup] || {}).name || sup, text: memoText(k) })))
+    .sort((x, y) => (y.a.at || 0) - (x.a.at || 0));
+  const list = all.filter(x => !q || [x.name, x.text, x.a.spec].some(v => z2h(v || "").toLowerCase().includes(q)));
+  if (!all.length) return '<p class="muted">まだ覚えていません。納品書の取りこみで「どの注文の品物？」をえらんで入れると、ここにたまります。</p>';
+  return `
+    <p class="muted">${all.length}件${q ? `（「${esc(mQ)}」にあてはまるもの ${list.length}件）` : ""}</p>
+    <ul class="staff memos">${list.map(({ sup, k, a, name, text }) => `
+      <li><span class="memo-txt"><b>${esc(name)}：${esc(text)}</b><span class="muted">→ ${esc(a.spec || "")}${a.at ? `・${when(a.at)}` : ""}</span></span>
+        ${ask === "sa:" + sup + "/" + k
+          ? `<span class="row"><button type="button" class="btn danger" data-sadelyes="${esc(sup + "/" + k)}">消す</button><button type="button" class="btn" data-askno>やめる</button></span>`
+          : `<button type="button" class="btn danger" data-sadel="${esc(sup + "/" + k)}">消す</button>`}
       </li>`).join("")}</ul>`;
 }
 
@@ -984,9 +1007,14 @@ async function onClick(e) {
     const k = kPath(d.khide);
     await update(ref(db, k.path), { hidden: !k.x.hidden });
     toast(`${k.key}（${k.x.name}）を${k.x.hidden ? "出しました" : "かくしました"}`);
-  } else if (d.kdel || d.staffdel || d.devdel || d.memodel) {
-    ask = d.kdel || (d.staffdel ? "staff:" + d.staffdel : d.devdel ? "dev:" + d.devdel : "memo:" + d.memodel);
+  } else if (d.kdel || d.staffdel || d.devdel || d.memodel || d.sadel) {
+    ask = d.kdel || (d.staffdel ? "staff:" + d.staffdel : d.devdel ? "dev:" + d.devdel : d.sadel ? "sa:" + d.sadel : "memo:" + d.memodel);
     draw(true);
+  } else if (d.sadelyes) {   // 納品書の書き方を消す（11/19）
+    const [sup, k] = [d.sadelyes.slice(0, d.sadelyes.indexOf("/")), d.sadelyes.slice(d.sadelyes.indexOf("/") + 1)];
+    ask = "";
+    await remove(ref(db, `${PATH.slipAlias}/${sup}/${k}`));
+    toast(`「${memoText(k)}」（${(S.sup[sup] || {}).name || sup}）の書き方を消しました。次は、またえらぶ形にもどります`);
   } else if (d.memodelyes) {
     const k = d.memodelyes;
     ask = "";
@@ -1287,6 +1315,8 @@ function onInput(e) {
     ask = "";
     const ml = $("#mList", body);
     if (ml) ml.innerHTML = memoListHTML();
+    const sl = $("#saList", body);
+    if (sl) sl.innerHTML = slipAliasListHTML();
     return;
   }
   if (e.target.id !== "kQ") return;
