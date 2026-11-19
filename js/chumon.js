@@ -220,6 +220,10 @@ export function toSigned(v) {
   const n = toPrice(s);
   return n == null ? null : neg ? -n : n;
 }
+/** 返品・交換の納品書か（数がマイナスの行がある・品名に「返品」「交換」「返却」。11/19 大岡産業 21424 ソケット 10A ×−5）。出精値引（数は 1）は入れない */
+export const isReturnSlip = s => Object.values((s && s.rows) || {}).some(r => r && (Number(r.qty) < 0 || /返品|交換|返却/.test(String(r.spec || ""))));
+/** 返品・交換の納品書（金額のない紙も）がある注文か */
+export const hasReturn = o => !!o && [...Object.values(o.slips || {}), ...Object.values(o.npSlips || {})].some(isReturnSlip);
 /** 単価の記録にする行か（単価があって、値引きなどのマイナスの行でない。11/10） */
 const priceRow = r => r && r.price != null && Number(r.price) >= 0 && !(Number(r.amount) < 0);
 /** 納品書のスキャン（1枚目・2枚目・3枚目から＝scans/3…。11/10 3枚つづき）→ [置き場所] */

@@ -11,7 +11,7 @@ import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet, keepPlace } from "./common.js";
 import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
-import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany, azkText, orderPdf, pdfLine, npSlipsOf, npDupOf, deliveredRows, notInOrder, checksOrd, sameThing, removeNpSlip, setRowOrd, lineDone, isLineOrder, LINE_NOTE, slipScans } from "./chumon.js";
+import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany, azkText, orderPdf, pdfLine, npSlipsOf, npDupOf, deliveredRows, notInOrder, checksOrd, sameThing, removeNpSlip, setRowOrd, lineDone, isLineOrder, LINE_NOTE, slipScans, isReturnSlip, hasReturn } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel, shopOf, pageLink, SHOPS } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
@@ -28,7 +28,7 @@ import { openAzukari, azItems, lineSpec } from "./azukari.js";
 
 /** 一覧・注文の画面の小さい印（加工品・見積から。10/15） */
 const KIND_TAG = { kakou: "加工品", mekki: "めっき", mitsumori: "見積から", nouhin: "納品書から" };   // nouhin＝納品書の取りこみで作った注文（アプリで注文していない。10/30）
-const kindTag = o => (KIND_TAG[o.kind] ? ` <span class="tag">${KIND_TAG[o.kind]}</span>` : "") + (o.supState ? ' <span class="tag">アプリ</span>' : "");   // アプリ＝材料屋のアプリに送った注文（2-2）
+const kindTag = o => (KIND_TAG[o.kind] ? ` <span class="tag">${KIND_TAG[o.kind]}</span>` : "") + (o.supState ? ' <span class="tag">アプリ</span>' : "") + (hasReturn(o) ? ' <span class="tag ret-tag">返品・交換</span>' : "");   // 返品・交換の納品書がある（11/19）   // アプリ＝材料屋のアプリに送った注文（2-2）
 /** 事務所で入れて、あとで「送った」を押す注文（加工品・めっき・見積から） */
 const officeKind = o => o.kind === "kakou" || o.kind === "mekki" || o.kind === "mitsumori";
 
@@ -974,6 +974,7 @@ export function startOfficeApp(main, me) {
           <li>
             <div class="sl-top"><span class="sl-lab">納品書${s.no ? "　No." + esc(s.no) : ""}${s.date ? "　" + esc(dayText(s.date)) : ""}${s.pages ? `　（${s.pages}枚つづき）` : ""}</span>
               ${s.src === "sup" ? `<span class="suptag">${s.fixBy ? "材料屋が入れた → 事務所が直した" : "材料屋が入れた"}</span>` : ""}
+              ${isReturnSlip(s) ? '<span class="tag ret-tag">返品・交換</span>' : ""}
               ${s.amount != null ? `<span class="money">${yen(s.amount)}</span><span>円</span>` : '<span class="hint">金額なし</span>'}
               ${s.src === "sup" ? `<button type="button" class="linkbtn" data-slipfix="${esc(sid)}">直す</button>` : ""}
               <button type="button" class="linkbtn muted" data-slipdel="${esc(sid)}">消す</button></div>

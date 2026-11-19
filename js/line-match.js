@@ -88,9 +88,46 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
     // 溶接継手の厚さは、LINE に書いてあるときだけ入れる。書いていなければ AI・覚えた当て方の厚さは使わずに聞く（11/5 持ち主）
     if (it && WELD.has(r.key) && !hasThick(body)) Object.keys(r.vals).filter(k => /^厚さ/.test(k)).forEach(k => delete r.vals[k]);
     if (it && WELD.has(r.key) && r.vals["材質"]) askMore(r);
+    if (it && r.key === NEJI) fixNeji(r, body, guess);
     if (r.qty == null) r.ask.push("数");
     return r;
   };
+  /** ねじ込み継手の材質（11/19 事務員さん）：SUS304・SUS316L・FCMB（黒）・FCMB（白）・PT370。ソケットだけ SS400 も（「材質（ソケット）」の行）。
+   *  「白」「黒」は FCMB（白）・FCMB（黒）。ソケット以外で SS400 なら、オレンジで「FCMB（黒）・FCMB（白）・PT370 のどれか」を聞く（黒・白が書いてあれば、それをおすすめに）。
+   *  ソケットで LINE に SS400 と書いてあれば SS400。覚えた当て方は、その値（SS400黒 などの前の値もそろえる） */
+  const NEJI = "tsugite:neji", NEJI_SOCK = "材質（ソケット）";
+  const NEJI_ASK = "SS400 と書いてあります。FCMB（黒）・FCMB（白）・PT370 のどれですか？";
+  const nejiMat = v => {
+    const m = String(v || "").normalize("NFKC");
+    if (/SUS\s*316/i.test(m)) return "SUS316L";
+    if (/SUS/i.test(m)) return "SUS304";
+    if (/PT\s*370|STPT|STPG/i.test(m)) return "PT370";
+    if (/白/.test(m)) return "FCMB（白）";
+    if (/黒/.test(m)) return "FCMB（黒）";
+    if (/FCMB/i.test(m)) return "FCMB（黒）";
+    if (/SS\s*400/i.test(m)) return "SS400";
+    return m.trim();
+  };
+  function fixNeji(r, body, guess) {
+    const it = ITEM.get(r.key), name = r.vals["品名"];
+    if (!name || !it.opts.some(o => o[0] === NEJI_SOCK)) return;   // 品名がまだ・前の品物一覧（行が1つ）のときは、そのまま
+    const sock = name === "ソケット", row = sock ? NEJI_SOCK : "材質", other = sock ? "材質" : NEJI_SOCK;
+    const t = String(body || "").normalize("NFKC"), memo = r.how === "memo";
+    let v = nejiMat(r.vals[row] || r.vals[other]);
+    delete r.vals[other];
+    const asked = (guess || []).some(k => k === "材質" || k === NEJI_SOCK);
+    r.ask = r.ask.filter(k => k !== "材質" && k !== NEJI_SOCK);
+    if (!memo && /SS\s*400/i.test(t)) v = "SS400";   // LINE に SS400 と書いてある（ソケットは SS400 のまま・ほかは下で聞く）
+    if (!sock && v === "SS400") {   // ソケット以外の SS400 は聞く
+      const rec = /白/.test(t) ? "FCMB（白）" : /黒/.test(t) ? "FCMB（黒）" : "";
+      if (rec) r.vals[row] = rec; else delete r.vals[row];
+      r.ask.unshift(row);
+      r.askNote[row] = memo && !/SS\s*400/i.test(t) ? "前は「SS400」で覚えていました。FCMB（黒）・FCMB（白）・PT370 のどれですか？" : NEJI_ASK;
+      return;
+    }
+    if (v) r.vals[row] = v; else delete r.vals[row];
+    if (asked && !memo && !/SUS|PT\s*370|STPT|STPG|白|黒|FCMB|SS\s*400/i.test(t)) r.ask.unshift(row);   // 材質が書いていなければ聞く
+  }
   /** 溶接継手の厚さ：書いてある厚さ（s40・40S・Sch40 など）を、いまの材質で出ている厚さの行にうつす。
    *  PT370 は「厚さ（PT370）」の s40・s80 だけ、SUS304 は今まで通りの行（11/5）。合うボタンがないときは聞く */
   const fixThick = r => {

@@ -40,7 +40,7 @@ import { ref as sref, uploadBytes, deleteObject } from "https://www.gstatic.com/
 import { db, auth, call, storage } from "./firebase.js";
 import { esc, zenkana, toast, openSheet } from "./common.js";
 import { ymd } from "./tanomu.js";
-import { addSlip, yen, toPrice, toSigned, slipScans, ST, slipsOf, npSlipsOf, addNpSlip, sameItems, sameDay, notInOrder, handSlipsOf, moveSlip, matchScore, bestOrder, linesShort, rowIn, addToSlip } from "./chumon.js";
+import { addSlip, yen, toPrice, toSigned, slipScans, isReturnSlip, ST, slipsOf, npSlipsOf, addNpSlip, sameItems, sameDay, notInOrder, handSlipsOf, moveSlip, matchScore, bestOrder, linesShort, rowIn, addToSlip } from "./chumon.js";
 import { watchJobs, getJob, CHUBAN_RE } from "./nippo.js";
 import { matchSupplier } from "./line-parse.js";
 import { errorText } from "./touroku.js";
@@ -571,6 +571,7 @@ export function openImport({ sups, getOrders, me }) {
               <p class="hint warn" data-rhint${needQty(r) ? "" : " hidden"}>数を入れると、金額が出ます（金額を直接入れてもよい）</p>
             </div>`).join("")}
           </div>
+          ${isReturnSlip({ rows: gr.rows }) ? '<p class="hint"><span class="tag ret-tag">返品・交換</span>数がマイナスの行（返品）があります。材料費には、マイナスの分も入れます（単価の記録にはしません）。</p>' : ""}
           <p class="imp-sum">${sumHTML(gr)}</p>
           <div class="imp-dest" data-destbox>${destHTML(gr)}</div>
           ${gr.err ? `<p class="err">${esc(gr.err)}</p>` : ""}
@@ -696,7 +697,7 @@ export function openImport({ sups, getOrders, me }) {
         const np0 = noPriceOf(gr);
         if (f === "spec") r.spec = t.value.replace(/\s*\n\s*/g, " ").trim();   // 品名は1行（折りかえして見せるだけ）
         else if (f === "unit") r.unit = t.value.trim();
-        else r[f] = f === "qty" ? toPrice(t.value) : toSigned(t.value);   // 単価・金額はマイナスもよい（出精値引など。11/10）
+        else r[f] = toSigned(t.value);   // 数・単価・金額はマイナスもよい（出精値引 11/10・返品 ×−5 11/19）
         const am = t.closest("[data-r]").querySelector('[data-rf="amount"]');
         if ((f === "qty" || f === "price") && r.qty != null && r.price != null && !am.dataset.touched) {
           r.amount = Math.round(r.qty * r.price);
