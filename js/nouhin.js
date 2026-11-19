@@ -939,7 +939,7 @@ export function openImport({ sups, getOrders, me }) {
       for (const it of Object.values(rec.items || {})) {
         const o = (getOrders() || []).find(x => x.id === it.orderId);
         if (!o) continue;
-        if (o.status === "billed") { skipped.push(o.chuban); continue; }   // 請求ずみの注文はさわらない
+        if (o.status === "billed" || ((o.slips || {})[it.slipId] || {}).inv) { skipped.push(o.chuban); continue; }   // 請求ずみの注文・請求ずみの納品書（11/19）はさわらない
         const base = `zairyo/orders/${o.id}`, upd = {};
         if (it.cont) {   // 2枚つづきのつづきとして足した分（11/4）：足した行と金額だけ消す（前の紙は、そのまま）
           const s = (o.slips || {})[it.slipId];

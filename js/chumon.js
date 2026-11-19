@@ -585,30 +585,65 @@ export async function markBilled(o, amount, me) {
   await update(ref(db, `zairyo/orders/${o.id}`), { status: "billed", seikyu: amount, billedAt: serverTimestamp(), billedBy: me.name });
 }
 
-/** 「請求まだ」にもどす */
+/** 「請求まだ」にもどす（納品書ごとの「請求ずみ」の印も消す。11/19） */
 export async function backToArrived(o) {
-  await update(ref(db, `zairyo/orders/${o.id}`), { status: "arrived", seikyu: null, billedAt: null, billedBy: null, invoiceId: null });
+  const upd = { status: "arrived", seikyu: null, billedAt: null, billedBy: null, invoiceId: null };
+  for (const [sid, s] of slipsOf(o)) if (s.inv || s.invAmt != null) { upd[`slips/${sid}/inv`] = null; upd[`slips/${sid}/invAmt`] = null; }
+  await update(ref(db, `zairyo/orders/${o.id}`), upd);
 }
 
-/** 材料屋ごとにまとめて「請求が来た」（月の請求書）。rows = [{o, amount}]、inv = {no, date, total}
- *  えらんだ注文をまとめて請求ずみにして、どの請求書でまとめたかを /zairyo/invoices に残す */
-export async function billMany(sup, rows, inv, me) {
-  const iid = push(ref(db, "zairyo/invoices")).key;
-  const orders = Object.fromEntries(rows.map(({ o, amount }) => [o.id, amount]));
-  const upd = {
-    [`zairyo/invoices/${iid}`]: {
-      sup: sup.id, supName: sup.name, no: inv.no || "", date: inv.date, total: inv.total,
-      sum: rows.reduce((s, x) => s + x.amount, 0), orders, at: serverTimestamp(), by: me.name,
-    },
-  };
-  for (const { o, amount } of rows) {
-    const b = `zairyo/orders/${o.id}`;
-    upd[`${b}/status`] = "billed";
-    upd[`${b}/seikyu`] = amount;
-    upd[`${b}/billedAt`] = serverTimestamp();
-    upd[`${b}/billedBy`] = me.name;
-    upd[`${b}/invoiceId`] = iid;
+/* ---------- 締め日と請求の月・納品書ごとの「請求ずみ」（11/19 持ち主「まとめて請求を、材料屋ごとに月1回の作業に」） ----------
+   - 材料屋の締め日は ⚙ 設定 → 材料屋（/zairyo/master/suppliers/{id}/shime＝1〜28 の日。ないときは月末）
+   - 「11月分」＝締め日で区切った月。月末なら 11/1〜11/30、20日締めなら 10/21〜11/20。どの月かは納品書の日付で決める
+   - 請求ずみは納品書ごとに持つ（slips/{sid}/inv＝請求書の記録の番号・invAmt＝請求書の金額）。その注文の納品書が全部しまったら、
+     注文を「請求ずみ」（status・seikyu＝請求書の金額の合計・billedAt・billedBy・invoiceId）。よつば台帳が読む注文の欄の意味は前と同じ */
+/** 材料屋の締め日（1〜28。0＝月末） */
+export const shimeOf = sup => { const n = Number(sup && sup.shime); return Number.isInteger(n) && n >= 1 && n <= 28 ? n : 0; };
+export const shimeText = d => (d ? `${d}日` : "月末");
+const ymdOf = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+/** 納品書の日付 "YYYY-MM-DD" → 請求の月 "YYYY-MM"（締め日より後の日は、つぎの月の分） */
+export function billMonth(date, d) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date || "");
+  if (!m) return "";
+  let y = +m[1], mo = +m[2];
+  if (d && +m[3] > d) { mo++; if (mo > 12) { mo = 1; y++; } }
+  return `${y}-${String(mo).padStart(2, "0")}`;
+}
+/** 請求の月 "YYYY-MM" → { from, to }（その月の分の、はじめの日とおわりの日） */
+export function billPeriod(month, d) {
+  const [y, mo] = String(month).split("-").map(Number);
+  const lastOf = (yy, mm) => new Date(yy, mm, 0).getDate();   // mm は 1〜12
+  if (!d) return { from: ymdOf(new Date(y, mo - 1, 1)), to: ymdOf(new Date(y, mo - 1, lastOf(y, mo))) };
+  const py = mo === 1 ? y - 1 : y, pm = mo === 1 ? 12 : mo - 1;
+  return { from: ymdOf(new Date(py, pm - 1, Math.min(d, lastOf(py, pm)) + 1)), to: ymdOf(new Date(y, mo - 1, Math.min(d, lastOf(y, mo)))) };
+}
+/** 材料屋ごとに、請求書で請求ずみにする。picks = [{ o, sid（納品書の番号。null＝納品書がない注文）, amount（請求書の金額） }]
+ *  inv = { no, date, total, month, from, to }。どの請求書でしめたかを /zairyo/invoices に残す。返り値：請求書の記録の番号 */
+export async function billSlips(sup, picks, inv, me) {
+  const iid = push(ref(db, "zairyo/invoices")).key, upd = {}, orders = {}, slips = {}, by = new Map();
+  for (const p of picks) { const g = by.get(p.o.id) || { o: p.o, list: [] }; g.list.push(p); by.set(p.o.id, g); }
+  const billed = (b, amount) => Object.assign(upd, { [`${b}/status`]: "billed", [`${b}/seikyu`]: Math.round(amount), [`${b}/billedAt`]: serverTimestamp(), [`${b}/billedBy`]: me.name, [`${b}/invoiceId`]: iid });
+  for (const { o, list } of by.values()) {
+    const b = `zairyo/orders/${o.id}`, all = slipsOf(o);
+    orders[o.id] = list.reduce((t, p) => t + Math.round(p.amount), 0);
+    if (!all.length) { billed(b, orders[o.id]); continue; }   // 納品書がない注文は、注文ごと
+    const now = {};
+    for (const p of list) {
+      if (!p.sid || !(o.slips || {})[p.sid]) continue;
+      now[p.sid] = Math.round(p.amount);
+      upd[`${b}/slips/${p.sid}/inv`] = iid;
+      upd[`${b}/slips/${p.sid}/invAmt`] = now[p.sid];
+      (slips[o.id] = slips[o.id] || {})[p.sid] = now[p.sid];
+    }
+    // その注文の納品書が全部しまったら、注文を請求ずみに（請求の金額は、納品書ごとの請求書の金額の合計）
+    if (all.every(([sid, s]) => s.inv || sid in now)) billed(b, all.reduce((t, [sid, s]) => t + (sid in now ? now[sid] : Number(s.invAmt ?? s.amount) || 0), 0));
   }
+  upd[`zairyo/invoices/${iid}`] = {
+    sup: sup.id, supName: sup.name, no: inv.no || "", date: inv.date, total: Math.round(inv.total), sum: Object.values(orders).reduce((t, x) => t + x, 0),
+    orders, slips, month: inv.month || "", from: inv.from || "", to: inv.to || "", at: serverTimestamp(), by: me.name,
+  };
+  if (!Object.keys(slips).length) delete upd[`zairyo/invoices/${iid}`].slips;
+  ["month", "from", "to"].forEach(k => { if (!upd[`zairyo/invoices/${iid}`][k]) delete upd[`zairyo/invoices/${iid}`][k]; });
   await update(ref(db), upd);
   return iid;
 }

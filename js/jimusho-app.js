@@ -11,7 +11,7 @@ import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet, keepPlace } from "./common.js";
 import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
-import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany, azkText, orderPdf, pdfLine, npSlipsOf, npDupOf, deliveredRows, notInOrder, checksOrd, sameThing, removeNpSlip, setRowOrd, lineDone, isLineOrder, LINE_NOTE, slipScans, isReturnSlip, hasReturn, isKakou, partOf, gotList, markGot } from "./chumon.js";
+import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billSlips, shimeOf, shimeText, billMonth, billPeriod, azkText, orderPdf, pdfLine, npSlipsOf, npDupOf, deliveredRows, notInOrder, checksOrd, sameThing, removeNpSlip, setRowOrd, lineDone, isLineOrder, LINE_NOTE, slipScans, isReturnSlip, hasReturn, isKakou, partOf, gotList, markGot } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel, shopOf, pageLink, SHOPS } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
@@ -979,6 +979,7 @@ export function startOfficeApp(main, me) {
               ${s.src === "sup" ? `<span class="suptag">${s.fixBy ? "材料屋が入れた → 事務所が直した" : "材料屋が入れた"}</span>` : ""}
               ${isReturnSlip(s) ? '<span class="tag ret-tag">返品・交換</span>' : ""}
               ${s.amount != null ? `<span class="money">${yen(s.amount)}</span><span>円</span>` : '<span class="hint">金額なし</span>'}
+              ${s.inv ? `<span class="tag">請求ずみ${s.invAmt != null && Number(s.invAmt) !== Number(s.amount) ? `（請求書 ${yen(s.invAmt)}円）` : ""}</span>` : ""}
               ${s.src === "sup" ? `<button type="button" class="linkbtn" data-slipfix="${esc(sid)}">直す</button>` : ""}
               <button type="button" class="linkbtn muted" data-slipdel="${esc(sid)}">消す</button></div>
             ${(sc => sc.map((p, i) => `<button type="button" class="linkbtn" data-phview="${esc(p)}">納品書のスキャンを見る${sc.length > 1 ? `（${i + 1}枚目）` : ""}</button>`).join(""))(slipScans(s))}
@@ -1436,63 +1437,141 @@ export function startOfficeApp(main, me) {
     }
   }
 
-  /* ---------- まとめて請求（材料屋ごとの月の請求書。11章 5-4 の B） ---------- */
-  const bulk = { sup: "", pick: {}, amt: {}, totalManual: false, armed: false, done: "" };
+  /* ---------- まとめて請求（材料屋ごとの月の請求書。11章 5-4 の B） ----------
+     11/19 持ち主：材料屋ごとに月1回の作業にする。材料屋と月（⚙ 設定の締め日で区切った「○月分」）をえらぶと、その月の
+     「請求まだ」の納品書が、はじめから全部チェックされて出る。請求書の合計が同じなら、ボタン1つで全部「請求ずみ」。
+     ちがうときだけ、手がかり（ちがいと同じ金額の納品書・ほかの月の同じ金額の納品書・金額でさがす）を出す。請求ずみは納品書ごと（chumon.js billSlips） */
+  const bulk = { sup: "", month: "", pick: {}, amt: {}, totalManual: false, armed: false, done: "", find: "", extra: new Set(), total: "", no: "", date: "" };   // extra＝この請求書に足した、ほかの月の納品書
+  const supName = id => ((st.sups || {})[id] || {}).name || ((st.orders || []).find(o => o.supplier === id) || {}).supplierName || id;
+  /** その材料屋の「請求まだ」：納品書ごと（slips）と、納品書がない注文（bare）。key＝"注文/納品書"（納品書がない注文は "注文/-"） */
+  function unbilledOf(sid) {
+    const d = shimeOf((st.sups || {})[sid]), slips = [], bare = [];
+    for (const o of (st.orders || []).filter(x => x.status === "arrived" && x.supplier === sid)) {
+      const all = slipsOf(o);
+      if (!all.length) { bare.push({ key: `${o.id}/-`, o }); continue; }
+      for (const [k, s] of all) if (!s.inv) slips.push({ key: `${o.id}/${k}`, o, sid: k, s, month: billMonth(s.date, d) });
+    }
+    slips.sort((a, b) => (a.s.date || "").localeCompare(b.s.date || "") || (a.s.at || 0) - (b.s.at || 0));
+    return { d, slips, bare };
+  }
+  /** 「○月分」の並び（古い順）：[{ month, from, to, n, sum, closed }] */
+  function monthsOf(u) {
+    const m = new Map();
+    for (const x of u.slips) { const g = m.get(x.month) || { month: x.month, n: 0, sum: 0 }; g.n++; g.sum += Number(x.s.amount) || 0; m.set(x.month, g); }
+    return [...m.values()].sort((a, b) => a.month.localeCompare(b.month)).map(g => ({ ...g, ...billPeriod(g.month, u.d), closed: billPeriod(g.month, u.d).to < ymd(0) }));
+  }
+  const monthName = g => `${Number(g.month.slice(5))}月分（${md(g.from)}〜${md(g.to)}）`;
+  /** 材料屋か月をえらんだら：その月の納品書を全部チェック。金額のはじめは納品書の金額 */
+  function bulkPickMonth() {
+    bulk.pick = {}; bulk.amt = {}; bulk.totalManual = false; bulk.armed = false; bulk.find = ""; bulk.extra = new Set(); bulk.total = "";
+    if (!bulk.sup) return;
+    const u = unbilledOf(bulk.sup), ms = monthsOf(u);
+    if (!ms.some(g => g.month === bulk.month)) bulk.month = ms.length ? ms[0].month : "";   // はじめは、いちばん古い月
+    for (const x of u.slips) { bulk.amt[x.key] = yen(x.s.amount); if (x.month === bulk.month) bulk.pick[x.key] = true; }
+    for (const x of u.bare) bulk.amt[x.key] = x.o.nouhin != null ? yen(x.o.nouhin) : "";
+  }
 
   function bulkHTML() {
     const arrived = (st.orders || []).filter(o => o.status === "arrived");
-    const supIds = [...new Set(arrived.map(o => o.supplier))];
-    const name = id => ((st.sups || {})[id] || {}).name || (arrived.find(o => o.supplier === id) || {}).supplierName || id;
-    const list = bulk.sup ? sortOrders(arrived.filter(o => o.supplier === bulk.sup)).reverse() : [];
+    const supIds = [...new Set(arrived.map(o => o.supplier))].sort((a, b) => supName(a).localeCompare(supName(b), "ja"));
+    const u = bulk.sup ? unbilledOf(bulk.sup) : null, ms = u ? monthsOf(u) : [];
+    const rows = u ? u.slips.filter(x => x.month === bulk.month || bulk.extra.has(x.key)) : [];
+    const items = s => Object.values(s.rows || {}).map(r => r.spec).filter(Boolean).join("／");
+    const other = x => { const os = u.slips.filter(y => y.o.id === x.o.id && y.month !== x.month).map(y => `${Number(y.month.slice(5))}月分`); return os.length ? `（この注文の ${[...new Set(os)].join("・")} の納品書は、べつ）` : ""; };
+    const row = x => `
+      <div class="brow" data-bk="${esc(x.key)}">
+        <label class="b-main"><input type="checkbox" data-bpick="${esc(x.key)}"${bulk.pick[x.key] ? " checked" : ""}>
+          <span><span class="b-top">${x.s ? `${esc(md(x.s.date))}・No.${esc(x.s.no || "（番号なし）")}・` : "納品書なし・"}<span class="chuban">${esc(x.o.chuban)}</span> ${esc(zenkana(x.o.kenmei))}</span>
+            <span class="b-items">${x.s && x.month !== bulk.month ? `<span class="tag">${Number(x.month.slice(5))}月分の納品書</span>` : ""}${esc(x.s ? items(x.s) : Object.values(x.o.lines || {}).map(l => lineText(l)).join("／"))}${x.s ? esc(other(x)) : ""}</span>
+            <span class="b-why" hidden></span></span></label>
+        <div class="yen-in"><input class="inp" data-bamt="${esc(x.key)}" inputmode="numeric" placeholder="金額" value="${esc(bulk.amt[x.key] ?? "")}" aria-label="${esc(x.o.chuban)} の金額"><span>円</span></div>
+      </div>`;
     return `
       <div class="pw" id="bulkWrap">
         <div class="panel-head"><div><span class="eyebrow">月の請求書</span><h2 id="panelTitle">まとめて請求</h2></div>
           <button type="button" class="x" data-close aria-label="閉じる">×</button></div>
-        <p class="hint">材料屋から来た請求書で、「届いた・請求まだ」の注文をまとめて「請求ずみ」にします。1件ずつのときは、注文の中身の「請求が来た」でもできます。</p>
+        <p class="hint">材料屋から来た月の請求書で、その月の納品書をまとめて「請求ずみ」にします。1件ずつのときは、注文の中身の「請求が来た」でもできます。</p>
         ${bulk.done ? `<p class="okmsg">${esc(bulk.done)}</p>` : ""}
-        <div class="field"><label for="bSup">材料屋</label>
-          <select id="bSup" class="inp">
-            <option value="">${supIds.length ? "えらんでください" : "「届いた・請求まだ」の注文はありません"}</option>
-            ${supIds.map(id => `<option value="${esc(id)}"${id === bulk.sup ? " selected" : ""}>${esc(name(id))}（${arrived.filter(o => o.supplier === id).length}件）</option>`).join("")}
-          </select></div>
-        ${bulk.sup && list.length ? `
-          <div class="block"><h3>届いた・請求まだの注文（${list.length}件）</h3>
-            <div class="brows">${list.map(o => `
-              <div class="brow">
-                <label class="b-main"><input type="checkbox" data-bpick="${esc(o.id)}"${bulk.pick[o.id] ? " checked" : ""}>
-                  <span><span class="b-top">届いた ${o.arrivedAt ? md(o.arrivedAt) : "—"}・<span class="chuban">${esc(o.chuban)}</span> ${esc(zenkana(o.kenmei))}</span>
-                    <span class="b-items">${esc(Object.values(o.lines || {}).map(l => lineText(l) + azkText(l)).join("／"))}</span></span></label>
-                <div class="yen-in"><input class="inp" data-bamt="${esc(o.id)}" inputmode="numeric" placeholder="金額" value="${esc(bulk.amt[o.id] ?? "")}" aria-label="${esc(o.chuban)} の金額"><span>円</span></div>
-              </div>`).join("")}</div>
+        <div class="two">
+          <div class="field"><label for="bSup">材料屋</label>
+            <select id="bSup" class="inp">
+              <option value="">${supIds.length ? "えらんでください" : "「届いた・請求まだ」の注文はありません"}</option>
+              ${supIds.map(id => `<option value="${esc(id)}"${id === bulk.sup ? " selected" : ""}>${esc(supName(id))}（${unbilledOf(id).slips.length + unbilledOf(id).bare.length}件）</option>`).join("")}
+            </select></div>
+          ${u ? `<div class="field"><label for="bMonth">月（締め日：${esc(shimeText(u.d))}）</label>
+            <select id="bMonth" class="inp">${ms.length ? ms.map(g => `<option value="${esc(g.month)}"${g.month === bulk.month ? " selected" : ""}>${esc(monthName(g))}・${g.n}枚・${yen(g.sum)}円${g.closed ? "" : "（まだ締め前）"}</option>`).join("") : '<option value="">請求まだの納品書はありません</option>'}</select></div>` : ""}
+        </div>
+        ${u ? `<p class="hint">締め日は ⚙ 設定 → 材料屋 で変えられます。どの月の分かは、納品書の日付で決めています。</p>` : ""}
+        ${u && (rows.length || u.bare.length) ? `
+          <div class="block"><h3>${bulk.month ? esc(monthName(ms.find(g => g.month === bulk.month) || { month: bulk.month, ...billPeriod(bulk.month, u.d) })) + "の納品書" : "納品書"}（${rows.length}枚）</h3>
+            <div class="brows">${rows.map(row).join("")}</div>
+            ${u.bare.length ? `<h4 class="b-sub">納品書がない注文（${u.bare.length}件）</h4>
+              <p class="hint">納品書の金額が入っていない注文です。この請求書に入っていれば、金額を入れてチェックしてください。</p>
+              <div class="brows">${u.bare.map(row).join("")}</div>` : ""}
             <p class="ptotal"><span id="bCount"></span><span class="money" id="bSum"></span><span>円</span></p>
-            <p class="hint">金額のはじめは、納品書の金額です。請求書とちがう注文は、直してください。</p>
+            <p class="hint">金額のはじめは、納品書の金額です。請求書とちがう納品書は、直してください。</p>
           </div>
           <div class="block">
-            <div class="ptotal"><label for="bTotal">請求書の合計（税抜）</label><div class="yen-in"><input id="bTotal" class="inp" inputmode="numeric" placeholder="0"><span>円</span></div></div>
+            <div class="ptotal"><label for="bTotal">請求書の合計（税抜）</label><div class="yen-in"><input id="bTotal" class="inp" inputmode="numeric" placeholder="0" value="${esc(bulk.totalManual ? bulk.total : "")}"><span>円</span></div></div>
             <div class="two">
-              <div class="field"><label for="bNo">請求書の番号（あれば）</label><input id="bNo" class="inp" maxlength="40" autocomplete="off"></div>
-              <div class="field"><label for="bDate">請求書の日付</label><input id="bDate" class="inp" type="date" value="${ymd(0)}"></div>
+              <div class="field"><label for="bNo">請求書の番号（あれば）</label><input id="bNo" class="inp" maxlength="40" autocomplete="off" value="${esc(bulk.no)}"></div>
+              <div class="field"><label for="bDate">請求書の日付</label><input id="bDate" class="inp" type="date" value="${esc(bulk.date || ymd(0))}"></div>
             </div>
-            <p class="warn" id="bDiff" hidden></p>
+            <div class="bdiff" id="bDiff" hidden></div>
+            <div class="field b-find"><label for="bFind">金額でさがす（請求書の1行の金額を入れると、同じ金額の納品書に色がつきます）</label>
+              <input id="bFind" class="inp" inputmode="numeric" placeholder="例 5,410" value="${esc(bulk.find)}" autocomplete="off"></div>
+            <p class="hint" id="bFound" hidden></p>
             <p class="err" id="bErr"></p>
             <button type="button" class="btn primary big full" id="bGo">請求ずみにする</button>
           </div>` : ""}
       </div>`;
   }
 
-  /** えらんだ件数・合計・請求書とのちがいを出す */
+  /** えらんだ件数・合計・請求書とのちがいと手がかり・金額でさがす */
   function bulkCalc(w) {
-    const picked = Object.keys(bulk.pick).filter(id => bulk.pick[id]);
-    const sum = picked.reduce((s, id) => s + (toPrice(bulk.amt[id]) || 0), 0);
-    if (!w.querySelector("#bSum")) return;
+    if (!w.querySelector("#bSum") || !bulk.sup) return;
+    const u = unbilledOf(bulk.sup), all = [...u.slips, ...u.bare], amtOf = x => toPrice(bulk.amt[x.key]);
+    const picked = all.filter(x => bulk.pick[x.key]);
+    const sum = picked.reduce((s, x) => s + (amtOf(x) || 0), 0);
     w.querySelector("#bCount").textContent = `えらんだ ${picked.length}件の合計`;
     w.querySelector("#bSum").textContent = yen(sum);
     const t = w.querySelector("#bTotal");
     if (!bulk.totalManual) t.value = picked.length ? yen(sum) : "";
     const total = toPrice(t.value), diff = w.querySelector("#bDiff");
-    const off = total != null && Math.round(total) !== Math.round(sum);
-    diff.hidden = !off;
-    diff.textContent = off ? `えらんだ注文の合計（${yen(sum)}円）と、請求書の合計（${yen(total)}円）が ${yen(Math.abs(total - sum))}円 ちがいます。たしかめてください。` : "";
+    const gap = total == null ? 0 : Math.round(total) - Math.round(sum);
+    // 色・わけを消してから、つけなおす
+    w.querySelectorAll(".brow").forEach(r => { r.classList.remove("b-hit", "b-find"); const y = r.querySelector(".b-why"); y.hidden = true; y.textContent = ""; });
+    const mark = (x, cls, why) => { const r = w.querySelector(`.brow[data-bk="${CSS.escape(x.key)}"]`); if (!r) return false; r.classList.add(cls); if (why) { const y = r.querySelector(".b-why"); y.textContent = why; y.hidden = false; } return true; };
+    const same = (x, n) => amtOf(x) != null && Math.round(amtOf(x)) === Math.round(n);
+    const mName = m => `${Number(String(m).slice(5))}月分`;
+    if (gap) {
+      const g = Math.abs(gap), notes = [];
+      if (gap < 0) {   // 請求書のほうが少ない：えらんだ中に、請求書にない納品書があるかも
+        const hit = picked.filter(x => same(x, g));
+        hit.forEach(x => mark(x, "b-hit", `この1枚が、ちがい（${yen(g)}円）と同じ金額です。請求書に入っていなければ、チェックを外してください`));
+        notes.push(`請求書のほうが ${yen(g)}円 少ないです。請求書にない納品書があれば、チェックを外してください。`);
+        if (!hit.length) notes.push("ちがいと同じ金額の納品書は、この月にはありません。金額がちがう納品書がないか、1行ずつ「金額でさがす」で見てください。");
+      } else {   // 請求書のほうが多い：えらんでいない納品書・ほかの月の納品書・アプリにない納品書かも
+        const here = all.filter(x => !bulk.pick[x.key] && (x.month === bulk.month || !x.s) && same(x, g));
+        here.forEach(x => mark(x, "b-hit", `チェックしていない この1枚が、ちがい（${yen(g)}円）と同じ金額です`));
+        const away = u.slips.filter(x => x.month !== bulk.month && !bulk.extra.has(x.key) && same(x, g));
+        notes.push(`請求書のほうが ${yen(g)}円 多いです。`);
+        if (away.length) notes.push("ほかの月の納品書に、同じ金額があります。請求書に入っていたら「この請求書に入れる」を押してください：");
+        if (!here.length && !away.length) notes.push("ちがいと同じ金額の納品書は、アプリにありません。アプリにまだ入っていない納品書（取りこんでいない・アプリを通さない注文）か、金額がちがう納品書かもしれません。");
+      }
+      const awayBtns = gap > 0 ? u.slips.filter(x => x.month !== bulk.month && !bulk.extra.has(x.key) && same(x, g)) : [];
+      diff.innerHTML = notes.map(s => `<p>${esc(s)}</p>`).join("") + awayBtns.map(x => `<p class="b-away">${esc(`${mName(x.month)} ${md(x.s.date)} No.${x.s.no || "（番号なし）"} ${x.o.chuban}（${yen(x.s.amount)}円）`)} <button type="button" class="btn" data-badd="${esc(x.key)}">この請求書に入れる</button></p>`).join("");
+    }
+    diff.hidden = !gap;
+    // 金額でさがす：この画面の納品書に色・ほかの月は字で
+    const f = toPrice(bulk.find), found = w.querySelector("#bFound");
+    if (f != null) {
+      const here = all.filter(x => (x.month === bulk.month || !x.s) && same(x, f));
+      here.forEach(x => mark(x, "b-find"));
+      const away = u.slips.filter(x => x.month !== bulk.month && same(x, f));
+      found.textContent = `${yen(f)}円：この月に ${here.length}枚${away.length ? `・ほかの月に ${away.map(x => `${mName(x.month)} ${md(x.s.date)} No.${x.s.no || "（番号なし）"}`).join("・")}` : ""}${here.length || away.length ? "" : "（アプリにはありません）"}`;
+      found.hidden = false;
+    } else found.hidden = true;
     const go = w.querySelector("#bGo");
     go.textContent = bulk.armed ? "ちがいのまま請求ずみにする（もう一度押す）" : `えらんだ ${picked.length}件を請求ずみにする`;
     go.disabled = !picked.length;
@@ -1508,18 +1587,11 @@ export function startOfficeApp(main, me) {
       const w = p.querySelector("#bulkWrap");
       bulkCalc(w);
       w.addEventListener("change", e => {
-        if (e.target.id === "bSup") {
-          // 材料屋をえらんだら、その材料屋の「届いた・請求まだ」を全部えらんで、金額は納品書の金額から
-          bulk.sup = e.target.value;
-          bulk.pick = {};
-          bulk.amt = {};
-          bulk.totalManual = false;
-          bulk.armed = false;
+        if (e.target.id === "bSup" || e.target.id === "bMonth") {
+          // 材料屋・月をえらんだら、その月の「請求まだ」の納品書を全部えらぶ（金額は納品書の金額から）
+          if (e.target.id === "bSup") { bulk.sup = e.target.value; bulk.month = ""; } else bulk.month = e.target.value;
           bulk.done = "";
-          for (const o of (st.orders || []).filter(x => x.status === "arrived" && x.supplier === bulk.sup)) {
-            bulk.pick[o.id] = true;
-            bulk.amt[o.id] = o.nouhin != null ? yen(o.nouhin) : "";
-          }
+          bulkPickMonth();
           openBulk(true);
         } else if (e.target.dataset.bpick) {
           bulk.pick[e.target.dataset.bpick] = e.target.checked;
@@ -1529,10 +1601,15 @@ export function startOfficeApp(main, me) {
       });
       w.addEventListener("input", e => {
         if (e.target.dataset.bamt) bulk.amt[e.target.dataset.bamt] = e.target.value;
-        if (e.target.id === "bTotal") bulk.totalManual = !!e.target.value.trim();
-        if (e.target.dataset.bamt || e.target.id === "bTotal") { bulk.armed = false; w.querySelector("#bErr").textContent = ""; bulkCalc(w); }
+        if (e.target.id === "bTotal") { bulk.totalManual = !!e.target.value.trim(); bulk.total = e.target.value; }
+        if (e.target.id === "bFind") bulk.find = e.target.value;
+        if (e.target.id === "bNo") bulk.no = e.target.value;
+        if (e.target.id === "bDate") bulk.date = e.target.value;   // かきなおしても、書いた請求書の合計・番号・日付が消えないように（11/19）
+        if (e.target.dataset.bamt || e.target.id === "bTotal" || e.target.id === "bFind") { bulk.armed = false; w.querySelector("#bErr").textContent = ""; bulkCalc(w); }
       });
       w.addEventListener("click", e => {
+        const add = e.target.closest("[data-badd]");   // ほかの月の納品書を、この請求書に足す（11/19）
+        if (add) { bulk.extra.add(add.dataset.badd); bulk.pick[add.dataset.badd] = true; bulk.armed = false; openBulk(true); return; }
         if (e.target.id === "bGo") bulkGo(w, e.target).catch(ex => { w.querySelector("#bErr").textContent = errorText(ex); e.target.disabled = false; bulkCalc(w); });
       });
     }, { side: true });
@@ -1540,31 +1617,26 @@ export function startOfficeApp(main, me) {
 
   async function bulkGo(w, btn) {
     const err = w.querySelector("#bErr");
-    const sup = { id: bulk.sup, name: ((st.sups || {})[bulk.sup] || {}).name || "" };
-    const rows = [];
-    for (const [id, on] of Object.entries(bulk.pick)) {
-      if (!on) continue;
-      const o = (st.orders || []).find(x => x.id === id && x.status === "arrived");
-      if (!o) continue;
-      const a = toPrice(bulk.amt[id]);
-      if (a == null) { err.textContent = `${o.chuban} の金額を入れてください（入れないなら、チェックを外してください）`; return; }
-      rows.push({ o, amount: Math.round(a) });
-      if (!sup.name) sup.name = o.supplierName;
+    const u = unbilledOf(bulk.sup), sup = { id: bulk.sup, name: supName(bulk.sup) };
+    const picks = [];
+    for (const x of [...u.slips, ...u.bare]) {
+      if (!bulk.pick[x.key]) continue;
+      const a = toPrice(bulk.amt[x.key]);
+      if (a == null) { err.textContent = `${x.o.chuban}${x.s ? ` No.${x.s.no || ""}` : ""} の金額を入れてください（入れないなら、チェックを外してください）`; return; }
+      picks.push({ o: x.o, sid: x.sid || null, amount: Math.round(a) });
     }
-    if (!rows.length) { err.textContent = "請求ずみにする注文をえらんでください"; return; }
+    if (!picks.length) { err.textContent = "請求ずみにする納品書をえらんでください"; return; }
     const total = toPrice(w.querySelector("#bTotal").value);
     if (total == null) { err.textContent = "請求書の合計を入れてください"; return; }
-    const sum = rows.reduce((s, x) => s + x.amount, 0);
+    const sum = picks.reduce((s, x) => s + x.amount, 0);
     if (Math.round(total) !== sum && !bulk.armed) { bulk.armed = true; bulkCalc(w); return; }   // ちがうときは、もう一度押してもらう
     btn.disabled = true;
     btn.textContent = "しまっています…";
-    await billMany(sup, rows, { no: w.querySelector("#bNo").value.trim(), date: w.querySelector("#bDate").value || ymd(0), total: Math.round(total) }, me);
-    bulk.done = `${sup.name} の ${rows.length}件を請求ずみにしました（合計 ${yen(sum)}円）`;
-    bulk.sup = "";
-    bulk.pick = {};
-    bulk.amt = {};
-    bulk.totalManual = false;
-    bulk.armed = false;
+    const per = bulk.month ? billPeriod(bulk.month, u.d) : {};
+    await billSlips(sup, picks, { no: w.querySelector("#bNo").value.trim(), date: w.querySelector("#bDate").value || ymd(0), total: Math.round(total), month: bulk.month, from: per.from, to: per.to }, me);
+    bulk.done = `${sup.name}${bulk.month ? ` の ${Number(bulk.month.slice(5))}月分` : ""}：${picks.length}件を請求ずみにしました（合計 ${yen(sum)}円）`;
+    bulk.month = ""; bulk.no = ""; bulk.date = "";
+    bulkPickMonth();   // のこりがあれば、つぎの月を出す
     toast(bulk.done);
     openBulk();
   }

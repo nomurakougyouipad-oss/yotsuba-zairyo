@@ -176,6 +176,7 @@
             },
             "order": { ".validate": "newData.isNumber()" },
             "hidden": { ".validate": "newData.isBoolean()" },
+            "shime": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 28" },
             "$other": { ".validate": false }
           }
         },
@@ -297,6 +298,10 @@
           "total": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 10000000000" },
           "sum": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 10000000000" },
           "orders": { "$oid": { ".validate": "$oid.length <= 40 && newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000000" } },
+          "slips": { "$oid": { "$sid": { ".validate": "$oid.length <= 40 && $sid.length <= 40 && newData.isNumber() && newData.val() > -1000000000 && newData.val() < 1000000000" } } },
+          "month": { ".validate": "newData.isString() && newData.val().matches(/^[0-9]{4}-[0-9]{2}$/)" },
+          "from": { ".validate": "newData.isString() && newData.val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)" },
+          "to": { ".validate": "newData.isString() && newData.val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)" },
           "by": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "at": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
           "$other": { ".validate": false }
@@ -509,6 +514,8 @@
               "scans": {
                 "$n": { ".validate": "$n.matches(/^([3-9]|1[0-9]|20)$/) && newData.isString() && newData.val().matches(/^zairyo\\/scans\\/[A-Za-z0-9]+\\/[A-Za-z0-9]+\\.jpg$/)" }
               },
+              "inv": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "invAmt": { ".validate": "newData.isNumber() && newData.val() > -1000000000 && newData.val() < 1000000000" },
               "src": { ".validate": "newData.val() == 'sup'" },
               "supAmount": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000000" },
               "fixBy": { ".validate": "newData.isString() && newData.val().length <= 40" },

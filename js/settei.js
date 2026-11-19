@@ -12,7 +12,7 @@ import { pushState, enablePush, disablePush, testPush } from "./tsuuchi.js";
 import { printFax } from "./fax.js";
 import { SHOPS } from "./shashin.js";
 import { normCatalog, buildSpec, rowDef, dropHidden, chipHint, TEE_RT } from "./tanomu.js";
-import { isLineOrder } from "./chumon.js";
+import { isLineOrder, shimeOf, shimeText } from "./chumon.js";
 
 const TABS = [["sup", "材料屋"], ["kaisha", "注番の会社"], ["staff", "注文する人"], ["place", "届け先"], ["catalog", "品物一覧"], ["dev", "登録した端末"], ["memo", "覚えた当て方"], ["notify", "通知"], ["company", "会社・注文書"], ["backup", "バックアップ"], ["ai", "AI"]];
 const TAB_KEY = "yotsuba-zairyo-settab";
@@ -126,6 +126,8 @@ function supHTML() {
 
 /** 材料屋の送り方（「ネットで買う」は 10/15。モノタロウなどのお店のページを開いて買う） */
 const SEND_BY = [["mail", "メール"], ["line", "LINE"], ["fax", "FAX"], ["net", "ネットで買う"], ["", "決めない"]];
+/** えらべる締め日（0＝月末。11/19 持ち主。はじめは全部 月末） */
+const SHIME_DAYS = [0, 5, 10, 15, 20, 25];
 
 function supCard([id, s]) {
   const alias = entries(s.alias).map(([, a]) => a);
@@ -160,6 +162,11 @@ function supCard([id, s]) {
         <input class="inp" data-edit="faxno" data-id="${id}" value="${esc(s.fax || "")}" maxlength="20" inputmode="tel" autocomplete="off" placeholder="例 089-000-0000"></label>` : ""}
       ${s.send === "line" ? `<label class="mini">LINE の送り先（友だちやグループの名前。LINE ボタンを押したときに「○○ をえらんでください」と出ます）
         <input class="inp" data-edit="lineto" data-id="${id}" value="${esc(s.lineTo || "")}" maxlength="40" autocomplete="off" placeholder="例 ○○商店（グループ）"></label>` : ""}
+      <div class="mini">締め日（「まとめて請求」の「○月分」を、この日で区切ります。月末なら 1日〜末日、20日なら 前の月の21日〜20日）
+        <div class="seg sendby" role="radiogroup" aria-label="${esc(s.name)} の締め日">
+          ${SHIME_DAYS.map(v => `<button type="button" role="radio" data-supshime="${id}" data-v="${v}" aria-checked="${shimeOf(s) === v}">${shimeText(v)}</button>`).join("")}
+        </div>
+      </div>
       <div class="mini">読みかえ
         <div class="chips">
           ${alias.map((a, i) => `<span class="chip">${esc(a)}<button type="button" data-aliasdel="${id}" data-i="${i}" aria-label="${esc(a)} を外す">×</button></span>`).join("")}
@@ -905,6 +912,12 @@ async function onClick(e) {
     const s = S.sup[d.supsend], v = d.v || null;
     await update(ref(db, `${PATH.sup}/${d.supsend}`), { send: v });
     toast(`${s.name} の送り方を「${(SEND_BY.find(([x]) => x === (v || "")) || [, "決めない"])[1]}」にしました`);
+    return;
+  }
+  if (d.supshime) {   // 締め日（11/19）：月末はしまわない（ないときは月末）
+    const s = S.sup[d.supshime], v = Number(d.v) || 0;
+    await update(ref(db, `${PATH.sup}/${d.supshime}`), { shime: v || null });
+    toast(`${s.name} の締め日を「${shimeText(v)}」にしました`);
     return;
   }
   if (d.supshop) {

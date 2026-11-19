@@ -682,6 +682,14 @@ ul.plain{margin:0;padding-left:1.2em}
 .gotlist tr.rest td{color:var(--muted)}
 .gotbox{display:flex;flex-direction:column;gap:8px;margin-top:8px}
 .gotrow{display:grid;grid-template-columns:minmax(0,1fr) 90px auto;gap:6px;align-items:center;font-size:14px}
+/* まとめて請求の手がかり（11/19）：ちがいと同じ金額の納品書（黄）・金額でさがした納品書（青の線） */
+.brow.b-hit{background:color-mix(in srgb,var(--amber) 16%,transparent);border-radius:6px;padding-left:6px;padding-right:6px}
+.brow.b-find{box-shadow:inset 4px 0 0 var(--blue);padding-left:8px}
+.b-why{font-size:12px;font-weight:700;color:var(--amber)}
+.bdiff{border:1px solid var(--amber);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:14px;font-weight:700;color:var(--amber)}
+.bdiff p{margin:2px 0}
+.b-sub{margin:14px 0 2px;font-size:14px;color:var(--muted)}
+.b-away{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
 .okmsg{margin:0;padding:10px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--blue);color:var(--blue);font-weight:700}
 @media (max-width:520px){ .brow{grid-template-columns:1fr} }
 /* 写真・リンク・ネットでさがす（11章 6） */
