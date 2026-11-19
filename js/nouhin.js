@@ -40,9 +40,10 @@ import { ref as sref, uploadBytes, deleteObject } from "https://www.gstatic.com/
 import { db, auth, call, storage } from "./firebase.js";
 import { esc, zenkana, toast, openSheet } from "./common.js";
 import { ymd } from "./tanomu.js";
-import { addSlip, yen, toPrice, toSigned, slipScans, isReturnSlip, ST, slipsOf, npSlipsOf, addNpSlip, sameItems, sameDay, notInOrder, handSlipsOf, moveSlip, matchScore, bestOrder, linesShort, rowIn, addToSlip } from "./chumon.js";
+import { addSlip, yen, toPrice, toSigned, slipScans, isReturnSlip, ST, slipsOf, npSlipsOf, addNpSlip, sameItems, sameDay, notInOrder, handSlipsOf, moveSlip, matchScore, bestOrder, linesShort, rowIn, addToSlip,
+  checksOrd, sameThing, lineScore, specKey, NOT_ITEM, isKakou, partOf } from "./chumon.js";
 import { watchJobs, getJob, CHUBAN_RE } from "./nippo.js";
-import { matchSupplier } from "./line-parse.js";
+import { matchSupplier, memoDbKey } from "./line-parse.js";
 import { errorText } from "./touroku.js";
 import { TABLE_OK, readTableFile, textToTable, tableToRows } from "./hyou.js";
 
@@ -201,7 +202,7 @@ function toGroups(res, supList, extra = {}) {
 export function openImport({ sups, getOrders, me }) {
   const supList = Object.entries(sups || {}).sort(byOrder);
   const cards = [];   // [{ name, page, thumb, parts, status: "wait"|"reading"|"done"|"err"|"notslip", kind, err, groups }]
-  let jobs = null, stopJobs = null, closeLog = null, kaisha = {}, kotei = {}, codesOk = false;
+  let jobs = null, stopJobs = null, closeLog = null, kaisha = {}, kotei = {}, codesOk = false, alias = {};   // alias＝材料屋ごとに覚えた納品書の書き方（11/19）
   const prefixOk = ch => !!kaisha[ch.slice(0, 2)] || Object.keys(kotei).some(k => k.slice(0, 2) === ch.slice(0, 2));
 
   const html = `
@@ -226,6 +227,7 @@ export function openImport({ sups, getOrders, me }) {
     stopJobs = watchJobs(d => { jobs = d; }, () => { });
     Promise.all([get(ref(db, "common/kaisha")).then(s => { kaisha = s.val() || {}; }), get(ref(db, "common/kotei")).then(s => { kotei = s.val() || {}; })])
       .then(() => { codesOk = true; }, () => { });   // 読めるまでは、頭文字の知らせは出さない（まちがって出さないように）
+    get(ref(db, "zairyo/master/slipAlias")).then(s => { alias = s.val() || {}; refresh(); }, () => { });   // 覚えた納品書の書き方（11/19）
 
     /* ---------- 読む ---------- */
     async function addFiles(files) {
@@ -445,15 +447,61 @@ export function openImport({ sups, getOrders, me }) {
     }
     /** 数がなくて、単価だけの行（金額が出ない。11/2） */
     const needQty = r => r.price != null && r.qty == null && r.amount == null;
-    /** 「注文にない品物が入っています」（11/4）：入れる先の注文の品物にない行。「注文の品物」を押すと、その行は外す（ord:true で入れる） */
-    function notHTML(gr) {
+    /* ---------- 注文の品物と、納品書の行を左右に並べて合わせる（11/19 事務員さん「納品書の書き方が注文の品名とちがう」） ----------
+       合わせ方：えらんだ（r.pick）→ 覚えた書き方（材料屋ごと。/zairyo/master/slipAlias/{材料屋}/{書き方}＝{spec: 注文の品名}）→
+       加工品で品物が1つ → 品名の言葉・サイズが合う。合わない行は「どの注文の品物？」をえらべる。えらんだ書き方は、入れるときに覚える（次から自動で合う） */
+    const aliasSpec = (supId, spec) => (((alias || {})[supId] || {})[memoDbKey(spec)] || {}).spec || "";
+    /** 行ごとの合わせ先 [{ lid, via: "pick"|"alias"|"kakou"|"name"|"minus"|"none"|"" }] */
+    function pairOf(gr, o) {
+      const ls = Object.entries(o.lines || {});
+      return gr.rows.map(r => {
+        if (r.pick === "none") return { lid: "", via: "none" };
+        if (r.pick && (o.lines || {})[r.pick]) return { lid: r.pick, via: "pick" };
+        if (Number(r.amount) < 0 && !(Number(r.qty) < 0)) return { lid: "", via: "minus" };   // 出精値引など（品物ではない）
+        if (NOT_ITEM.test(String(r.spec || ""))) return { lid: "", via: "fee" };   // 送料・運賃など（品物ではない）
+        const a = aliasSpec(gr.supId, r.spec), hit = a && ls.find(([, l]) => specKey(l.spec) === specKey(a));
+        if (hit) return { lid: hit[0], via: "alias" };
+        if (isKakou(o) && ls.length === 1 && !NOT_ITEM.test(String(r.spec || ""))) return { lid: ls[0][0], via: "kakou" };
+        if (!checksOrd(o)) return { lid: "", via: "" };   // めっき（品名をくらべない）
+        let best = "", top = 0;
+        for (const [lid, l] of ls) {
+          if (!sameThing(l.spec, r.spec)) continue;
+          const sc = lineScore(l.spec, r.spec) + (Number(l.qty) === Math.abs(Number(r.qty)) ? 2 : 0);
+          if (sc > top) { top = sc; best = lid; }
+        }
+        return best ? { lid: best, via: "name" } : { lid: "", via: "" };
+      });
+    }
+    const VIA = { pick: "えらんだ", alias: "前に覚えた書き方", kakou: "加工品（品物が1つ）", name: "品名が合う" };
+    function pairHTML(gr) {
       const o = (getOrders() || []).find(x => x.id === gr.dest);
-      const nots = o ? gr.rows.map((r, i) => [r, i]).filter(([r]) => notInOrder(o, "", r)) : [];
-      if (!nots.length) return "";
-      const want = Object.values(o.lines || {}).map(l => l.spec).join("・");
-      return `<div class="notbox">注文にない品物が ${nots.length}行 あります
-          <span>アプリの注文（${esc(want.length > 60 ? want.slice(0, 60) + "…" : want)}）にない品物です。引き取りの分などなら、このまま入れてよいです。注文の品物なら「注文の品物」を押してください。</span>
-          <ul>${nots.map(([r, i]) => `<li>${esc(r.spec)}<button type="button" class="linkbtn" data-rord="${i}">注文の品物</button></li>`).join("")}</ul></div>`;
+      const ls = o ? Object.entries(o.lines || {}) : [];
+      if (!o || !ls.length || o.kind === "mekki") return "";
+      const prs = pairOf(gr, o), sup = (sups[gr.supId] || {}).name || "この材料屋";
+      const now = isKakou(o) ? partOf(o) : null;   // 加工品：もう届いた数（11/19）
+      const left = ls.map(([lid, l]) => {
+        const rs = prs.map((p, i) => [p, i]).filter(([p]) => p.lid === lid);
+        const add = rs.reduce((t, [, i]) => t + (Number(gr.rows[i].qty) || 0), 0);
+        const p0 = now && now.per.find(x => x.lid === lid);
+        const cnt = p0 ? `<span class="pr-cnt">${p0.want}${esc(l.unit || "")}中 ${p0.got ? `前に ${p0.got}・` : ""}この納品書で ${add} → ${p0.got + add}/${p0.want}${p0.got + add >= p0.want ? "（そろう）" : `（のこり ${p0.want - p0.got - add}）`}</span>` : "";
+        return `<div class="pr-it ${rs.length ? "ok" : "ng"}"><b>${esc(l.spec)}</b>×${esc(String(l.qty ?? ""))}${esc(l.unit || "")}
+          <span class="pr-st">${rs.length ? `✓ 右の ${rs.map(([, i]) => i + 1).join("・")}行目と合っています` : "？ 合う行がまだありません"}</span>${cnt}</div>`;
+      }).join("");
+      const right = gr.rows.map((r, i) => {
+        const p = prs[i], ok = !!p.lid, hide = p.via === "minus" || p.via === "fee";
+        const opts = `<option value="">${ok ? "（自動）" : "どの注文の品物？（えらぶ）"}</option>` + ls.map(([lid, l]) => `<option value="${esc(lid)}"${r.pick === lid ? " selected" : ""}>${esc(l.spec)} ×${esc(String(l.qty ?? ""))}${esc(l.unit || "")}</option>`).join("") +
+          `<option value="none"${r.pick === "none" ? " selected" : ""}>注文にない品物（引き取り・ほかの品物）</option>`;
+        const st = hide ? (p.via === "fee" ? "送料・運賃など（品物ではない）" : "値引きなど（品物ではない）") : ok ? `✓ ${VIA[p.via] || ""}：${esc((o.lines[p.lid] || {}).spec || "")}` : p.via === "none" ? "注文にない品物（えらんだ）" : "？ 注文にない品物かもしれません";
+        return `<div class="pr-it ${hide || p.via === "none" ? "mu" : ok ? "ok" : "ng"}"><b>${esc(r.spec)}</b>${r.qty != null ? esc(String(r.qty)) : ""}${esc(r.unit || "")}${r.amount != null ? `　${yen(r.amount)}円` : ""}
+          <span class="pr-st">${st}</span>
+          ${hide ? "" : `<select class="inp" data-rpair="${i}" aria-label="${esc(r.spec)} は、どの注文の品物か">${opts}</select>`}
+          ${r.pick && r.pick !== "none" ? `<label class="pr-learn"><input type="checkbox" data-rlearn="${i}"${r.learn === false ? "" : " checked"}>この書き方を、${esc(sup)}の書き方として覚える（次から自動で合う）</label>` : ""}</div>`;
+      }).join("");
+      const ng = prs.filter(p => !p.lid && !["minus", "fee", "none"].includes(p.via)).length;
+      return `<details class="pr-box"${ng || isKakou(o) ? " open" : ""}><summary>注文の品物とくらべる${ng ? `（合わない行 ${ng}）` : "（ぜんぶ合っています）"}</summary>
+        <p class="hint">左が注文の品物、右が納品書の行です。合う所は青、合わない所はオレンジ。合わない行は「どの注文の品物？」をえらんでください。引き取りの分などなら「注文にない品物」のままで入れてよいです。</p>
+        <div class="pr-pair"><div class="pr-col"><h5>注文の品物（アプリの注文）</h5>${left}</div><div class="pr-col"><h5>納品書の行（紙）</h5>${right}</div></div>
+        ${now ? '<p class="hint">加工品は、全部そろうまで「材料がまだ届いていない」のまま（カードに「一部届いた」）です。そろったら「届いた」になります。</p>' : ""}</details>`;
     }
     /** 同じ注番・同じ材料屋の注文が2つ以上（A。11/4）：品名がいちばん合う注文をえらんだと知らせる。合わない方をえらんでいたら「注文の品物とちがうようです」 */
     function whichHTML(gr, hs) {
@@ -526,7 +574,7 @@ export function openImport({ sups, getOrders, me }) {
       const none = !d && CHUBAN_RE.test(gr.chuban) && gr.supId && !cand.some(o => o.supplier === gr.supId);
       if (!none) {
         const a = actOf(gr), ho = handWait(gr) ? orderOf(gr.dest) : a && a.kind === "skip" ? orderOf(a.to) : null;   // 「入れない」を押したあとも、箱は出しておく
-        return `<label class="mini">どの注文に入れますか？<select class="inp" data-f="dest">${opts}</select></label>${newHint}${whichHTML(gr, hs)}${notHTML(gr)}${ho ? handHTML(gr, ho, handSlipsOf(ho), false) : ""}`;
+        return `<label class="mini">どの注文に入れますか？<select class="inp" data-f="dest">${opts}</select></label>${newHint}${whichHTML(gr, hs)}${pairHTML(gr)}${ho ? handHTML(gr, ho, handSlipsOf(ho), false) : ""}`;
       }
       const btn = (v, label) => `<button type="button" class="btn" data-dest="${v}" aria-pressed="${gr.dest === v}">${label}</button>`;
       const near = nearOf(gr);
@@ -656,7 +704,6 @@ export function openImport({ sups, getOrders, me }) {
         else { gr.dest = to; gr.act = { dest: to, kind: v, sids: v === "replace" ? (t.dataset.hsids || "").split(",").filter(Boolean) : [] }; }
         render();
       }
-      else if (t.dataset.rord) { const gr = groupAt(t), r = gr && gr.rows[Number(t.dataset.rord)]; if (r) { r.ord = true; refresh(); } }   // 「注文にない」の行を、注文の品物にする（11/4）
       else if (t.dataset.near) {   // 「この注文ではありませんか？」の「この注文に入れる」（11/4）：注番をその注文の注番に直して、その注文に入れる
         const gr = groupAt(t), o = (getOrders() || []).find(x => x.id === t.dataset.near);
         if (!gr || !o) return;
@@ -723,6 +770,9 @@ export function openImport({ sups, getOrders, me }) {
     });
     w.addEventListener("change", e => {
       const t = e.target, gr = groupAt(t);
+      // 注文の品物とくらべる（11/19）：「どの注文の品物？」をえらんだ・「この書き方を覚える」
+      if (gr && t.dataset.rpair != null) { const r = gr.rows[Number(t.dataset.rpair)]; if (r) { r.pick = t.value || undefined; if (r.learn == null) r.learn = true; refresh(); } return; }
+      if (gr && t.dataset.rlearn != null) { const r = gr.rows[Number(t.dataset.rlearn)]; if (r) r.learn = t.checked; return; }
       if (!gr || !t.dataset.f) return;
       if (t.dataset.f === "chuban") {   // 欄から出たとき：7字でない注番も、ここでさがしなおす。全部はかきなおさない（押そうとしたボタンが入れかわらないように。11/4）
         const v = fixChuban(t.value);
@@ -751,7 +801,7 @@ export function openImport({ sups, getOrders, me }) {
       go.disabled = true;
       go.textContent = "入れています…";
       const imp = push(ref(db, "zairyo/imports")).key;   // この取りこみの番号（記録と、納品書の imp）
-      const items = [], used = new Set();
+      const items = [], used = new Set(), learn = {};   // learn＝材料屋ごとに覚える書き方（11/19）
       let moved = 0;
       for (const gr of list) {
         const c = cards.find(x => x.groups.includes(gr));
@@ -772,7 +822,7 @@ export function openImport({ sups, getOrders, me }) {
           if (!o) throw new Error("入れる先の注文が見つかりません");
           const item = { orderId: o.id, created, arrived: o.status === "wait", amount: np ? 0 : sumOf(gr), chuban: o.chuban, sup: o.supplier, no: gr.no || "" };
           // 明細の行（金額のない紙は、金額なし）。「注文の品物」を押した行は ord:true（11/4）
-          const rows = {};
+          const rows = {}, prs = !created && Object.keys(o.lines || {}).length && o.kind !== "mekki" ? pairOf(gr, o) : [];   // 注文の品物と合わせた行（11/19）
           gr.rows.forEach((r, i) => {
             const x = { spec: r.spec || "（品名なし）" };
             if (!np) x.amount = Math.round(r.amount || 0);
@@ -780,6 +830,11 @@ export function openImport({ sups, getOrders, me }) {
             if (r.unit) x.unit = r.unit;
             if (!np && r.price != null) x.price = r.price;
             if (r.ord != null) x.ord = r.ord;
+            const p = prs[i];
+            if (p && p.lid) { x.line = p.lid; x.ord = true; }   // どの注文の品物か（加工品の届いた数にも使う）
+            else if (p && p.via === "none") x.ord = false;   // 「注文にない品物」をえらんだ
+            // えらんだ書き方を、材料屋ごとに覚える（次から自動で合う）
+            if (p && p.via === "pick" && r.learn !== false && gr.supId) learn[`zairyo/master/slipAlias/${gr.supId}/${memoDbKey(r.spec)}`] = { spec: String((o.lines[p.lid] || {}).spec || "").slice(0, 300), at: serverTimestamp() };
             rows["r" + String(i + 1).padStart(2, "0")] = x;
           });
           if (np) {   // 金額のない紙も、明細とスキャンを残す（11/4。前は「届いた」にするだけ）。材料費は変わらない
@@ -820,6 +875,8 @@ export function openImport({ sups, getOrders, me }) {
           gr.err = errorText(ex);
         }
       }
+      // 覚えた書き方（11/19）：覚えられなくても、納品書は入っている
+      if (Object.keys(learn).length) await update(ref(db), learn).then(() => { Object.entries(learn).forEach(([p, v]) => { const [, , , sup, k] = p.split("/"); (alias[sup] = alias[sup] || {})[k] = v; }); }, ex => toast("書き方を覚えられませんでした（" + errorText(ex) + "）"));
       // 取りこみの記録（まとめて取り消すときに使う）
       if (items.length) {
         const files = [...used].map(c => {
@@ -913,7 +970,7 @@ export function openImport({ sups, getOrders, me }) {
           upd[`${base}/status`] = "cancelled";
           upd[`${base}/cancelledAt`] = serverTimestamp();
           upd[`${base}/cancelledBy`] = me.name;
-        } else if (it.arrived && o.status === "arrived" && !rest.length && !npRest.length) {
+        } else if (it.arrived && o.status === "arrived" && (!rest.length && !npRest.length || isKakou(o) && !partOf({ ...o, slips: Object.fromEntries(rest), npSlips: Object.fromEntries(npRest) }).done)) {   // 加工品は、のこりの紙でそろわなければ「まだ」に（11/19）
           upd[`${base}/status`] = "wait";
           upd[`${base}/arrivedAt`] = null;
           upd[`${base}/arrivedBy`] = null;

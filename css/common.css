@@ -654,6 +654,33 @@ ul.plain{margin:0;padding-left:1.2em}
 .b-top .chuban{font-size:15px}
 .b-items{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
 .tag.ret-tag{color:var(--danger);border-color:var(--danger)}   /* 返品・交換の納品書（11/19） */
+/* 納品書の取りこみ：注文の品物とくらべる（11/19）。左が注文の品物、右が納品書の行 */
+.pr-box{margin-top:8px;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.pr-box > summary{cursor:pointer;font-weight:700;font-size:14px}
+.pr-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-top:6px}
+.pr-col{display:flex;flex-direction:column;gap:6px;min-width:0}
+.pr-col h5{margin:0;font-size:13px;color:var(--muted)}
+.pr-it{border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:var(--surface);font-size:13px;overflow-wrap:anywhere}
+.pr-it b{display:block;font-size:14px}
+.pr-st{display:block;font-size:12px;font-weight:700;margin-top:2px}
+.pr-cnt{display:block;font-size:12px;color:var(--blue);font-weight:700}
+.pr-it.ok{border-color:var(--blue)} .pr-it.ok .pr-st{color:var(--blue)}
+.pr-it.ng{border-color:var(--amber)} .pr-it.ng .pr-st{color:var(--amber)}
+.pr-it.mu .pr-st{color:var(--muted)}
+.pr-it select{margin-top:4px;width:100%;font-size:14px}
+.pr-learn{display:flex;gap:6px;align-items:flex-start;font-size:12px;margin-top:4px}
+.pr-learn input{width:18px;height:18px;flex:none}
+@media (max-width:640px){.pr-pair{grid-template-columns:1fr}}
+/* 加工品が何回かに分けて届く（11/19） */
+.ocard.mark-part{--mk:var(--blue);border-left:8px solid var(--mk);border-top-color:var(--mk)}
+.ocard.mark-part .bigmark{color:var(--bg)}
+.parttag{display:inline-block;margin-left:6px;font-size:12px;font-weight:800;color:var(--blue);border:1px solid var(--blue);border-radius:4px;padding:0 6px}
+.gotlist{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:6px}
+.gotlist td{border-top:1px solid var(--line);padding:4px}
+.gotlist td.n{text-align:right;white-space:nowrap}
+.gotlist tr.rest td{color:var(--muted)}
+.gotbox{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.gotrow{display:grid;grid-template-columns:minmax(0,1fr) 90px auto;gap:6px;align-items:center;font-size:14px}
 .okmsg{margin:0;padding:10px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--blue);color:var(--blue);font-weight:700}
 @media (max-width:520px){ .brow{grid-template-columns:1fr} }
 /* 写真・リンク・ネットでさがす（11章 6） */

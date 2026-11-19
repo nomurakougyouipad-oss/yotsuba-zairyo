@@ -11,7 +11,7 @@ import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet, keepPlace } from "./common.js";
 import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
-import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany, azkText, orderPdf, pdfLine, npSlipsOf, npDupOf, deliveredRows, notInOrder, checksOrd, sameThing, removeNpSlip, setRowOrd, lineDone, isLineOrder, LINE_NOTE, slipScans, isReturnSlip, hasReturn } from "./chumon.js";
+import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billMany, azkText, orderPdf, pdfLine, npSlipsOf, npDupOf, deliveredRows, notInOrder, checksOrd, sameThing, removeNpSlip, setRowOrd, lineDone, isLineOrder, LINE_NOTE, slipScans, isReturnSlip, hasReturn, isKakou, partOf, gotList, markGot } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel, shopOf, pageLink, SHOPS } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
@@ -192,6 +192,7 @@ export function startOfficeApp(main, me) {
     view: "irai", filter: "all", q: "", reqs: null, orders: null, catalog: null, sups: null, places: null,
     src: "",   // "nouhin"＝納品書から作った注文だけ（「注文ごと」「工事ごと」。10/30）
     openOrderId: "",   // いま中身を出している注文
+    gotAsk: "",   // 加工品の「届いた」で「全部か何個か」をえらんでいる注文（11/19）
     mOpen: new Set(),   // 開いている「▼ 明細を見る」（かきなおしても開いたまま。11/4）
     kojiOpen: {},   // 工事ごとの「届いた品物」を開いたか {注番: true/false}（11/4）
     settingsOpen: false,
@@ -415,9 +416,10 @@ export function startOfficeApp(main, me) {
   /* 注文のカード（試作の cardHTML と同じ） */
   function orderCard(o) {
     const s = ST[o.status] || ST.wait, late = isLate(o, ymd(0)), cx = o.status === "cancelled", unsent = isUnsent(o), nr = noReply(o);
+    const pt = isKakou(o) && o.status === "wait" ? partOf(o) : null, part = !!(pt && pt.any && !pt.done);   // 加工品の一部届いた（11/19）
     return `
-      <article class="ocard${cx ? " cx" : ""}${unsent ? " unsent" : ""}${nr ? " mark-late" : ""}" tabindex="0" data-open="${esc(o.id)}" style="--c:${s.color}">
-        ${nr ? '<span class="bigmark">返事なし</span>' : ""}
+      <article class="ocard${cx ? " cx" : ""}${unsent ? " unsent" : ""}${nr ? " mark-late" : part ? " mark-part" : ""}" tabindex="0" data-open="${esc(o.id)}" style="--c:${s.color}">
+        ${nr ? '<span class="bigmark">返事なし</span>' : part ? `<span class="bigmark">一部届いた ${pt.got}/${pt.want}</span>` : ""}
         <div class="card-head"><span class="sup">${esc(o.supplierName)}${kindTag(o)}</span>
           ${nr ? "" : `<span class="ochip${o.status === "wait" ? " solid" : o.status === "arrived" ? " blue" : ""}">${unsent ? "まだ送っていない" : s.chip}</span>`}</div>
         <div class="kouji"><span class="chuban">${esc(o.chuban)}</span><span class="kenmei">${esc(zenkana(o.kenmei))}</span></div>
@@ -428,6 +430,7 @@ export function startOfficeApp(main, me) {
           <div><dt>注文者</dt><dd>${esc(o.chumonsha || "—")}</dd>${o.tantou ? `<dt class="tan">担当</dt><dd>${esc(o.tantou)}</dd>` : ""}</div>
           <div><dt>${o.kind === "nouhin" ? "入れた" : "注文した"}</dt><dd>${md(o.orderedAt)}</dd></div>
           ${deliverPlan(o) ? `<div><dt>届く予定</dt><dd>${esc(deliverPlan(o))}</dd></div>` : ""}
+          ${part ? `<div><dt>届いた</dt><dd>${pt.want}中 ${pt.got}（のこり ${Math.max(0, pt.want - pt.got)}）</dd></div>` : ""}
           ${nr ? `<div><dt>アプリに送った</dt><dd>${md(o.supSentAt)} ${hm(o.supSentAt)}</dd></div>` : ""}
         </dl>
         ${nr ? '<p class="hint warn nr-note">材料屋がまだ受けていません。電話して、たしかめてください。</p>' : ""}
@@ -1055,9 +1058,37 @@ export function startOfficeApp(main, me) {
     return `<div class="mtbl-wrap"><table class="mtbl">${head}<tbody>${rows.map(tr).join("")}</tbody>${foot}</table></div>`;
   }
   /** アプリで頼んだ品物が、納品書で届いたか（「届いた 11/2」。11/4）：同じ番号の行か、品名に同じ言葉がある行 */
+  /* ---------- 加工品が何回かに分けて届く（11/19 事務員さん。まず加工品だけ） ---------- */
+  /** 品物の届いた数の札（12個中 5個） */
+  function kakouTag(o, lid) {
+    const p = partOf(o).per.find(x => x.lid === lid);
+    if (!p || !p.got) return "";
+    return p.got >= p.want ? `<span class="oktag">そろった ${p.got}/${p.want}</span>` : `<span class="parttag">${p.want}${esc(p.unit)}中 ${p.got}${esc(p.unit)} 届いた</span>`;
+  }
+  /** 届いた数の一覧（いつ・何個・どの納品書） */
+  function gotListHTML(o) {
+    const list = gotList(o);
+    if (!list.length) return "";
+    const ls = o.lines || {}, pt = partOf(o);
+    return `<p class="subh">届いた数（いつ・何個・どの納品書）</p>
+      <table class="gotlist"><tbody>${list.map(x => `<tr><td>${x.date ? `${Number(x.date.slice(5, 7))}/${Number(x.date.slice(8))}` : "—"}</td><td>${esc((ls[x.lid] || {}).spec || "")}</td><td class="n">${esc(String(x.qty))}${esc((ls[x.lid] || {}).unit || "")}</td><td>${esc(x.src)}</td></tr>`).join("")}
+        ${pt.per.filter(p => p.got < p.want).map(p => `<tr class="rest"><td>のこり</td><td>${esc(p.spec)}</td><td class="n">${p.want - p.got}${esc(p.unit)}</td><td></td></tr>`).join("")}</tbody></table>`;
+  }
+  /** 加工品の「つぎにやること」（まだ届いていない）：一部届いた数と「届いた」（全部か何個か） */
+  function kakouActHTML(o) {
+    const pt = partOf(o), rest = pt.per.filter(p => p.got < p.want);
+    const now = pt.any ? `<p><b>一部届いた：${pt.want}中 ${pt.got}</b>（のこり ${Math.max(0, pt.want - pt.got)}）。全部そろうまで、ここに残ります。</p>` : "";
+    if (st.gotAsk !== o.id) return `${now}<button type="button" class="btn primary big" data-gotask="${esc(o.id)}">届いた（全部か何個か）</button>`;
+    return `${now}<div class="gotbox confirm"><b>何が届きましたか？</b>
+        <button type="button" class="btn primary" data-gotall="${esc(o.id)}">全部（のこり ${rest.map(p => `${p.want - p.got}${esc(p.unit)}`).join("・") || "なし"}）</button>
+        <p class="hint">何個かだけなら、届いた数を入れて「これで入れる」。全部そろったら「届いた」になります。</p>
+        ${rest.map(p => `<label class="gotrow"><span>${esc(p.spec)}（のこり ${p.want - p.got}${esc(p.unit)}）</span><input class="inp" data-gotq="${esc(p.lid)}" inputmode="decimal" placeholder="0" aria-label="${esc(p.spec)} の届いた数"><span>${esc(p.unit)}</span></label>`).join("")}
+        <div class="row"><button type="button" class="btn" data-gotgo="${esc(o.id)}">これで入れる</button><button type="button" class="linkbtn muted" data-gotno>やめる</button></div>
+        <p class="err" data-goterr></p></div>`;
+  }
   function gotTag(o, dr, lid, l) {
     if (!checksOrd(o)) return "";
-    const x = dr.slice().reverse().find(x => x.r.ord !== false && (x.rid === lid || sameThing(l.spec, x.r.spec)));
+    const x = dr.slice().reverse().find(x => x.r.ord !== false && (x.r.line === lid || x.rid === lid || (!x.r.line && sameThing(l.spec, x.r.spec))));   // 取りこみで合わせた行（line。11/19）を先に
     return x ? `<span class="oktag">届いた${x.s.date ? ` ${Number(x.s.date.slice(5, 7))}/${Number(x.s.date.slice(8))}` : ""}</span>` : "";
   }
   /** 品名・数量の「納品書で届いた品物」（11/4）。はじめは10品まで、のこりは「▼ ほかの n品を見る」 */
@@ -1105,7 +1136,7 @@ export function startOfficeApp(main, me) {
           ${app && o.supState === "sent" ? (noReply(o) ? '<p class="warn">材料屋のアプリで、まだ受けていません（送った日のつぎの日になりました。土日はのぞく）。電話して、たしかめてください。</p>' : '<p class="hint">材料屋のアプリで、まだ受けていません。</p>') : ""}
           ${deliverPlan(o) ? `<p>材料屋が受けました：<b>${esc(deliverPlan(o))}</b> に届ける予定です。</p>` : ""}
           <p>材料は届きましたか？<br><span class="hint">${app ? "材料屋がアプリで「届けました」を押すと、自動で「届いた」になります。" : ""}納品書が来ていれば、下の「納品書の金額」で入れると「届いた」になります。</span></p>
-          <button type="button" class="btn primary big" data-arrive="${esc(o.id)}">届いた（金額はあとで）</button></div>`;
+          ${isKakou(o) ? kakouActHTML(o) : `<button type="button" class="btn primary big" data-arrive="${esc(o.id)}">届いた（金額はあとで）</button>`}</div>`;
     } else if (o.status === "arrived") {
       act = `<div class="block act" style="--c:${s.color}"><h3>つぎにやること</h3>
           <p>請求書は来ましたか？</p>
@@ -1135,7 +1166,8 @@ export function startOfficeApp(main, me) {
         ${cx ? "" : slipBlockHTML(o)}
         <div class="block"><h3>品名・数量</h3>
           ${dr.length && !cx ? `<p class="subh">${o.kind === "nouhin" ? "注文の品物（納品書から作った注文）" : "アプリで頼んだ品物"}</p>` : ""}
-          <ul class="g-lines">${Object.entries(o.lines || {}).map(([lid, l]) => `<li>${esc(lineText(l) + azkText(l))}${cx ? "" : gotTag(o, dr, lid, l)}${oAzHTML(o, lid, l)}</li>`).join("")}</ul>
+          <ul class="g-lines">${Object.entries(o.lines || {}).map(([lid, l]) => `<li>${esc(lineText(l) + azkText(l))}${cx ? "" : isKakou(o) ? kakouTag(o, lid) : gotTag(o, dr, lid, l)}${oAzHTML(o, lid, l)}</li>`).join("")}</ul>
+          ${!cx && isKakou(o) ? gotListHTML(o) : ""}
           ${dr.length && !cx ? deliveredHTML(o, dr) : ""}
           ${cx ? "" : `<div class="row"><button type="button" class="btn" data-oedit>注文を直す</button></div>`}</div>
         ${fileBlockHTML(o, !cx)}
@@ -1262,11 +1294,26 @@ export function startOfficeApp(main, me) {
   }
 
   async function onOrderClick(e, w) {
-    const t = e.target.closest("[data-oaz],[data-oazsave],[data-oazoff],[data-oazno],[data-oquote],[data-oedit],[data-arrive],[data-osent],[data-oapp],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-npdel],[data-ord],[data-slipmore],[data-slipfix],[data-slipfixsave],[data-slipfixno],[data-billgo],[data-unbill],[data-chuban]");
+    const t = e.target.closest("[data-gotask],[data-gotall],[data-gotgo],[data-gotno],[data-oaz],[data-oazsave],[data-oazoff],[data-oazno],[data-oquote],[data-oedit],[data-arrive],[data-osent],[data-oapp],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-npdel],[data-ord],[data-slipmore],[data-slipfix],[data-slipfixsave],[data-slipfixno],[data-billgo],[data-unbill],[data-chuban]");
     if (!t || t.disabled) return;
     const d = t.dataset, o = (st.orders || []).find(x => x.id === st.openOrderId);
     if (!o) return;
     if (d.chuban) return copyChuban(d.chuban);   // ネットで買う（10/15）
+    // 加工品の「届いた」（11/19）：全部か何個か
+    if (d.gotask) { st.gotAsk = o.id; return openOrder(o.id, true); }
+    if ("gotno" in d) { st.gotAsk = ""; return openOrder(o.id, true); }
+    if (d.gotall || d.gotgo) {
+      const w = t.closest("#orderWrap"), rest = partOf(o).per.filter(p => p.got < p.want);
+      const entries = d.gotall ? rest.map(p => ({ line: p.lid, qty: p.want - p.got }))
+        : [...w.querySelectorAll("[data-gotq]")].map(i => ({ line: i.dataset.gotq, qty: toPrice(i.value) })).filter(x => x.qty > 0);
+      if (!entries.length) { const er = w.querySelector("[data-goterr]"); if (er) er.textContent = "届いた数を入れてください"; return; }
+      t.disabled = true;
+      let r;
+      try { r = await markGot(o, entries, me); } catch (ex) { t.disabled = false; throw ex; }
+      st.gotAsk = "";
+      toast(r.done ? "全部そろいました。「届いた」にしました" : "届いた数を入れました（一部届いた）");
+      return openOrder(o.id, true);
+    }
     if (d.oquote) return openQuote(d.oquote);    // 見積から（10/15）：もとの見積を開く
     if ("oedit" in d) {   // 注文を直す（10/14）
       const r = o.reqId ? (st.reqs || []).find(x => x.id === o.reqId) || null : null;
@@ -1596,6 +1643,7 @@ export function startOfficeApp(main, me) {
     else if (d.next) {
       const o = (st.orders || []).find(x => x.id === d.next);
       if (!o) return;
+      if (isKakou(o)) { st.gotAsk = o.id; openOrder(o.id); return; }   // 加工品は「全部か何個か」をえらぶ（11/19）
       t.disabled = true;
       markArrived(o, me).then(() => toast("「届いた」にしました。納品書の金額は、あとで入れられます"), ex => { t.disabled = false; toast(errorText(ex)); });
     }

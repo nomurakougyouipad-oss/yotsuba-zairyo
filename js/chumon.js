@@ -164,6 +164,69 @@ export async function markArrived(o, me) {
   await update(ref(db, `zairyo/orders/${o.id}`), { status: "arrived", arrivedAt: serverTimestamp(), arrivedBy: me.name });
 }
 
+/* ---------- 品物ごとの届いた数（11/19 事務員さん「加工品が何回かに分けて届く」。まず加工品だけ） ----------
+   - 納品書の行が、どの注文の品物か：rows/{r}/line（取りこみで合わせた）。手で入れた金額は、行の番号＝品物の番号。
+     加工品で品物が1つなら、その品物（送料・運賃・値引きの行はのぞく）
+   - 「届いた」を押して何個か入れた分：got/{g} = { line, qty, date, by, at }
+   - 全部そろうまでは「材料がまだ届いていない」のまま（カードに「一部届いた 5/12」）。そろったら「届いた」。台帳が読む status の意味は前と同じ */
+export const isKakou = o => !!o && o.kind === "kakou";
+export const NOT_ITEM = /送料|運賃|配送|梱包|値引/;
+/** 納品書（金額のない紙も）の行の、注文の品物の番号（なければ ""） */
+export function rowLineOf(o, key, r) {
+  const ls = (o && o.lines) || {};
+  if (!r) return "";
+  if (r.line && ls[r.line]) return r.line;
+  if (key && ls[key]) return key;
+  const ids = Object.keys(ls);
+  if (isKakou(o) && ids.length === 1 && r.qty != null && !NOT_ITEM.test(String(r.spec || "")) && !(Number(r.amount) < 0 && Number(r.qty) > 0)) return ids[0];
+  return "";
+}
+/** 届いた記録 [{ date, lid, qty, src, sid?, gid? }]（日付の順） */
+export function gotList(o) {
+  const out = [];
+  const rowsOf = (list, label) => {
+    for (const [sid, s] of list) for (const [k, r] of Object.entries(s.rows || {})) {
+      const lid = rowLineOf(o, k, r);
+      if (lid && r.qty != null) out.push({ date: s.date || "", lid, qty: Number(r.qty) || 0, src: `${label}${s.no ? " No." + s.no : ""}`, sid });
+    }
+  };
+  rowsOf(slipsOf(o), "納品書");
+  rowsOf(npSlipsOf(o), "金額のない紙");
+  for (const [gid, g] of Object.entries(o.got || {})) if (g && (o.lines || {})[g.line]) out.push({ date: g.date || "", lid: g.line, qty: Number(g.qty) || 0, src: `「届いた」で入れた${g.by ? "（" + g.by + "）" : ""}`, gid });
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+/** 品物ごとの、注文の数と届いた数 → { per: [{ lid, spec, unit, want, got }], want, got, any, done } */
+export function partOf(o) {
+  const list = gotList(o);
+  const per = Object.entries(o.lines || {}).map(([lid, l]) => ({ lid, spec: l.spec, unit: l.unit || "", want: Number(l.qty) || 0, got: list.filter(x => x.lid === lid).reduce((t, x) => t + x.qty, 0) }));
+  const want = per.reduce((t, p) => t + p.want, 0), got = per.reduce((t, p) => t + Math.max(0, p.got), 0);
+  return { per, want, got, any: got > 0, done: per.length > 0 && per.every(p => p.got >= p.want) };
+}
+/** 一部届いた加工品か（まだ届いていない・何個か届いた・全部はそろっていない） */
+export const isPartial = o => isKakou(o) && o.status === "wait" && (p => p.any && !p.done)(partOf(o));
+/** 紙（納品書・金額のない紙）を入れたら「届いた」にするか：加工品は、紙の行を品物の数に数えられて、まだ全部そろわないときは「まだ」のまま */
+function arriveOnPaper(o, kind, id, paper) {
+  if (o.status !== "wait") return false;
+  if (!isKakou(o)) return true;
+  const next = { ...o, [kind]: { ...(o[kind] || {}), [id]: paper } };
+  const counted = Object.entries(paper.rows || {}).some(([k, r]) => rowLineOf(next, k, r));
+  return !counted || partOf(next).done;   // 数えられない紙（品名がちがう・送料だけ など）は、前と同じに「届いた」
+}
+/** 「届いた」を押して、何個か入れる（加工品の一部届いた）。entries = [{ line, qty }]。全部そろったら「届いた」 */
+export async function markGot(o, entries, me) {
+  const base = `zairyo/orders/${o.id}`, upd = {}, got = { ...(o.got || {}) };
+  for (const e of entries) {
+    if (!(o.lines || {})[e.line] || !(Number(e.qty) > 0)) continue;
+    const k = push(ref(db, `${base}/got`)).key;
+    got[k] = upd[`${base}/got/${k}`] = { line: e.line, qty: Number(e.qty), date: ymdLocal(), by: (me.name || "事務所").slice(0, 40), at: serverTimestamp() };
+  }
+  const done = partOf({ ...o, got }).done;
+  if (done && o.status === "wait") Object.assign(upd, { [`${base}/status`]: "arrived", [`${base}/arrivedAt`]: serverTimestamp(), [`${base}/arrivedBy`]: me.name });
+  await update(ref(db), upd);
+  return { done };
+}
+const ymdLocal = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+
 /* ---------- 材料屋のアプリ（2回目・2-2。10/16 持ち主） ----------
    - ⚙ 設定で「材料屋のアプリで受ける」が ON の材料屋（ネットで買う店はのぞく）には、事務所が「アプリに送る」を押したときに注文がとどく（B）
    - supState：sent（アプリに送った・まだ受けていない）→ accepted（受けた）→ delivered（届けた）→ priced（金額を入れた）
@@ -267,7 +330,8 @@ export async function addSlip(o, slip, me, { replace = [] } = {}) {
       upd[`${base}/log/${logKey(o)}`] = { at: serverTimestamp(), by: me.name || "事務所", what: `手で入れた納品書の金額（${yen(old.amount)}円${old.date ? "・" + old.date : ""}）を、取りこんだ納品書${slip.no ? " No." + slip.no : ""}に置きかえた` };
     }
   }
-  if (o.status === "wait") {
+  const arrive = arriveOnPaper(o, "slips", sid, slip);   // 加工品は、全部そろうまで「まだ」（11/19）
+  if (arrive) {
     upd[`${base}/status`] = "arrived";
     upd[`${base}/arrivedAt`] = serverTimestamp();
     upd[`${base}/arrivedBy`] = me.name;
@@ -284,7 +348,7 @@ export async function addSlip(o, slip, me, { replace = [] } = {}) {
     };
   }
   await update(ref(db), upd);
-  return { sid, priceIds, arrived: o.status === "wait" };
+  return { sid, priceIds, arrived: arrive };
 }
 
 /* ---------- 届いた品物（納品書の明細。11/4 事務員さん） ----------
@@ -296,7 +360,7 @@ export async function addSlip(o, slip, me, { replace = [] } = {}) {
 /** 金額のない紙（入れた順） [[id, paper]] */
 export const npSlipsOf = o => Object.entries(o.npSlips || {}).sort(([, a], [, b]) => (a.at || 0) - (b.at || 0));
 /** 品名のくらべ方：全角・半角、大文字・小文字、空白・ハイフン、× と x のちがいはそろえる */
-const specKey = s => String(s || "").normalize("NFKC").toUpperCase().replace(/[\s\-‐－―ー]/g, "").replace(/[×*＊]/g, "X");
+export const specKey = s => String(s || "").normalize("NFKC").toUpperCase().replace(/[\s\-‐－―ー]/g, "").replace(/[×*＊]/g, "X");
 /** 品名と数がぜんぶ同じか（行の並びは見ない） */
 const itemsKey = rows => rows.map(r => `${specKey(r.spec)}|${r.qty ?? ""}`).sort().join("\n");
 export const sameItems = (a, b) => !!a.length && itemsKey(a) === itemsKey(b);
@@ -332,13 +396,14 @@ export function deliveredRows(o) {
 export async function addNpSlip(o, paper, me) {
   const id = push(ref(db, `zairyo/orders/${o.id}/npSlips`)).key, base = `zairyo/orders/${o.id}`;
   const upd = { [`${base}/npSlips/${id}`]: { ...paper, by: me.name, at: serverTimestamp() } };
-  if (o.status === "wait") {
+  const arrive = arriveOnPaper(o, "npSlips", id, paper);   // 加工品は、全部そろうまで「まだ」（11/19）
+  if (arrive) {
     upd[`${base}/status`] = "arrived";
     upd[`${base}/arrivedAt`] = serverTimestamp();
     upd[`${base}/arrivedBy`] = me.name;
   }
   await update(ref(db), upd);
-  return { npId: id, arrived: o.status === "wait" };
+  return { npId: id, arrived: arrive };
 }
 /** 金額のない紙を消す（「届いた」は、そのまま） */
 export async function removeNpSlip(o, id) {
@@ -386,7 +451,7 @@ export async function moveSlip(from, to, sid, me) {
    本物の納品書でためすと、10X25 → M10×25、6X15 → M6×15、シートペーパー → シートペーパーの注文、と全部合った */
 const scoreWords = s => specNorm(s).match(/[ァ-ヴー]{2,}|[A-Z]{2,}[A-Z0-9]*/g) || [];
 const scoreNums = s => [...new Set(specNorm(s).match(/\d+(\.\d+)?/g) || [])];
-function lineScore(a, b) {
+export function lineScore(a, b) {
   const A = scoreWords(a), B = scoreWords(b), N = new Set(scoreNums(b));
   return A.filter(x => B.some(y => x.includes(y) || y.includes(x))).length + 2 * scoreNums(a).filter(n => N.has(n)).length;
 }
@@ -435,6 +500,9 @@ export async function addToSlip(o, sid, part, me) {
   }
   const pages = Math.min(20, Math.max(Number(s.pages) || 0, Number(part.pages) || 0, had.length + (part.scan && !had.includes(part.scan) ? 1 : 0)));
   if (pages >= 2) upd[`${base}/slips/${sid}/pages`] = pages;
+  if (isKakou(o) && o.status === "wait" && partOf({ ...o, slips: { ...o.slips, [sid]: { ...s, rows: { ...(s.rows || {}), ...Object.fromEntries(rowKeys.map((k, i) => [k, part.rows[i]])) } } } }).done) {   // 加工品が全部そろった（11/19）
+    upd[`${base}/status`] = "arrived"; upd[`${base}/arrivedAt`] = serverTimestamp(); upd[`${base}/arrivedBy`] = me.name;
+  }
   upd[`${base}/log/${logKey(o)}`] = { at: serverTimestamp(), by: me.name || "事務所", what: `納品書${s.no ? " No." + s.no : ""}のつづきの紙（${part.rows.length}行・${yen(add)}円）を足した（${yen(Number(s.amount) || 0)}円 → ${yen((Number(s.amount) || 0) + add)}円）` };
   await update(ref(db), upd);
   return { rowKeys, priceIds };

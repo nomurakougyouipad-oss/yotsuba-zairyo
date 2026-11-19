@@ -203,6 +203,16 @@
             "$other": { ".validate": false }
           }
         },
+        "slipAlias": {
+          "$sup": {
+            "$k": {
+              ".validate": "$sup.length <= 40 && $k.length <= 300 && newData.hasChildren(['spec'])",
+              "spec": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 300" },
+              "at": { ".validate": "newData.isNumber()" },
+              "$other": { ".validate": false }
+            }
+          }
+        },
         "$other": { ".validate": false }
       },
       "requests": {
@@ -486,6 +496,7 @@
                   "kg": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000000" },
                   "perKg": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000000" },
                   "ord": { ".validate": "newData.isBoolean()" },
+                  "line": { ".validate": "newData.isString() && newData.val().length <= 40" },
                   "$other": { ".validate": false }
                 }
               },
@@ -517,6 +528,7 @@
                   "qty": { ".validate": "newData.isNumber() && newData.val() > -1000000 && newData.val() < 1000000" },
                   "unit": { ".validate": "newData.isString() && newData.val().length <= 10" },
                   "ord": { ".validate": "newData.isBoolean()" },
+                  "line": { ".validate": "newData.isString() && newData.val().length <= 40" },
                   "$other": { ".validate": false }
                 }
               },
@@ -568,6 +580,17 @@
               "type": { ".validate": "newData.isString() && newData.val().length <= 100" },
               "at": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
               "by": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "$other": { ".validate": false }
+            }
+          },
+          "got": {
+            "$g": {
+              ".validate": "$g.length <= 40 && newData.hasChildren(['line', 'qty', 'date', 'at'])",
+              "line": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "qty": { ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() < 1000000" },
+              "date": { ".validate": "newData.isString() && newData.val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)" },
+              "by": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "at": { ".validate": "newData.isNumber()" },
               "$other": { ".validate": false }
             }
           },
