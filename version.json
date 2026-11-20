@@ -1,5 +1,5 @@
 {
- "v": "344917fb69",
+ "v": "5ed4113bf8",
  "files": [
   "js/ai-kurabe.js",
   "js/azukari.js",
@@ -25,6 +25,8 @@
   "js/nippo.js",
   "js/nouhin.js",
   "js/pdf.js",
+  "js/seikyu-ai.js",
+  "js/seikyu-kurabe.js",
   "js/settei.js",
   "js/shashin.js",
   "js/tanomu.js",
