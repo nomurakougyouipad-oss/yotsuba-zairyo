@@ -222,7 +222,7 @@ export function startOfficeApp(main, me) {
       <section class="after" aria-labelledby="afterTitle">
         <h2 id="afterTitle">届いたあと</h2>
         <button type="button" class="btn" id="impBtn">納品書の取りこみ<small>スキャン・PDF・表から金額を入れる</small></button>
-        <button type="button" class="btn" id="billBtn">まとめて請求<small>月の請求書で請求ずみにする</small></button>
+        <button type="button" class="btn" id="billBtn">請求書の取りこみ（まとめて請求）<small>月の請求書を AI で読んで、納品書と合わせます</small></button>
       </section>
       <div class="toolbar">
         <div class="seg" role="tablist" aria-label="見かた" id="seg">
