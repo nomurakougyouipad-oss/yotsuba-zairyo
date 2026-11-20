@@ -66,7 +66,7 @@ function loadPdfjs() {
   return pdfjsP;
 }
 /** ファイル → { count, page(k) → canvas }（長い辺 2000px くらい） */
-async function openScan(file) {
+export async function openScan(file) {
   if (/\.pdf$/i.test(file.name) || file.type === "application/pdf") {
     const pdfjs = await loadPdfjs();
     const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), ...PDF_OPTS }).promise;
@@ -100,7 +100,7 @@ async function openScan(file) {
 }
 const b64 = c => c.toDataURL("image/jpeg", 0.85).split(",")[1];
 /** 縦長の紙は上と下に分ける（少し重ねて切る） */
-function scanParts(c) {
+export function scanParts(c) {
   if (c.height <= c.width * 1.15) return [b64(c)];
   const half = Math.ceil(c.height / 2), ov = Math.round(c.height * 0.06);
   return [[0, half + ov], [half - ov, c.height - half + ov]].map(([y, h]) => {

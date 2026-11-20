@@ -25,6 +25,8 @@ import { slipFormHTML, wireSlipForm, readSlipForm } from "./kingaku.js";
 import { CHUBAN_RE } from "./nippo.js";
 import { quoteState, isOpenQuote, quoteCard, openQuoteForm, quoteHTML, wireQuote, qLines } from "./mitsumori.js";
 import { openAzukari, azItems, lineSpec } from "./azukari.js";
+import { readInvoiceFiles, invoiceSlips, checkInvoice, matchInvoice } from "./seikyu-ai.js";
+import { matchSupplier } from "./line-parse.js";
 
 /** 一覧・注文の画面の小さい印（加工品・見積から。10/15） */
 const KIND_TAG = { kakou: "加工品", mekki: "めっき", mitsumori: "見積から", nouhin: "納品書から" };   // nouhin＝納品書の取りこみで作った注文（アプリで注文していない。10/30）
@@ -1441,7 +1443,8 @@ export function startOfficeApp(main, me) {
      11/19 持ち主：材料屋ごとに月1回の作業にする。材料屋と月（⚙ 設定の締め日で区切った「○月分」）をえらぶと、その月の
      「請求まだ」の納品書が、はじめから全部チェックされて出る。請求書の合計が同じなら、ボタン1つで全部「請求ずみ」。
      ちがうときだけ、手がかり（ちがいと同じ金額の納品書・ほかの月の同じ金額の納品書・金額でさがす）を出す。請求ずみは納品書ごと（chumon.js billSlips） */
-  const bulk = { sup: "", month: "", pick: {}, amt: {}, totalManual: false, armed: false, done: "", find: "", extra: new Set(), total: "", no: "", date: "" };   // extra＝この請求書に足した、ほかの月の納品書
+  const bulk = { sup: "", month: "", pick: {}, amt: {}, totalManual: false, armed: false, done: "", find: "", extra: new Set(), total: "", no: "", date: "",   // extra＝この請求書に足した、ほかの月の納品書
+    ai: null, aiBusy: false, aiStep: "", aiErr: "" };   // ai＝AI で読んだ請求書と、合わせた結果（11/20）
   const supName = id => ((st.sups || {})[id] || {}).name || ((st.orders || []).find(o => o.supplier === id) || {}).supplierName || id;
   /** その材料屋の「請求まだ」：納品書ごと（slips）と、納品書がない注文（bare）。key＝"注文/納品書"（納品書がない注文は "注文/-"） */
   function unbilledOf(sid) {
@@ -1471,17 +1474,96 @@ export function startOfficeApp(main, me) {
     for (const x of u.bare) bulk.amt[x.key] = x.o.nouhin != null ? yen(x.o.nouhin) : "";
   }
 
+  /* ---------- 請求書を AI で読む（11/20 持ち主） ----------
+     請求書（PDF・写真）を入れると、AI が納品書ごとの番号と税抜の金額を読み、アプリの納品書と合わせて
+     「合う」「金額がちがう」「請求書にない」「アプリにない」に分ける。合うものは、はじめからチェック。
+     品物の行を足した金額が御買上額（税抜）と合わないときは、読みまちがいかもしれないので、チェックを入れない（js/seikyu-ai.js） */
+  function invAiHTML() {
+    return `
+      <div class="block b-ai">
+        <div class="b-ai-head"><button type="button" class="btn" id="bInvBtn"${bulk.aiBusy ? " disabled" : ""}>${bulk.ai ? "べつの請求書を読む（AI）" : "請求書を読む（AI）"}</button>
+          ${bulk.ai && !bulk.aiBusy ? '<button type="button" class="linkbtn muted" id="bInvClear">AI の結果をけす</button>' : ""}</div>
+        <input type="file" id="bInvFile" accept=".pdf,application/pdf,image/*" multiple hidden>
+        <p class="hint" id="bInvSt">${bulk.aiBusy ? esc(bulk.aiStep) : "材料屋から来た月の請求書（PDF か写真。何ページでも）を入れると、AI が納品書ごとの番号と税抜の金額を読んで、アプリの納品書と合わせます。"}</p>
+        ${bulk.aiErr ? `<p class="err">${esc(bulk.aiErr)}</p>` : ""}
+      </div>`;
+  }
+  function invResultHTML(u, row) {
+    const a = bulk.ai, byKey = new Map([...u.slips, ...u.bare].map(x => [x.key, x]));
+    const cur = p => byKey.get(p.x.key);
+    const ok = a.res.ok.filter(cur), diff = a.res.diff.filter(cur), none = a.res.notOnInv.map(x => byKey.get(x.key)).filter(Boolean);
+    const chk = a.chk, inv = a.inv;
+    const head = [inv.supplier, inv.closeDate ? `${inv.closeDate.replace(/^(\d{4})-0?(\d+)-0?(\d+)$/, "$1/$2/$3")} 締め` : "", inv.invoiceNo ? `No.${inv.invoiceNo}` : ""].filter(Boolean).join("・");
+    const sum = !inv.isInvoice
+      ? `<p>請求書ではないようです（AI：${esc(inv.kind || "わからない")}）。チェックは入れていません。</p>`
+      : chk.ok
+        ? `<p>御買上額（税抜）<b>${yen(chk.kaiage)}円</b>・明細を足すと <b>${yen(chk.sum)}円</b>：合っています。</p>`
+        : `<p>${chk.kaiage == null ? "御買上額（税抜）が読めませんでした" : `御買上額（税抜）<b>${yen(chk.kaiage)}円</b>`}・明細を足すと <b>${yen(chk.sum)}円</b>：合いません。</p>
+           <p>AI の読みまちがいかもしれません。チェックは入れていません。請求書を見ながら、1つずつチェックしてください。</p>`;
+    const vline = v => `${v.date ? md(v.date) + "・" : ""}No.${v.no || "（番号なし）"}${v.chubans.length ? "・" + v.chubans.join("・") : ""}`;
+    const sec = (title, n, body, hint = "") => `<h4 class="b-sub">${title}（${n}枚）</h4>${hint ? `<p class="hint">${hint}</p>` : ""}${n ? `<div class="brows">${body}</div>` : ""}`;
+    return `
+      <div class="bai-sum ${inv.isInvoice && chk.ok ? "ok" : "bad"}">
+        <p class="bai-head">請求書：${esc(head || "（会社・締め日が読めませんでした）")}</p>
+        ${sum}
+        ${a.supWarn ? `<p>${esc(a.supWarn)}</p>` : ""}
+        ${inv.doubt && inv.doubt.length ? `<p class="bai-doubt">AI が読みにくかった所：${esc(inv.doubt.join("／"))}</p>` : ""}
+        <p class="bai-run">${a.pages}ページを AI で ${a.calls}回に分けて読みました</p>
+      </div>
+      ${sec("合う", ok.length, ok.map(p => row(cur(p), `<span class="b-ok">請求書と合う（${yen(p.v.amount)}円）</span>`)).join(""), chk.ok ? "請求書の番号と金額が、アプリの納品書と合いました。はじめからチェックが入っています。" : "")}
+      ${sec("金額がちがう", diff.length, diff.map(p => row(cur(p), `<span class="b-why2">請求書 ${yen(p.v.amount)}円・納品書 ${yen(cur(p).s ? cur(p).s.amount : cur(p).o.nouhin)}円</span>`)).join(""), diff.length ? "チェックすると、請求書の金額で請求ずみにします。" : "")}
+      ${sec("請求書にない", none.length, none.map(x => row(x, '<span class="b-why2 mu">請求書にありません（来月の分かもしれません）</span>')).join(""))}
+      ${sec("アプリにない", a.res.notInApp.length, a.res.notInApp.map(v => `<div class="brow b-none"><span class="b-top">${esc(vline(v))}</span><span class="money">${yen(v.amount)}円</span></div>`).join(""),
+        a.res.notInApp.length ? "請求書にあるのに、アプリの請求まだの納品書に見つかりません。取りこみがまだの納品書か、アプリを通さない注文かもしれません。" : "")}`;
+  }
+  /** 読んだ請求書を、いまえらんでいる材料屋の「請求まだ」の納品書と合わせて、チェック・金額・合計を入れる */
+  function applyInvoice(r) {
+    const u0 = unbilledOf(bulk.sup), ms = monthsOf(u0), inv = r.inv, chk = checkInvoice(inv);
+    if (inv.closeDate) { const m = billMonth(inv.closeDate, u0.d); if (ms.some(g => g.month === m)) bulk.month = m; }
+    bulkPickMonth();
+    const u = unbilledOf(bulk.sup);
+    const res = matchInvoice(invoiceSlips(inv.rows), u.slips, u.bare, bulk.month);
+    bulk.pick = {};
+    for (const p of [...res.ok, ...res.diff]) { if (p.x.s && p.x.month !== bulk.month) bulk.extra.add(p.x.key); bulk.amt[p.x.key] = yen(p.v.amount); }
+    if (inv.isInvoice && chk.ok) for (const p of res.ok) bulk.pick[p.x.key] = true;
+    if (chk.kaiage != null) { bulk.totalManual = true; bulk.total = yen(chk.kaiage); }
+    if (inv.invoiceNo) bulk.no = String(inv.invoiceNo).slice(0, 40);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(inv.closeDate || "")) bulk.date = inv.closeDate;
+    const sm = inv.supplier ? matchSupplier(inv.supplier, Object.entries(st.sups || {})) : { id: "" };
+    const supWarn = sm.id && sm.id !== bulk.sup ? `請求書の会社は「${inv.supplier}」です。えらんでいる材料屋（${supName(bulk.sup)}）とちがうようです。`
+      : inv.supplier && !sm.id ? `請求書の会社「${inv.supplier}」が、⚙ 設定の材料屋に見つかりませんでした。材料屋がちがわないか見てください。` : "";
+    bulk.ai = { inv, chk, res, pages: r.pages, calls: r.calls, supWarn };
+  }
+  async function bulkReadInv(files) {
+    bulk.aiBusy = true; bulk.aiErr = ""; bulk.aiStep = "請求書を絵にしています…"; bulk.done = "";
+    openBulk(true);
+    try {
+      const r = await readInvoiceFiles(files, {
+        onStep: (i, n) => { bulk.aiStep = `AI が請求書を読んでいます…（${i}/${n}回め。1回に30秒〜1分ほどかかります）`; const s = document.querySelector("#bInvSt"); if (s) s.textContent = bulk.aiStep; },
+      });
+      applyInvoice(r);
+    } catch (ex) {
+      bulk.aiErr = `請求書を読めませんでした（${errorText(ex)}）`;
+    }
+    bulk.aiBusy = false;
+    openBulk(true);
+  }
+
   function bulkHTML() {
     const arrived = (st.orders || []).filter(o => o.status === "arrived");
     const supIds = [...new Set(arrived.map(o => o.supplier))].sort((a, b) => supName(a).localeCompare(supName(b), "ja"));
     const u = bulk.sup ? unbilledOf(bulk.sup) : null, ms = u ? monthsOf(u) : [];
     const rows = u ? u.slips.filter(x => x.month === bulk.month || bulk.extra.has(x.key)) : [];
+    // AI で読んだときは、請求書と合わせた納品書がない注文は「合う」「金額がちがう」の所に出すので、ここには出さない（11/20）
+    const aiKeys = bulk.ai ? new Set([...bulk.ai.res.ok, ...bulk.ai.res.diff].map(p => p.x.key)) : null;
+    const bare = u ? u.bare.filter(x => !aiKeys || !aiKeys.has(x.key)) : [];
     const items = s => Object.values(s.rows || {}).map(r => r.spec).filter(Boolean).join("／");
     const other = x => { const os = u.slips.filter(y => y.o.id === x.o.id && y.month !== x.month).map(y => `${Number(y.month.slice(5))}月分`); return os.length ? `（この注文の ${[...new Set(os)].join("・")} の納品書は、べつ）` : ""; };
-    const row = x => `
+    const row = (x, tag = "") => `
       <div class="brow" data-bk="${esc(x.key)}">
         <label class="b-main"><input type="checkbox" data-bpick="${esc(x.key)}"${bulk.pick[x.key] ? " checked" : ""}>
           <span><span class="b-top">${x.s ? `${esc(md(x.s.date))}・No.${esc(x.s.no || "（番号なし）")}・` : "納品書なし・"}<span class="chuban">${esc(x.o.chuban)}</span> ${esc(zenkana(x.o.kenmei))}</span>
+            ${tag}
             <span class="b-items">${x.s && x.month !== bulk.month ? `<span class="tag">${Number(x.month.slice(5))}月分の納品書</span>` : ""}${esc(x.s ? items(x.s) : Object.values(x.o.lines || {}).map(l => lineText(l)).join("／"))}${x.s ? esc(other(x)) : ""}</span>
             <span class="b-why" hidden></span></span></label>
         <div class="yen-in"><input class="inp" data-bamt="${esc(x.key)}" inputmode="numeric" placeholder="金額" value="${esc(bulk.amt[x.key] ?? "")}" aria-label="${esc(x.o.chuban)} の金額"><span>円</span></div>
@@ -1502,12 +1584,14 @@ export function startOfficeApp(main, me) {
             <select id="bMonth" class="inp">${ms.length ? ms.map(g => `<option value="${esc(g.month)}"${g.month === bulk.month ? " selected" : ""}>${esc(monthName(g))}・${g.n}枚・${yen(g.sum)}円${g.closed ? "" : "（まだ締め前）"}</option>`).join("") : '<option value="">請求まだの納品書はありません</option>'}</select></div>` : ""}
         </div>
         ${u ? `<p class="hint">締め日は ⚙ 設定 → 材料屋 で変えられます。どの月の分かは、納品書の日付で決めています。</p>` : ""}
-        ${u && (rows.length || u.bare.length) ? `
-          <div class="block"><h3>${bulk.month ? esc(monthName(ms.find(g => g.month === bulk.month) || { month: bulk.month, ...billPeriod(bulk.month, u.d) })) + "の納品書" : "納品書"}（${rows.length}枚）</h3>
-            <div class="brows">${rows.map(row).join("")}</div>
-            ${u.bare.length ? `<h4 class="b-sub">納品書がない注文（${u.bare.length}件）</h4>
+        ${u ? invAiHTML() : ""}
+        ${u && (rows.length || u.bare.length || bulk.ai) ? `
+          <div class="block">
+            ${bulk.ai ? invResultHTML(u, row) : `<h3>${bulk.month ? esc(monthName(ms.find(g => g.month === bulk.month) || { month: bulk.month, ...billPeriod(bulk.month, u.d) })) + "の納品書" : "納品書"}（${rows.length}枚）</h3>
+            <div class="brows">${rows.map(x => row(x)).join("")}</div>`}
+            ${bare.length ? `<h4 class="b-sub">納品書がない注文（${bare.length}件）</h4>
               <p class="hint">納品書の金額が入っていない注文です。この請求書に入っていれば、金額を入れてチェックしてください。</p>
-              <div class="brows">${u.bare.map(row).join("")}</div>` : ""}
+              <div class="brows">${bare.map(x => row(x)).join("")}</div>` : ""}
             <p class="ptotal"><span id="bCount"></span><span class="money" id="bSum"></span><span>円</span></p>
             <p class="hint">金額のはじめは、納品書の金額です。請求書とちがう納品書は、直してください。</p>
           </div>
@@ -1540,7 +1624,7 @@ export function startOfficeApp(main, me) {
     const total = toPrice(t.value), diff = w.querySelector("#bDiff");
     const gap = total == null ? 0 : Math.round(total) - Math.round(sum);
     // 色・わけを消してから、つけなおす
-    w.querySelectorAll(".brow").forEach(r => { r.classList.remove("b-hit", "b-find"); const y = r.querySelector(".b-why"); y.hidden = true; y.textContent = ""; });
+    w.querySelectorAll(".brow[data-bk]").forEach(r => { r.classList.remove("b-hit", "b-find"); const y = r.querySelector(".b-why"); y.hidden = true; y.textContent = ""; });   // 「アプリにない」の行（data-bk なし。11/20）はのぞく
     const mark = (x, cls, why) => { const r = w.querySelector(`.brow[data-bk="${CSS.escape(x.key)}"]`); if (!r) return false; r.classList.add(cls); if (why) { const y = r.querySelector(".b-why"); y.textContent = why; y.hidden = false; } return true; };
     const same = (x, n) => amtOf(x) != null && Math.round(amtOf(x)) === Math.round(n);
     const mName = m => `${Number(String(m).slice(5))}月分`;
@@ -1590,13 +1674,17 @@ export function startOfficeApp(main, me) {
         if (e.target.id === "bSup" || e.target.id === "bMonth") {
           // 材料屋・月をえらんだら、その月の「請求まだ」の納品書を全部えらぶ（金額は納品書の金額から）
           if (e.target.id === "bSup") { bulk.sup = e.target.value; bulk.month = ""; } else bulk.month = e.target.value;
-          bulk.done = "";
+          bulk.done = ""; bulk.ai = null; bulk.aiErr = "";   // 材料屋・月を変えたら、AI で読んだ結果はけす（11/20）
           bulkPickMonth();
           openBulk(true);
         } else if (e.target.dataset.bpick) {
           bulk.pick[e.target.dataset.bpick] = e.target.checked;
           bulk.armed = false;
           bulkCalc(w);
+        } else if (e.target.id === "bInvFile") {   // 請求書を AI で読む（11/20）
+          const files = [...(e.target.files || [])];
+          e.target.value = "";
+          if (files.length) bulkReadInv(files);
         }
       });
       w.addEventListener("input", e => {
@@ -1610,6 +1698,8 @@ export function startOfficeApp(main, me) {
       w.addEventListener("click", e => {
         const add = e.target.closest("[data-badd]");   // ほかの月の納品書を、この請求書に足す（11/19）
         if (add) { bulk.extra.add(add.dataset.badd); bulk.pick[add.dataset.badd] = true; bulk.armed = false; openBulk(true); return; }
+        if (e.target.id === "bInvBtn") { w.querySelector("#bInvFile").click(); return; }
+        if (e.target.id === "bInvClear") { bulk.ai = null; bulk.aiErr = ""; bulkPickMonth(); openBulk(true); return; }
         if (e.target.id === "bGo") bulkGo(w, e.target).catch(ex => { w.querySelector("#bErr").textContent = errorText(ex); e.target.disabled = false; bulkCalc(w); });
       });
     }, { side: true });
@@ -1635,7 +1725,7 @@ export function startOfficeApp(main, me) {
     const per = bulk.month ? billPeriod(bulk.month, u.d) : {};
     await billSlips(sup, picks, { no: w.querySelector("#bNo").value.trim(), date: w.querySelector("#bDate").value || ymd(0), total: Math.round(total), month: bulk.month, from: per.from, to: per.to }, me);
     bulk.done = `${sup.name}${bulk.month ? ` の ${Number(bulk.month.slice(5))}月分` : ""}：${picks.length}件を請求ずみにしました（合計 ${yen(sum)}円）`;
-    bulk.month = ""; bulk.no = ""; bulk.date = "";
+    bulk.month = ""; bulk.no = ""; bulk.date = ""; bulk.ai = null;
     bulkPickMonth();   // のこりがあれば、つぎの月を出す
     toast(bulk.done);
     openBulk();

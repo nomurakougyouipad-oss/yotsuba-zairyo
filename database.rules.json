@@ -176,7 +176,7 @@
             },
             "order": { ".validate": "newData.isNumber()" },
             "hidden": { ".validate": "newData.isBoolean()" },
-            "shime": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 28" },
+            "shime": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 30" },
             "$other": { ".validate": false }
           }
         },

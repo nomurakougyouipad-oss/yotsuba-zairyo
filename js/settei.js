@@ -126,8 +126,8 @@ function supHTML() {
 
 /** 材料屋の送り方（「ネットで買う」は 10/15。モノタロウなどのお店のページを開いて買う） */
 const SEND_BY = [["mail", "メール"], ["line", "LINE"], ["fax", "FAX"], ["net", "ネットで買う"], ["", "決めない"]];
-/** えらべる締め日（0＝月末。11/19 持ち主。はじめは全部 月末） */
-const SHIME_DAYS = [0, 5, 10, 15, 20, 25];
+/** えらべる締め日（0＝月末。11/19 持ち主。はじめは全部 月末。30日は 11/20：菅機械産業の請求書に「締日 30日」。はじめは月末のまま） */
+const SHIME_DAYS = [0, 5, 10, 15, 20, 25, 30];
 
 function supCard([id, s]) {
   const alias = entries(s.alias).map(([, a]) => a);
@@ -162,7 +162,7 @@ function supCard([id, s]) {
         <input class="inp" data-edit="faxno" data-id="${id}" value="${esc(s.fax || "")}" maxlength="20" inputmode="tel" autocomplete="off" placeholder="例 089-000-0000"></label>` : ""}
       ${s.send === "line" ? `<label class="mini">LINE の送り先（友だちやグループの名前。LINE ボタンを押したときに「○○ をえらんでください」と出ます）
         <input class="inp" data-edit="lineto" data-id="${id}" value="${esc(s.lineTo || "")}" maxlength="40" autocomplete="off" placeholder="例 ○○商店（グループ）"></label>` : ""}
-      <div class="mini">締め日（「まとめて請求」の「○月分」を、この日で区切ります。月末なら 1日〜末日、20日なら 前の月の21日〜20日）
+      <div class="mini">締め日（「まとめて請求」の「○月分」を、この日で区切ります。月末なら 1日〜末日、20日なら 前の月の21日〜20日。30日なら 31日の分は次の月・2月は月末まで）
         <div class="seg sendby" role="radiogroup" aria-label="${esc(s.name)} の締め日">
           ${SHIME_DAYS.map(v => `<button type="button" role="radio" data-supshime="${id}" data-v="${v}" aria-checked="${shimeOf(s) === v}">${shimeText(v)}</button>`).join("")}
         </div>

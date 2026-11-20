@@ -593,12 +593,12 @@ export async function backToArrived(o) {
 }
 
 /* ---------- 締め日と請求の月・納品書ごとの「請求ずみ」（11/19 持ち主「まとめて請求を、材料屋ごとに月1回の作業に」） ----------
-   - 材料屋の締め日は ⚙ 設定 → 材料屋（/zairyo/master/suppliers/{id}/shime＝1〜28 の日。ないときは月末）
+   - 材料屋の締め日は ⚙ 設定 → 材料屋（/zairyo/master/suppliers/{id}/shime＝1〜30 の日。ないときは月末。30日締めは、2月は月末・31日は次の月の分。11/20 持ち主）
    - 「11月分」＝締め日で区切った月。月末なら 11/1〜11/30、20日締めなら 10/21〜11/20。どの月かは納品書の日付で決める
    - 請求ずみは納品書ごとに持つ（slips/{sid}/inv＝請求書の記録の番号・invAmt＝請求書の金額）。その注文の納品書が全部しまったら、
      注文を「請求ずみ」（status・seikyu＝請求書の金額の合計・billedAt・billedBy・invoiceId）。よつば台帳が読む注文の欄の意味は前と同じ */
-/** 材料屋の締め日（1〜28。0＝月末） */
-export const shimeOf = sup => { const n = Number(sup && sup.shime); return Number.isInteger(n) && n >= 1 && n <= 28 ? n : 0; };
+/** 材料屋の締め日（1〜30。0＝月末） */
+export const shimeOf = sup => { const n = Number(sup && sup.shime); return Number.isInteger(n) && n >= 1 && n <= 30 ? n : 0; };
 export const shimeText = d => (d ? `${d}日` : "月末");
 const ymdOf = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 /** 納品書の日付 "YYYY-MM-DD" → 請求の月 "YYYY-MM"（締め日より後の日は、つぎの月の分） */

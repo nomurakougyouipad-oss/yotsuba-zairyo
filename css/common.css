@@ -690,6 +690,18 @@ ul.plain{margin:0;padding-left:1.2em}
 .bdiff p{margin:2px 0}
 .b-sub{margin:14px 0 2px;font-size:14px;color:var(--muted)}
 .b-away{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+/* 請求書を AI で読む（11/20）：合ったら青・合わない／あやしいときは赤 */
+.b-ai-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}
+.b-ai-head .btn{min-height:44px}
+.bai-sum{border:2px solid var(--blue);border-radius:10px;padding:10px 12px;margin:4px 0 8px;font-size:14px}
+.bai-sum p{margin:3px 0}
+.bai-sum.bad{border-color:var(--danger);color:var(--danger);font-weight:700}
+.bai-head{font-weight:800}
+.bai-doubt,.bai-run{font-size:12px;color:var(--muted);font-weight:500}
+.b-ok{font-size:12px;font-weight:700;color:var(--blue)}
+.b-why2{font-size:12px;font-weight:700;color:var(--amber)}
+.b-why2.mu{color:var(--muted)}
+.brow.b-none{grid-template-columns:minmax(0,1fr) auto;color:var(--muted)}
 .okmsg{margin:0;padding:10px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--blue);color:var(--blue);font-weight:700}
 @media (max-width:520px){ .brow{grid-template-columns:1fr} }
 /* 写真・リンク・ネットでさがす（11章 6） */
@@ -826,6 +838,13 @@ ul.plain{margin:0;padding-left:1.2em}
 /* AI のモデルをくらべる（ai-kurabe.html・ためし用） */
 .kscore{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
 .kscore p{margin:0}
+/* 請求書を読む AI をくらべる（seikyu-kurabe.html・ためし用。11/20） */
+.tblwrap{overflow-x:auto}
+.ktbl{width:100%;border-collapse:collapse;font-size:13px}
+.ktbl th,.ktbl td{border-top:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+.ktbl td small{display:block;color:var(--muted);font-weight:400;margin-top:2px}
+.ktbl td.ok{color:var(--blue);font-weight:700}
+.ktbl td.bad{color:var(--danger);font-weight:700}
 .ktable{display:flex;flex-direction:column;gap:8px}
 .krow2{border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;background:var(--bg)}
 .krow2.diff{border-left:4px solid var(--amber)}
