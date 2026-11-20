@@ -1513,8 +1513,20 @@ export function startOfficeApp(main, me) {
       ${sec("合う", ok.length, ok.map(p => row(cur(p), `<span class="b-ok">請求書と合う（${yen(p.v.amount)}円）</span>`)).join(""), chk.ok ? "請求書の番号と金額が、アプリの納品書と合いました。はじめからチェックが入っています。" : "")}
       ${sec("金額がちがう", diff.length, diff.map(p => row(cur(p), `<span class="b-why2">請求書 ${yen(p.v.amount)}円・納品書 ${yen(cur(p).s ? cur(p).s.amount : cur(p).o.nouhin)}円</span>`)).join(""), diff.length ? "チェックすると、請求書の金額で請求ずみにします。" : "")}
       ${sec("請求書にない", none.length, none.map(x => row(x, '<span class="b-why2 mu">請求書にありません（来月の分かもしれません）</span>')).join(""))}
+      ${(a.res.billed || []).length ? sec("もう請求ずみ", a.res.billed.length, a.res.billed.map(p => `<div class="brow b-none"><span class="b-top">${esc(vline(p.v))}${p.v.chubans.includes(p.x.o.chuban) ? "" : `・<span class="chuban">${esc(p.x.o.chuban)}</span>`}　請求ずみ${p.x.o.billedAt ? `（${esc(md(p.x.o.billedAt))}）` : ""}</span><span class="money">${yen(p.v.amount)}円</span></div>`).join(""),
+        "前に「請求が来た」や「まとめて請求」で、もう請求ずみにした納品書です。チェックには出しません。") : ""}
       ${sec("アプリにない", a.res.notInApp.length, a.res.notInApp.map(v => `<div class="brow b-none"><span class="b-top">${esc(vline(v))}</span><span class="money">${yen(v.amount)}円</span></div>`).join(""),
         a.res.notInApp.length ? "請求書にあるのに、アプリの請求まだの納品書に見つかりません。取りこみがまだの納品書か、アプリを通さない注文かもしれません。" : "")}`;
+  }
+  /** その材料屋の、もう請求ずみの納品書（注文が請求ずみ＝「請求が来た」・まとめて請求、と、納品書ごとに請求ずみ）。形は unbilledOf と同じ */
+  function billedOf(sid) {
+    const slips = [], bare = [];
+    for (const o of (st.orders || []).filter(x => x.supplier === sid && (x.status === "billed" || x.status === "arrived"))) {
+      const all = slipsOf(o);
+      if (!all.length) { if (o.status === "billed") bare.push({ key: `${o.id}/-`, o }); continue; }
+      for (const [k, s] of all) if (o.status === "billed" || s.inv) slips.push({ key: `${o.id}/${k}`, o, sid: k, s, month: "" });
+    }
+    return { slips, bare };
   }
   /** 読んだ請求書を、いまえらんでいる材料屋の「請求まだ」の納品書と合わせて、チェック・金額・合計を入れる */
   function applyInvoice(r) {
@@ -1523,6 +1535,9 @@ export function startOfficeApp(main, me) {
     bulkPickMonth();
     const u = unbilledOf(bulk.sup);
     const res = matchInvoice(invoiceSlips(inv.rows), u.slips, u.bare, bulk.month);
+    // アプリの「請求まだ」に見つからない納品書のうち、前に請求ずみにしたもの（「請求が来た」・まとめて請求）は「もう請求ずみ」に分ける（11/20 持ち主）
+    const b = billedOf(bulk.sup), again = matchInvoice(res.notInApp, b.slips, b.bare, "");
+    res.billed = [...again.ok, ...again.diff]; res.notInApp = again.notInApp;
     bulk.pick = {};
     for (const p of [...res.ok, ...res.diff]) { if (p.x.s && p.x.month !== bulk.month) bulk.extra.add(p.x.key); bulk.amt[p.x.key] = yen(p.v.amount); }
     if (inv.isInvoice && chk.ok) for (const p of res.ok) bulk.pick[p.x.key] = true;
