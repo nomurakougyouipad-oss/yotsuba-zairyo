@@ -29,8 +29,10 @@ export function normCatalog(raw) {
 export function rowShown(it, k, vals) {
   const w = it && it.when && it.when[k];
   const list = arr(w && w.vals);
-  if (!w || !w.row || !list.length) return true;
-  const v = vals[w.row];
+  // rows＝どれか1つの行で決める（11/24：ねじ込み継手の「厚さ（高圧）」は「材質」か「材質（ソケット）」が S25C（高圧）のとき。出ている行は1つだけ）
+  const rows = w ? (arr(w.rows).length ? arr(w.rows) : [w.row]).filter(Boolean) : [];
+  if (!w || !rows.length || !list.length) return true;
+  const v = rows.map(r => vals[r]).find(Boolean);
   if (!v) return false;
   return w.not ? !list.includes(v) : list.includes(v);
 }

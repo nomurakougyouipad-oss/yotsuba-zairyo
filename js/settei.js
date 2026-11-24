@@ -512,8 +512,11 @@ function btnEditor(ci, ii, it) {
     const w = (it.when && it.when[label]) || {}, def = (it.def && it.def[label]) || "";
     const others = opts.filter(([, l]) => l !== label), src = others.find(([, l]) => l === w.row);
     const on = src ? entries(w.vals).map(([, v]) => v) : [];
+    // 2つ以上の行のどれかで決める形（rows。11/24 ねじ込み継手の「厚さ（高圧）」）。ここで「…のボタンで決める」を変えると、1つの行の形になる
+    const rowsTxt = entries(w.rows).map(([, r]) => `「${r}」`).join("か");
+    const name = rowsTxt || (src ? `「${src[1]}」` : "");
     const now = !src || !on.length ? "いつも出ます"
-      : `「${src[1]}」が ${on.join("・")} のとき${w.not ? "は出しません（ほかのボタンや「ほか…」で書いたときは出します）" : "だけ出します"}。「${src[1]}」をえらぶまでは出ません`;
+      : `${name}が ${on.join("・")} のとき${w.not ? "は出しません（ほかのボタンや「ほか…」で書いたときは出します）" : "だけ出します"}。${name}をえらぶまでは出ません${rowsTxt ? "（上で「…のボタンで決める」を変えると、1つの行で決める形になります）" : ""}`;
     return `
       <div class="cond">
         <div class="row">

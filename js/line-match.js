@@ -14,6 +14,8 @@
 // - 11/19（事務員さん）：「キャッチクリップTL-11F（栃木屋）」が「タキゲン キャッチクリップ TL-11F(栃木屋)」になった（AI が書いていないメーカーを入れた）。
 //   「えらばなくてもよい」行（メーカー・異径の枝・FB の種類）は、AI が「書いていない」と言った値を入れない（空のまま）。メーカーは、LINE の文にその名前がなければ入れない。
 //   メーカーが空で、LINE にメーカーのボタンの名前が書いてあれば、それを入れる。メーカーに入れた名前は、品名のおわりに足す字からのぞく
+// - 11/24（事務員さん・大岡産業の表）：ねじ込み継手の材質は SUS304・FCMB（黒）・FCMB（白）・S25C（高圧）。「316」「316L」「PT370」は書いてあるまま。
+//   「高圧」「S25C」は S25C（高圧）（高圧がない品物ならオレンジ）。S25C（高圧）のときは厚さ（高圧）（Sch80・Sch160）も（fixNeji）
 import { ref, get, update } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 import { db, call } from "./firebase.js";
 import { esc } from "./common.js";
@@ -147,39 +149,80 @@ export function createMatcher({ box, catalog, splitLine, onState }) {
   /** ねじ込み継手の材質（11/19 事務員さん）：SUS304・SUS316L・FCMB（黒）・FCMB（白）・PT370。ソケットだけ SS400 も（「材質（ソケット）」の行）。
    *  「白」「黒」は FCMB（白）・FCMB（黒）。ソケット以外で SS400 なら、オレンジで「FCMB（黒）・FCMB（白）・PT370 のどれか」を聞く（黒・白が書いてあれば、それをおすすめに）。
    *  ソケットで LINE に SS400 と書いてあれば SS400。覚えた当て方は、その値（SS400黒 などの前の値もそろえる） */
-  const NEJI = "tsugite:neji", NEJI_SOCK = "材質（ソケット）";
-  const NEJI_ASK = "SS400 と書いてあります。FCMB（黒）・FCMB（白）・PT370 のどれですか？";
+  // 11/24（事務員さん・大岡産業の表）：材質は SUS304・FCMB（黒）・FCMB（白）・S25C（高圧）。SUS316L・PT370 はボタンから外した（PT370 はねじ込みにない）。
+  //   S25C（高圧）は、高圧がある品物（エルボ・45°エルボ・チーズ・ソケット・六角ニップル・プラグ）の「材質」「材質（ソケット）」の行だけ。
+  //   ほかの品物（ユニオン・ニップル・キャップ・ブッシング）は「材質（高圧なし）」の行。どの行を出すかは品物一覧の「この行を出すとき」で決める。
+  //   S25C（高圧）のときだけ「厚さ（高圧）」（Sch80・Sch160）。LINE の「316」「316L」「PT370」は、ほかの材質にしないで書いてあるまま。
+  //   「高圧」「S25C」は S25C（高圧）。高圧がない品物で「高圧」と書いてあれば、オレンジで聞く
+  const NEJI = "tsugite:neji", NEJI_SOCK = "材質（ソケット）", NEJI_LOW = "材質（高圧なし）", NEJI_ROWS = ["材質", NEJI_LOW, NEJI_SOCK];
+  const HIGH = "S25C（高圧）", NEJI_THICK = "厚さ（高圧）";
+  /** LINE に書いてある、ボタンにない材質（316・316L・PT370）を、書いてあるまま */
+  const nejiWritten = t => { const m = t.match(/SUS\s*316L?|(?<![\dA-Z])316L?(?![\d])|PT\s*370/i); return m ? m[0].toUpperCase().replace(/\s+/g, "") : ""; };
   const nejiMat = v => {
-    const m = String(v || "").normalize("NFKC");
-    if (/SUS\s*316/i.test(m)) return "SUS316L";
+    const m = String(v || "").normalize("NFKC").trim();
+    if (/316/.test(m) || /PT\s*370/i.test(m)) return m;   // 書いてあるまま（11/24）
+    if (/S\s*25\s*C|高圧/i.test(m)) return HIGH;
     if (/SUS/i.test(m)) return "SUS304";
-    if (/PT\s*370|STPT|STPG/i.test(m)) return "PT370";
     if (/白/.test(m)) return "FCMB（白）";
     if (/黒/.test(m)) return "FCMB（黒）";
     if (/FCMB/i.test(m)) return "FCMB（黒）";
     if (/SS\s*400/i.test(m)) return "SS400";
-    return m.trim();
+    return m;
   };
   function fixNeji(r, body, guess) {
     const it = ITEM.get(r.key), name = r.vals["品名"];
     if (!name || !it.opts.some(o => o[0] === NEJI_SOCK)) return;   // 品名がまだ・前の品物一覧（行が1つ）のときは、そのまま
-    const sock = name === "ソケット", row = sock ? NEJI_SOCK : "材質", other = sock ? "材質" : NEJI_SOCK;
+    const has = k => it.opts.some(o => o[0] === k);
+    // この品名で出る材質の行（品物一覧の「この行を出すとき」）。前の品物一覧（高圧なしの行がない）は 材質／材質（ソケット）
+    const row = NEJI_ROWS.find(k => has(k) && rowShown(it, k, { 品名: name })) || (name === "ソケット" ? NEJI_SOCK : "材質");
+    const btns = (it.opts.find(o => o[0] === row) || [row, []])[1];
     const t = String(body || "").normalize("NFKC"), memo = r.how === "memo";
-    let v = nejiMat(r.vals[row] || r.vals[other]);
-    delete r.vals[other];
-    const asked = (guess || []).some(k => k === "材質" || k === NEJI_SOCK);
-    r.ask = r.ask.filter(k => k !== "材質" && k !== NEJI_SOCK);
-    if (!memo && /SS\s*400/i.test(t)) v = "SS400";   // LINE に SS400 と書いてある（ソケットは SS400 のまま・ほかは下で聞く）
-    if (!sock && v === "SS400") {   // ソケット以外の SS400 は聞く
+    let v = nejiMat(NEJI_ROWS.map(k => r.vals[k]).find(Boolean));
+    NEJI_ROWS.forEach(k => { if (k !== row) delete r.vals[k]; });
+    const asked = (guess || []).some(k => NEJI_ROWS.includes(k));
+    r.ask = r.ask.filter(k => !NEJI_ROWS.includes(k));
+    if (!memo) {   // LINE に書いてある材質を先に（覚えた当て方は、事務員さんがえらんだ値のまま）
+      // SUS304 と「高圧」が両方書いてあるときは、S25C（高圧）にしないで書いてあるまま（11/24 持ち主：大岡さんの表には SUS304 の高圧もある。316 と同じあつかい）
+      const w = nejiWritten(t) || (/SUS\s*304/i.test(t) && /高圧/.test(t) ? "SUS304" : "");
+      if (w) v = /高圧/.test(t) ? withHigh(t, w) : w;
+      else if (/高圧|S\s*25\s*C/i.test(t)) v = HIGH;
+      else if (/SS\s*400/i.test(t)) v = "SS400";   // ソケットは SS400 のまま・ほかは下で聞く
+    }
+    const ask = note => { r.ask.unshift(row); r.askNote[row] = note; };
+    const pick = btns.filter(b => /FCMB|S25C/.test(b)).join("・");
+    if (row !== NEJI_SOCK && v === "SS400") {   // ソケット以外の SS400 は聞く
       const rec = /白/.test(t) ? "FCMB（白）" : /黒/.test(t) ? "FCMB（黒）" : "";
       if (rec) r.vals[row] = rec; else delete r.vals[row];
-      r.ask.unshift(row);
-      r.askNote[row] = memo && !/SS\s*400/i.test(t) ? "前は「SS400」で覚えていました。FCMB（黒）・FCMB（白）・PT370 のどれですか？" : NEJI_ASK;
+      ask(memo && !/SS\s*400/i.test(t) ? `前は「SS400」で覚えていました。${pick} のどれですか？` : `SS400 と書いてあります。${pick} のどれですか？`);
+      return;
+    }
+    if (v === HIGH && !btns.includes(HIGH)) {   // 高圧がない品物（ユニオン・キャップ など）
+      delete r.vals[row];
+      ask(`「高圧」と書いてありますが、高圧の${name}はボタンにありません。どれですか？（ほかの材質なら「なおす」で書けます）`);
       return;
     }
     if (v) r.vals[row] = v; else delete r.vals[row];
-    if (asked && !memo && !/SUS|PT\s*370|STPT|STPG|白|黒|FCMB|SS\s*400/i.test(t)) r.ask.unshift(row);   // 材質が書いていなければ聞く
+    if (asked && !memo && !/SUS|316|PT\s*370|高圧|S\s*25\s*C|白|黒|FCMB|SS\s*400/i.test(t)) r.ask.unshift(row);   // 材質が書いていなければ聞く
+    // 厚さ（高圧）：LINE の Sch80・S80・80S などを Sch80・Sch160 に。書いていなければ、えらぶまで入れられない（askMore）
+    const m = t.match(/S(?:CH)?\.?\s?(80|160)(?![\d])|(?<![\d])(80|160)\s?S(?![A-Z])/i);
+    if (has(NEJI_THICK) && rowShown(it, NEJI_THICK, r.vals)) {
+      const hit = m ? `Sch${m[1] || m[2]}` : nejiThick(r.vals[NEJI_THICK]);
+      if (hit) r.vals[NEJI_THICK] = hit; else delete r.vals[NEJI_THICK];
+    } else {
+      delete r.vals[NEJI_THICK];
+      // 厚さの行が出ない材質（SUS304 高圧・316 など書いたままの材質）で厚さが書いてあれば、品名のおわりに残す（消えないように）
+      if (m && !normU(`${r.extra || ""}`).includes(normU(m[0]))) r.extra = `${r.extra || ""} ${m[0]}`.trim();
+    }
+    askMore(r);
   }
+  /** 書いたままの材質に「高圧」をつける：LINE の「SUS304高圧」「高圧 SUS304」などはその字のまま、はなれていれば「SUS304 高圧」 */
+  const withHigh = (t, w) => {
+    const core = w.replace(/^SUS/i, "").replace(/L$/i, "");
+    const re = new RegExp(`(?:SUS\\s*)?${core}L?\\s*[（(]?\\s*高圧\\s*[)）]?|高圧\\s*(?:SUS\\s*)?${core}L?`, "i");
+    const hit = t.match(re);
+    return hit ? hit[0].replace(/\s+/g, " ").trim() : `${w} 高圧`;
+  };
+  const nejiThick = v => { const n = (String(v || "").match(/80|160/) || [])[0]; return n ? `Sch${n}` : ""; };
   /** 溶接継手の厚さ：書いてある厚さ（s40・40S・Sch40 など）を、いまの材質で出ている厚さの行にうつす。
    *  PT370 は「厚さ（PT370）」の s40・s80 だけ、SUS304 は今まで通りの行（11/5）。合うボタンがないときは聞く */
   const fixThick = r => {
