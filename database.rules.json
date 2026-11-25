@@ -338,6 +338,8 @@
               "chuban": { ".validate": "newData.isString() && newData.val().length <= 12" },
               "sup": { ".validate": "newData.isString() && newData.val().length <= 40" },
               "no": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "readSup": { ".validate": "newData.isString() && newData.val().length <= 60" },
+              "slipSup": { ".validate": "newData.isString() && newData.val().length <= 40" },
               "with": {
                 "$w": {
                   "o": { ".validate": "newData.isString() && newData.val().length <= 40" },

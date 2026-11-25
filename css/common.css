@@ -709,6 +709,11 @@ ul.plain{margin:0;padding-left:1.2em}
 .with-row input{width:22px;height:22px;margin-top:2px;flex:none;accent-color:var(--amber-btn)}
 .with-note{border-left:4px solid var(--blue);padding:4px 10px;margin:6px 0;font-size:13px}
 .with-note p{margin:0 0 4px}
+/* 納品書の取りこみ：ちがう材料屋の注文をえらんだとき（11/25） */
+.sup-warn{border:2px solid var(--amber);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:14px;color:var(--amber)}
+.sup-warn p{margin:0 0 6px}
+.sup-ok{display:flex;gap:10px;align-items:center;min-height:44px;font-weight:700;cursor:pointer}
+.sup-ok input{width:22px;height:22px;flex:none;accent-color:var(--amber-btn)}
 .brow.b-none{grid-template-columns:minmax(0,1fr) auto;color:var(--muted)}
 .okmsg{margin:0;padding:10px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--blue);color:var(--blue);font-weight:700}
 @media (max-width:520px){ .brow{grid-template-columns:1fr} }
