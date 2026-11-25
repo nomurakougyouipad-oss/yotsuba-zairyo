@@ -376,8 +376,8 @@ export function startGenbaApp(main, me) {
             <span class="kouji"><span class="chuban">${esc(r.chuban)}</span><span class="kenmei">${esc(zenkana(r.kenmei))}</span></span>
             <span class="items">${esc(ls.map(lineText).join("\n"))}</span>
             <span class="sent-st s${pg.step}">${esc(pg.label)}</span>
-            ${(() => { const mo = reqMoney(r, ordersFor(r.id)); return !isCancelled(r) && mo.anyKnown
-              ? `<span class="sent-money">金額 <b class="num">${yen(mo.total)}</b>円（税抜）${mo.allKnown ? "" : '<span class="hint">　ほかはまだ</span>'}</span>` : ""; })()}
+            ${(() => { const mo = reqMoney(r, ordersFor(r.id)), w = mo.per.find(x => x.with); return !isCancelled(r) && mo.anyKnown
+              ? `<span class="sent-money">金額 <b class="num">${yen(mo.total)}</b>円（税抜）${mo.allKnown ? "" : '<span class="hint">　ほかはまだ</span>'}${w ? `<span class="hint">　（${w.with.at ? `${md(w.with.at)} の注文` : "ほかの注文"}の納品書に、まとめて入っている分があります）</span>` : ""}</span>` : ""; })()}
           </button>`;
       }).join("");
     // つながりのたしかめ：かきなおしても開いたまま（前は、データが変わると閉じて、そのぶん画面が上にずれた。11/2 持ち主）
@@ -393,7 +393,8 @@ export function startGenbaApp(main, me) {
     if (!mo.per.length) return "";
     return `
       <div class="block"><h3>金額（税抜）</h3><dl class="dl yenlist">
-        ${mo.per.map(x => `<dt>${esc(x.sup)}</dt><dd>${x.amount != null ? `<b class="num">${yen(x.amount)}</b>円` : `<span class="hint">まだ（${x.status === "wait" ? "届いていない" : "納品書の金額待ち"}）</span>`}</dd>`).join("")}
+        ${mo.per.map(x => `<dt>${esc(x.sup)}</dt><dd>${x.with ? `<b class="num">0</b>円<span class="hint">（${x.with.at ? `${md(x.with.at)} の注文` : "ほかの注文"}の納品書に、まとめて入っています）</span>`
+          : x.amount != null ? `<b class="num">${yen(x.amount)}</b>円` : `<span class="hint">まだ（${x.status === "wait" ? "届いていない" : "納品書の金額待ち"}）</span>`}</dd>`).join("")}
         ${mo.per.length > 1 && mo.anyKnown ? `<dt>合計</dt><dd><b class="num big">${yen(mo.total)}</b>円${mo.allKnown ? "" : '<span class="hint">　ほかはまだ</span>'}</dd>` : ""}
       </dl><p class="hint">金額は、事務所が納品書や請求書から入れたものです。</p></div>`;
   }

@@ -524,6 +524,27 @@ export function lineDone(orders, o, lid, l) {
 /** 注文の品物の短い名前（えらぶ所・知らせ用） */
 export const linesShort = (o, n = 40) => { const t = Object.values(o.lines || {}).map(l => l.spec).join("・"); return t.length > n ? t.slice(0, n) + "…" : t; };
 
+/* ---------- 1枚の納品書に、同じ注番・同じ材料屋のほかの注文の分もまとめて入っている（11/25 事務員さん：小野建 26-077727・YE26025） ----------
+   - まとめて入っている注文（c）：withSlip＝"入れた注文の番号/納品書の番号"・金額0円（nouhin 0）・届いた
+   - 請求ずみは、その納品書といっしょ（まとめて請求・「請求が来た」・「請求まだにもどす」）。納品書を消したら、まとめるのもやめる */
+/** c がまとめて入っている納品書 { oid, sid }（なければ null） */
+export const withOf = c => { const m = /^([^/]+)\/(.+)$/.exec(String((c && c.withSlip) || "")); return m ? { oid: m[1], sid: m[2] } : null; };
+/** 注文 oid の納品書 sid にまとめて入っている注文（取り消した注文はのぞく） */
+export const coveredBy = (orders, oid, sid) => (orders || []).filter(c => c.withSlip === `${oid}/${sid}` && c.status !== "cancelled");
+/** まとめる書きこみを upd に足す（まだ届いていなければ「届いた」にする）。at＝入れた注文の注文日（withAt。現場のスマホはほかの人の注文を読めないので、
+ *  「○/○ の注文の納品書にまとめて入っています」と出せるように、まとめた注文に書いておく） */
+export function withUpd(upd, c, oid, sid, me, at) {
+  const b = `zairyo/orders/${c.id}`;
+  upd[`${b}/withSlip`] = `${oid}/${sid}`;
+  if (Number.isFinite(Number(at)) && Number(at) > 0) upd[`${b}/withAt`] = Number(at);
+  upd[`${b}/nouhin`] = 0;
+  if (c.status === "wait") { upd[`${b}/status`] = "arrived"; upd[`${b}/arrivedAt`] = serverTimestamp(); upd[`${b}/arrivedBy`] = me.name; }
+}
+/** まとめるのをやめる（「届いた」のまま。金額は「まだ」に） */
+export async function unWith(c) {
+  await update(ref(db, `zairyo/orders/${c.id}`), { withSlip: null, withAt: null, nouhin: null });
+}
+
 /** 納品書を消す（入れまちがえたとき） */
 export async function removeSlip(o, sid) {
   const rest = slipsOf(o).filter(([id]) => id !== sid);
@@ -663,7 +684,8 @@ export const priceText = p => (p.price != null ? `@${yen(p.price)}円 ×${p.qty 
 /** 依頼の金額（現場に見せる）：材料屋ごとの材料費と合計。allKnown＝全部注文して、全部の金額が入った */
 export function reqMoney(r, os) {
   const act = os.filter(o => o.status !== "cancelled");
-  const per = act.map(o => ({ sup: o.supplierName, amount: cost(o), status: o.status }));
+  // withSlip＝ほかの注文の納品書にまとめて入っている（11/25。0円とだけ出ると、現場がとまどうので、どの注文の納品書かを出す）
+  const per = act.map(o => ({ sup: o.supplierName, amount: cost(o), status: o.status, with: o.withSlip ? { at: o.withAt || null } : null }));
   const known = per.filter(x => x.amount != null);
   return {
     per,

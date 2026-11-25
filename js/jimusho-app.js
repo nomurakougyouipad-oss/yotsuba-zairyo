@@ -11,7 +11,7 @@ import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet, keepPlace } from "./common.js";
 import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
-import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billSlips, shimeOf, shimeText, billMonth, billPeriod, azkText, orderPdf, pdfLine, npSlipsOf, npDupOf, deliveredRows, notInOrder, checksOrd, sameThing, removeNpSlip, setRowOrd, lineDone, isLineOrder, LINE_NOTE, slipScans, isReturnSlip, hasReturn, isKakou, partOf, gotList, markGot } from "./chumon.js";
+import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billSlips, shimeOf, shimeText, billMonth, billPeriod, azkText, orderPdf, pdfLine, npSlipsOf, npDupOf, deliveredRows, notInOrder, checksOrd, sameThing, removeNpSlip, setRowOrd, lineDone, isLineOrder, LINE_NOTE, slipScans, isReturnSlip, hasReturn, isKakou, partOf, gotList, markGot, coveredBy, withOf, unWith, linesShort } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel, shopOf, pageLink, SHOPS } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
@@ -956,7 +956,7 @@ export function startOfficeApp(main, me) {
   function amtHTML(o) {
     const c = cost(o);
     return c != null
-      ? `<span class="amt"><span>材料費</span><span class="num">${yen(c)}</span><span class="yen">円</span><span>（${o.seikyu != null ? "請求" : o.slips && o.slips.sup ? "納品書・材料屋" : "納品書"}）</span></span>`
+      ? `<span class="amt"><span>材料費</span><span class="num">${yen(c)}</span><span class="yen">円</span><span>（${o.seikyu != null ? "請求" : o.withSlip ? `${o.withAt ? `${md(o.withAt)} の注文` : "ほかの注文"}の納品書にまとめて入っている` : o.slips && o.slips.sup ? "納品書・材料屋" : "納品書"}）</span></span>`
       : '<span class="amt"><span>金額はまだ</span></span>';
   }
 
@@ -986,13 +986,25 @@ export function startOfficeApp(main, me) {
               <button type="button" class="linkbtn muted" data-slipdel="${esc(sid)}">消す</button></div>
             ${(sc => sc.map((p, i) => `<button type="button" class="linkbtn" data-phview="${esc(p)}">納品書のスキャンを見る${sc.length > 1 ? `（${i + 1}枚目）` : ""}</button>`).join(""))(slipScans(s))}
             ${rowsHTML(o, sid, s, false)}
+            ${(cv => (cv.length ? `<p class="with-note">この納品書には、同じ注番のほかの注文の分も、まとめて入っています：${esc(covText(cv))}（その注文は0円）</p>` : ""))(coveredBy(st.orders, o.id, sid))}
             <span class="hint">入れた人：${esc(s.by || "")}${s.imp ? "（納品書の取りこみ）" : ""}${s.src === "sup" ? "・材料屋のアプリから" : ""}</span>
             ${s.fixBy ? `<span class="hint">直した人：${esc(s.fixBy)}${s.fixAt ? `（${md(s.fixAt)}）` : ""}。材料屋が入れた金額は ${yen(s.supAmount)}円</span>` : ""}
           </li>`).join("")}</ul>
           ${sl.length > 1 ? `<p class="ptotal"><span>納品書の合計</span><span class="money">${yen(o.nouhin)}</span><span>円</span></p>` : ""}
           <div class="row"><button type="button" class="linkbtn" data-slipmore>＋ 納品書をもう1枚入れる</button></div>` : ""}
+        ${withNoteHTML(o, dayText)}
         ${npBlockHTML(o, dayText)}
-        <div id="slipFormBox"${sl.length ? " hidden" : ""}>${form}</div>
+        <div id="slipFormBox"${sl.length || o.withSlip ? " hidden" : ""}>${form}</div>
+      </div>`;
+  }
+  /** ほかの注文の納品書にまとめて入っている注文（11/25）：どの納品書か・0円・「まとめるのをやめる」 */
+  function withNoteHTML(o, dayText) {
+    const w = withOf(o);
+    if (!w) return "";
+    const a = (st.orders || []).find(x => x.id === w.oid), s = a && (a.slips || {})[w.sid];
+    return `<div class="with-note">
+        <p>この注文の品物は、${a ? `${esc(md(a.orderedAt))} 注文（${esc(linesShort(a, 30))}）の` : "ほかの注文の"}納品書${s && s.no ? ` No.${esc(s.no)}` : ""}${s && s.date ? `（${esc(dayText(s.date))}）` : ""}に、まとめて入っています。金額は0円です。請求ずみは、その納品書といっしょになります。</p>
+        ${o.status !== "billed" ? '<button type="button" class="linkbtn muted" data-unwith>まとめるのをやめる（金額を「まだ」にもどす）</button>' : ""}
       </div>`;
   }
   /** 手で入れる欄で、もう納品書で入っている品物（11/4 OS26315：2回数えない）→ {品物id: {text, amount}} */
@@ -1297,7 +1309,7 @@ export function startOfficeApp(main, me) {
   }
 
   async function onOrderClick(e, w) {
-    const t = e.target.closest("[data-gotask],[data-gotall],[data-gotgo],[data-gotno],[data-oaz],[data-oazsave],[data-oazoff],[data-oazno],[data-oquote],[data-oedit],[data-arrive],[data-osent],[data-oapp],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-npdel],[data-ord],[data-slipmore],[data-slipfix],[data-slipfixsave],[data-slipfixno],[data-billgo],[data-unbill],[data-chuban]");
+    const t = e.target.closest("[data-gotask],[data-gotall],[data-gotgo],[data-gotno],[data-oaz],[data-oazsave],[data-oazoff],[data-oazno],[data-oquote],[data-oedit],[data-arrive],[data-osent],[data-oapp],[data-back],[data-ocopy],[data-osend],[data-ocancel],[data-ocyes],[data-ocno],[data-slipsave],[data-slipdel],[data-npdel],[data-ord],[data-slipmore],[data-slipfix],[data-slipfixsave],[data-slipfixno],[data-billgo],[data-unbill],[data-unwith],[data-chuban]");
     if (!t || t.disabled) return;
     const d = t.dataset, o = (st.orders || []).find(x => x.id === st.openOrderId);
     if (!o) return;
@@ -1399,8 +1411,12 @@ export function startOfficeApp(main, me) {
       toast("材料屋が入れた納品書の金額を直しました");
     } else if (d.slipdel) {
       if (t.dataset.armed !== "1") { t.dataset.armed = "1"; t.textContent = "もう一度押すと消えます"; return; }   // 消すときは2回押す
-      await busy("消しています…", () => removeSlip(o, d.slipdel));
-      toast("納品書を消しました");
+      const cov = coveredBy(st.orders, o.id, d.slipdel).filter(c => c.status !== "billed");
+      await busy("消しています…", async () => { await removeSlip(o, d.slipdel); for (const c of cov) await unWith(c); });   // まとめて入っていた注文（11/25）は、まとめるのをやめる（届いたのまま・金額はまだ）
+      toast(cov.length ? `納品書を消しました（まとめて入っていた注文 ${cov.length}件は、金額「まだ」にもどしました）` : "納品書を消しました");
+    } else if ("unwith" in d) {   // まとめて入っている注文（11/25）：まとめるのをやめる
+      await busy("しまっています…", () => unWith(o));
+      toast("まとめるのをやめました（届いたのまま・金額はまだ）");
     } else if (d.npdel) {   // 金額のない紙を消す（11/4。「届いた」は、そのまま）
       if (t.dataset.armed !== "1") { t.dataset.armed = "1"; t.textContent = "もう一度押すと消えます"; return; }
       await busy("消しています…", () => removeNpSlip(o, d.npdel));
@@ -1415,11 +1431,14 @@ export function startOfficeApp(main, me) {
     } else if (d.billgo) {
       const amt = toPrice(w.querySelector("#amtS").value);
       if (amt == null) { w.querySelector("#eBill").textContent = "請求書の金額を入れてください"; return; }
-      await busy("しまっています…", () => markBilled(o, Math.round(amt), me));
-      toast("「請求が来た」にしました（請求ずみ）");
+      // この注文の納品書にまとめて入っている、ほかの注文（11/25）も、0円でいっしょに請求ずみ
+      const cov = slipsOf(o).flatMap(([sid]) => coveredBy(st.orders, o.id, sid)).filter(c => c.status === "arrived");
+      await busy("しまっています…", async () => { await markBilled(o, Math.round(amt), me); for (const c of cov) await markBilled(c, 0, me); });
+      toast(cov.length ? `「請求が来た」にしました（まとめて入っていた注文 ${cov.length}件も、いっしょに請求ずみ）` : "「請求が来た」にしました（請求ずみ）");
     } else if (d.unbill) {
-      await busy("もどしています…", () => backToArrived(o));
-      toast("「請求まだ」にもどしました");
+      const cov = slipsOf(o).flatMap(([sid]) => coveredBy(st.orders, o.id, sid)).filter(c => c.status === "billed");
+      await busy("もどしています…", async () => { await backToArrived(o); for (const c of cov) await backToArrived(c); });
+      toast(cov.length ? `「請求まだ」にもどしました（まとめて入っていた注文 ${cov.length}件も）` : "「請求まだ」にもどしました");
     } else if (d.ocopy || d.osend) {
       await copyOrSend(o, d.osend ? st.sups[o.supplier] : null, w.querySelector("#oCopyFb"), st.info);
     } else if (d.ocancel) {
@@ -1451,12 +1470,14 @@ export function startOfficeApp(main, me) {
     const d = shimeOf((st.sups || {})[sid]), slips = [], bare = [];
     for (const o of (st.orders || []).filter(x => x.status === "arrived" && x.supplier === sid)) {
       const all = slipsOf(o);
-      if (!all.length) { bare.push({ key: `${o.id}/-`, o }); continue; }
+      if (!all.length) { if (!o.withSlip) bare.push({ key: `${o.id}/-`, o }); continue; }   // ほかの注文の納品書にまとめて入っている注文（11/25）は、その納品書といっしょ
       for (const [k, s] of all) if (!s.inv) slips.push({ key: `${o.id}/${k}`, o, sid: k, s, month: billMonth(s.date, d) });
     }
     slips.sort((a, b) => (a.s.date || "").localeCompare(b.s.date || "") || (a.s.at || 0) - (b.s.at || 0));
     return { d, slips, bare };
   }
+  /** この納品書にまとめて入っている、ほかの注文の短い説明（11/25） */
+  const covText = list => list.map(c => `${md(c.orderedAt)} 注文・${linesShort(c, 30)}`).join("／");
   /** 「○月分」の並び（古い順）：[{ month, from, to, n, sum, closed }] */
   function monthsOf(u) {
     const m = new Map();
@@ -1579,6 +1600,7 @@ export function startOfficeApp(main, me) {
         <label class="b-main"><input type="checkbox" data-bpick="${esc(x.key)}"${bulk.pick[x.key] ? " checked" : ""}>
           <span><span class="b-top">${x.s ? `${esc(md(x.s.date))}・No.${esc(x.s.no || "（番号なし）")}・` : "納品書なし・"}<span class="chuban">${esc(x.o.chuban)}</span> ${esc(zenkana(x.o.kenmei))}</span>
             ${tag}
+            ${x.s ? (cv => (cv.length ? `<span class="b-cov">＋ この納品書にまとめて入っている注文：${esc(covText(cv))}（0円・いっしょに請求ずみにします）</span>` : ""))(coveredBy(st.orders, x.o.id, x.sid)) : ""}
             <span class="b-items">${x.s && x.month !== bulk.month ? `<span class="tag">${Number(x.month.slice(5))}月分の納品書</span>` : ""}${esc(x.s ? items(x.s) : Object.values(x.o.lines || {}).map(l => lineText(l)).join("／"))}${x.s ? esc(other(x)) : ""}</span>
             <span class="b-why" hidden></span></span></label>
         <div class="yen-in"><input class="inp" data-bamt="${esc(x.key)}" inputmode="numeric" placeholder="金額" value="${esc(bulk.amt[x.key] ?? "")}" aria-label="${esc(x.o.chuban)} の金額"><span>円</span></div>
@@ -1731,6 +1753,9 @@ export function startOfficeApp(main, me) {
       picks.push({ o: x.o, sid: x.sid || null, amount: Math.round(a) });
     }
     if (!picks.length) { err.textContent = "請求ずみにする納品書をえらんでください"; return; }
+    // えらんだ納品書にまとめて入っている、ほかの注文（11/25）も、0円でいっしょに請求ずみにする（件数・合計には入れない）
+    const main = picks.length;
+    for (const p of picks.slice()) if (p.sid) coveredBy(st.orders, p.o.id, p.sid).filter(c => c.status === "arrived").forEach(c => picks.push({ o: c, sid: null, amount: 0 }));
     const total = toPrice(w.querySelector("#bTotal").value);
     if (total == null) { err.textContent = "請求書の合計を入れてください"; return; }
     const sum = picks.reduce((s, x) => s + x.amount, 0);
@@ -1739,7 +1764,7 @@ export function startOfficeApp(main, me) {
     btn.textContent = "しまっています…";
     const per = bulk.month ? billPeriod(bulk.month, u.d) : {};
     await billSlips(sup, picks, { no: w.querySelector("#bNo").value.trim(), date: w.querySelector("#bDate").value || ymd(0), total: Math.round(total), month: bulk.month, from: per.from, to: per.to }, me);
-    bulk.done = `${sup.name}${bulk.month ? ` の ${Number(bulk.month.slice(5))}月分` : ""}：${picks.length}件を請求ずみにしました（合計 ${yen(sum)}円）`;
+    bulk.done = `${sup.name}${bulk.month ? ` の ${Number(bulk.month.slice(5))}月分` : ""}：${main}件を請求ずみにしました（合計 ${yen(sum)}円）${picks.length > main ? `。まとめて入っていた注文 ${picks.length - main}件も、いっしょに請求ずみにしました` : ""}`;
     bulk.month = ""; bulk.no = ""; bulk.date = ""; bulk.ai = null;
     bulkPickMonth();   // のこりがあれば、つぎの月を出す
     toast(bulk.done);

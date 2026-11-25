@@ -338,6 +338,13 @@
               "chuban": { ".validate": "newData.isString() && newData.val().length <= 12" },
               "sup": { ".validate": "newData.isString() && newData.val().length <= 40" },
               "no": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "with": {
+                "$w": {
+                  "o": { ".validate": "newData.isString() && newData.val().length <= 40" },
+                  "was": { ".validate": "newData.val() == 'wait' || newData.val() == 'arrived'" },
+                  "$other": { ".validate": false }
+                }
+              },
               "$other": { ".validate": false }
             }
           },
@@ -551,6 +558,8 @@
           "billedAt": { ".validate": "newData.isNumber() && (newData.val() == now || newData.val() == data.val())" },
           "billedBy": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "invoiceId": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "withSlip": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,40}\\/[A-Za-z0-9_-]{1,40}$/)" },
+          "withAt": { ".validate": "newData.isNumber() && newData.val() > 0" },
           "kind": { ".validate": "newData.val() == 'kakou' || newData.val() == 'mekki' || newData.val() == 'mitsumori' || newData.val() == 'nouhin'" },
           "quoteId": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "quoteTotal": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000000" },
