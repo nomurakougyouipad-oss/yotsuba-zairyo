@@ -10,7 +10,7 @@ import { ref, get, update, push, serverTimestamp } from "https://www.gstatic.com
 import { db } from "./firebase.js";
 import { esc, zenkana, toast, openSheet } from "./common.js";
 import { fmtQty, kibouText } from "./tanomu.js";
-import { toPrice } from "./chumon.js";
+import { toPrice, FREE_PLACE, PLACE_MAX, freePlace } from "./chumon.js";
 import { getJob } from "./nippo.js";
 
 const CHUBAN = /^[A-Z]{2}\d{5}$/;
@@ -31,9 +31,10 @@ async function staffList(cur) {
 }
 
 /** 上の欄（注番・件名・希望日・届け先・注文者・担当者・メモ）の HTML */
-function headHTML(x, places, staff) {
+function headHTML(x, places, staff, { free = false } = {}) {   // free＝届け先を手で書ける（注文を直すとき。11/27）
   const plist = Object.entries(places || {}).filter(([id, p]) => p && (!p.hidden || p.name === x.basho)).sort(([, a], [, b]) => (a.order ?? 999) - (b.order ?? 999));
   const hasCur = !x.basho || plist.some(([, p]) => p.name === x.basho);
+  const isFree = free && !hasCur;   // 一覧にない届け先（前に手で書いた所）は「ほか（手で書く）」に字を入れて出す
   const date = /^\d{4}-\d{2}-\d{2}$/.test(x.kibou || "") ? x.kibou : "";
   return `
     <div class="ef-grid">
@@ -45,8 +46,10 @@ function headHTML(x, places, staff) {
           <input id="eDate" class="inp" type="date" style="width:auto" value="${esc(date)}"${date ? "" : " hidden"}></div></div>
       <label class="mini">届け先<select id="eBasho" class="inp">
         <option value=""${x.basho ? "" : " selected"}>（なし）</option>
-        ${hasCur ? "" : `<option value="name:${esc(x.basho)}" selected>${esc(x.basho)}</option>`}
-        ${plist.map(([id, p]) => `<option value="${esc(id)}"${p.name === x.basho ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
+        ${hasCur || isFree ? "" : `<option value="name:${esc(x.basho)}" selected>${esc(x.basho)}</option>`}
+        ${plist.map(([id, p]) => `<option value="${esc(id)}"${p.name === x.basho ? " selected" : ""}>${esc(p.name)}</option>`).join("")}
+        ${free ? `<option value="${FREE_PLACE}"${isFree ? " selected" : ""}>ほか（手で書く）</option>` : ""}</select></label>
+      ${free ? `<div class="mini wide free-place" id="eBashoBox"${isFree ? "" : " hidden"}><input id="eBashoFree" class="inp" maxlength="${PLACE_MAX}" value="${esc(isFree ? x.basho : "")}" placeholder="例 ○○株式会社 △△工場" aria-label="届け先を書く" autocomplete="off"><p class="hint" id="eBashoPrev">${esc(freePrev(isFree ? x.basho : ""))}</p></div>` : ""}
       <label class="mini">注文者<select id="eChumon" class="inp">${staff.map(n => `<option${n === x.chumonsha ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
       <label class="mini">担当者<input id="eTantou" class="inp" maxlength="20" autocomplete="off" value="${esc(x.tantou || "")}"></label>
       <label class="mini wide">メモ<textarea id="eMemo" class="inp oneline" rows="2" maxlength="500">${esc(x.memo || "")}</textarea></label>
@@ -68,6 +71,8 @@ function lineHTML(lid, l, units, canDel) {
     </div>`;
 }
 
+/** 手で書いた届け先の見本（注文の文の納入場所） */
+const freePrev = v => { const p = freePlace(v); return p ? `注文の文には「納入場所　${p.bashoText}」と出ます` : `届け先を書いてください（${PLACE_MAX}字まで。住所も書けます）`; };
 /** 上の欄を読む → { chuban, kenmei, kibou, basho, bashoId, bashoText, chumonsha, tantou, memo } か、まちがいの文 */
 function readHead(w, places) {
   const g = s => w.querySelector(s);
@@ -81,6 +86,11 @@ function readHead(w, places) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(kibou)) return "希望日の日付をえらんでください";
   }
   const bv = g("#eBasho").value;
+  if (bv === FREE_PLACE) {   // 手で書いた届け先（11/27）
+    const fp = freePlace(g("#eBashoFree").value);
+    if (!fp) return "届け先を書いてください";
+    return { chuban, kenmei, kibou, basho: fp.basho, bashoId: null, bashoText: fp.bashoText, chumonsha: g("#eChumon").value, tantou: g("#eTantou").value.trim(), memo: g("#eMemo").value.trim() };
+  }
   const place = bv && !bv.startsWith("name:") ? (places || {})[bv] : null;
   return {
     chuban, kenmei, kibou,
@@ -143,6 +153,11 @@ function wireJob(w, x) {
   };
   g("#eChuban").addEventListener("change", check);
   g("#eKibou").addEventListener("change", () => { g("#eDate").hidden = g("#eKibou").value !== "date"; });
+  // 届け先の「ほか（手で書く）」（注文を直すとき。11/27）：書く欄を出す・見本をかきなおす
+  if (g("#eBashoBox")) {
+    g("#eBasho").addEventListener("change", () => { const on = g("#eBasho").value === FREE_PLACE; g("#eBashoBox").hidden = !on; if (on) g("#eBashoFree").focus(); });
+    g("#eBashoFree").addEventListener("input", () => { g("#eBashoPrev").textContent = freePrev(g("#eBashoFree").value); });
+  }
   // 件名・品名・品物のメモは1行（長いときは折りかえして見せるだけ）。Enter を押しても改行しない
   w.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches && e.target.matches("[data-oneline]")) e.preventDefault(); });
   // 字の量に合わせて高くするしくみ（field-sizing）が無いブラウザ（古い iPhone・iPad など）は、ここで高さを合わせる
@@ -258,7 +273,7 @@ export async function openOrderEdit({ o, r, places, units, me, onDone }) {
         <button type="button" class="x" data-close aria-label="閉じる">×</button></div>
       ${o.supState ? '<p class="warn">この注文は材料屋のアプリに送ってあります。保存すると、材料屋のアプリに「事務所が直しました」と出ます。</p>'
         : '<p class="warn">材料屋には、アプリから知らせません。もう送った注文なら、直したあとに「注文の文をコピー」（または「メールで送る」）で、もう一度送ってください。</p>'}
-      <div class="block">${headHTML(o, places, staff)}
+      <div class="block">${headHTML(o, places, staff, { free: true })}
         <p class="hint">注番を直すと、この注文の金額（納品書・単価の記録）は、新しい注番の材料費に入ります。${o.reqId ? "注番・希望日などは、この注文だけが変わります（現場の依頼は品物だけそろえます）。" : ""}</p></div>
       <div class="block"><h3>品物</h3>
         <div class="erows">${lines.map(([lid, l]) => lineHTML(lid, l, units, false)).join("")}</div>

@@ -17,7 +17,8 @@ import { photoPicker, deletePhoto } from "./shashin.js";
 import { errorText } from "./touroku.js";
 import { parseLineText, parseKibou, findPlace, matchSupplier, aliasToLearn, maskTel, headsOf } from "./line-parse.js";
 import { createMatcher } from "./line-match.js";
-import { isAppSup } from "./chumon.js";
+import { isAppSup, FREE_PLACE } from "./chumon.js";
+import { placePickHTML, pickPlace, onFreeInput, setFree, placeOf } from "./basho.js";
 
 const SRC_MAX = 5000;   // はりつけた元の文は、ここまでのこす
 
@@ -97,7 +98,7 @@ export function openLineOrder({ sups, places, catalog, me, onPlaced }) {
           </div>
           <input id="fDate" class="inp" type="date" aria-label="納入希望日" hidden></div>
         <div class="field"><span class="lab">届け先</span>
-          <div class="pick" id="pPick">${placeList.map(([id, p]) => `<button type="button" data-basho="${esc(id)}" aria-pressed="${id === f.basho}">${esc(p.name)}</button>`).join("")}</div></div>
+          ${placePickHTML(placeList, f.basho, { attr: "basho", id: "pPick" })}<p class="err" id="eBasho"></p></div>
         <div class="two">
           <div class="field"><label for="fChu">注文者（材料をたのんだ人）</label>
             <input id="fChu" class="inp" list="staffList" maxlength="20" autocomplete="off"><datalist id="staffList"></datalist></div>
@@ -176,7 +177,7 @@ export function openLineOrder({ sups, places, catalog, me, onPlaced }) {
     };
     const setPlace = id => {
       f.basho = id;
-      p.querySelectorAll("[data-basho]").forEach(x => x.setAttribute("aria-pressed", x.dataset.basho === id));
+      pickPlace(p, "basho", id, { focus: false });
     };
     /** 知らない注文先のとき：近い材料屋の「○○ にする」と「新しい材料屋として足す」 */
     const showSupPick = m => {
@@ -254,7 +255,7 @@ export function openLineOrder({ sups, places, catalog, me, onPlaced }) {
       // 届け先（書いていなければ、いちばん上の届け先のまま）
       const pl = findPlace([r.basho, r.kibou, r.memo, r.items], placeList);
       if (pl) setPlace(pl);
-      else if (r.basho) notes.push(`届け先「${r.basho}」を読めませんでした。えらんでください`);
+      else if (r.basho) { setPlace(FREE_PLACE); setFree(p, "basho", r.basho); notes.push(`届け先「${r.basho}」は届け先の一覧にないので、「ほか（手で書く）」に入れました。たしかめてください`); }   // 11/27
       g("#fMemo").value = r.memo;
       const got = [g("#fSup").value, r.chuban, r.items].filter(Boolean).length;
       hint.innerHTML = esc(got === 3 ? "読み取りました。下の欄をたしかめてください。" : "一部だけ読み取れました。足りない欄を入れてください。") +
@@ -279,9 +280,11 @@ export function openLineOrder({ sups, places, catalog, me, onPlaced }) {
         f.kibou = date ? "" : "最短";
       } else if (b) {
         f.basho = b.dataset.basho;
-        p.querySelectorAll("[data-basho]").forEach(x => x.setAttribute("aria-pressed", x === b));
+        pickPlace(p, "basho", f.basho);
+        g("#eBasho").textContent = "";
       }
     });
+    p.addEventListener("input", e => { if (onFreeInput(e)) g("#eBasho").textContent = ""; });   // 届け先を手で書く欄（11/27）：見本をかきなおす
     g("#fChuban").addEventListener("change", checkChuban);
     g("#fChuban").addEventListener("input", () => { if (CHUBAN_RE.test(normalizeChuban(g("#fChuban").value))) checkChuban(); });
     g("#fItems").addEventListener("input", () => {
@@ -317,6 +320,8 @@ export function openLineOrder({ sups, places, catalog, me, onPlaced }) {
       else if (ls.some(l => !l.qty)) bad("#eItems", `数が書いてない行が ${ls.filter(l => !l.qty).length}行 あります（オレンジの行）`, "#fItems");
       else if (ls.some(l => !l.spec)) bad("#eItems", "品名のない行があります", "#fItems");
       if (!f.kibou) errs.push("#fDate");
+      const place = placeOf(places, f.basho, p, "basho");   // 届け先（手で書いた所も。11/27）
+      if (!place) bad("#eBasho", "届け先を書いてください", "[data-freeplace=\"basho\"]");
       if (picker.isBusy()) bad("#eAll", "写真を上げています。少し待ってください", "");
       if (errs.length) {
         const first = errs.find(Boolean);
@@ -326,7 +331,6 @@ export function openLineOrder({ sups, places, catalog, me, onPlaced }) {
       }
       g("#eAll").textContent = "";
 
-      const place = (places || {})[f.basho] || {};
       const lines = {};
       (useRows ? matcher.lines() : ls.map(l => ({ spec: l.spec.slice(0, 300), qty: l.qty, unit: l.unit }))).forEach((l, i) => {
         lines["l" + String(i + 1).padStart(2, "0")] = l;
@@ -341,7 +345,7 @@ export function openLineOrder({ sups, places, catalog, me, onPlaced }) {
       const order = {
         supplier: supId, supplierName: sup.name, to: sup.to || "御中",
         chuban, kenmei, tantou: g("#fTan").value.trim(), chumonsha: g("#fChu").value.trim(),
-        kibou: f.kibou, basho: place.name || "", bashoText: place.text || "",
+        kibou: f.kibou, basho: place.basho, bashoText: place.bashoText,
         contacted: false, memo: memo.slice(0, 500),
         status: "wait", lines,
         orderedAt: serverTimestamp(), orderedBy: me.name, orderedByUid: auth.currentUser.uid,

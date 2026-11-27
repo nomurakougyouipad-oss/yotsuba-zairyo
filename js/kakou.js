@@ -14,6 +14,7 @@ import { watchJobs, CHUBAN_RE, NOT_PERSON } from "./nippo.js";
 import { errorText } from "./touroku.js";
 import { okFiles, uploadFile, removeUploaded, sizeText } from "./fairu.js";
 import { isAppSup } from "./chumon.js";
+import { placePickHTML, pickPlace, onFreeInput, placeOf } from "./basho.js";
 
 export const byOrder = ([, a], [, b]) => (a.order ?? 999) - (b.order ?? 999);
 const MATS = ["SS400", "SUS304", "SUS316L", "SPHC", "SPCC", "SECC", "A5052", "SGP", "STK400", "STKR400"];   // 材質の候補（ほかも書ける）
@@ -249,7 +250,7 @@ export function openKakouOrder({ sups, places, units, me, onPlaced }) {
           <div class="pick"><button type="button" data-kibou="最短" aria-pressed="true">最短</button><button type="button" data-kibou="__date" aria-pressed="false">日付をえらぶ</button></div>
           <input id="kDate" class="inp" type="date" aria-label="納入希望日" hidden></div>
         <div class="field"><span class="lab">届け先</span>
-          <div class="pick">${placeList.map(([id, p]) => `<button type="button" data-basho="${esc(id)}" aria-pressed="${id === f.basho}">${esc(p.name)}</button>`).join("")}</div></div>
+          ${placePickHTML(placeList, f.basho, { attr: "basho" })}<p class="err" id="eBasho"></p></div>
         <div class="two">
           <div class="field"><label for="kChu">注文者（たのんだ人）</label>
             <input id="kChu" class="inp" list="kStaffList" maxlength="20" autocomplete="off" value="${esc(me.name || "")}"><datalist id="kStaffList"></datalist></div>
@@ -287,9 +288,11 @@ export function openKakouOrder({ sups, places, units, me, onPlaced }) {
         f.kibou = date ? (g("#kDate").value || "") : "最短";
       } else if (b) {
         f.basho = b.dataset.basho;
-        p.querySelectorAll("[data-basho]").forEach(x => x.setAttribute("aria-pressed", x === b));
+        pickPlace(p, "basho", f.basho);
+        g("#eBasho").textContent = "";
       }
     });
+    p.addEventListener("input", e => { if (onFreeInput(e)) g("#eBasho").textContent = ""; });   // 届け先を手で書く欄（11/27）
     g("#kDate").addEventListener("change", e => { f.kibou = e.target.value; });
     g("#kSup").addEventListener("change", () => { g("#eSup").textContent = ""; });
 
@@ -315,6 +318,8 @@ export function openKakouOrder({ sups, places, units, me, onPlaced }) {
       const it = readItems(p);
       if (it.err) { g("#eRows").textContent = it.err; errs.push(it.focus); }
       if (!f.kibou) { toast("納入希望日の日付をえらんでください"); errs.push(g("#kDate")); }
+      const place = placeOf(places, f.basho, p, "basho");   // 届け先（手で書いた所も。11/27）
+      if (!place) { g("#eBasho").textContent = "届け先を書いてください"; errs.push(p.querySelector("[data-freeplace=\"basho\"]")); }
       if (errs.length) {
         const el = errs.find(Boolean);
         if (el) { el.focus({ preventScroll: true }); el.scrollIntoView({ block: "center" }); }
@@ -331,11 +336,10 @@ export function openKakouOrder({ sups, places, units, me, onPlaced }) {
       // ファイルを上げる（1つずつ。しっぱいしたら、上げた分を消して、注文はしまわない）
       const { files, paths } = await uploadPicked(key, picked, me, prog);
       try {
-        const place = (places || {})[f.basho] || {};
         const order = {
           supplier: supId, supplierName: sup.name, to: sup.to || "御中",
           chuban, kenmei, tantou: g("#kTan").value.trim().slice(0, 20), chumonsha: g("#kChu").value.trim().slice(0, 20),
-          kibou: f.kibou, basho: place.name || "", bashoText: place.text || "",
+          kibou: f.kibou, basho: place.basho, bashoText: place.bashoText,
           contacted: false, memo: g("#kMemo").value.trim().slice(0, 500),
           status: "wait", kind: f.kind, unsent: true, lines: rowsToLines(it.rows),
           orderedAt: serverTimestamp(), orderedBy: me.name, orderedByUid: auth.currentUser.uid,

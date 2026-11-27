@@ -1,9 +1,10 @@
 {
- "v": "1cbe6696bc",
+ "v": "bda5da924e",
  "files": [
   "js/ai-kurabe.js",
   "js/azukari.js",
   "js/backup.js",
+  "js/basho.js",
   "js/chumon.js",
   "js/common.js",
   "js/fairu.js",

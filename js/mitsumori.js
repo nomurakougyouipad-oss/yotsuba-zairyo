@@ -18,7 +18,8 @@ import { ymd, kibouText, lineText, fmtQty } from "./tanomu.js";
 import { normalizeChuban } from "./kouji.js";
 import { CHUBAN_RE } from "./nippo.js";
 import { errorText } from "./touroku.js";
-import { companyLines, yen, toPrice, COMPANY, pdfLine } from "./chumon.js";
+import { companyLines, yen, toPrice, COMPANY, pdfLine, kibouOrder } from "./chumon.js";
+import { placePickHTML, pickPlace, onFreeInput, placeOf } from "./basho.js";
 import { pdfName } from "./pdf.js";
 import { filesOf, okFiles, uploadFile, removeUploaded, sizeText, downloadFiles } from "./fairu.js";
 import { byOrder, unitsOr, sendWord, itemsFieldHTML, wireItems, readItems, rowsToLines, linesToRows, filePickHTML, wireFilePick, uploadPicked, wireChuban, fillStaff } from "./kakou.js";
@@ -67,7 +68,7 @@ export function mitsumoriText(q, supId, info = {}) {
   const fl = filesOf(q).map(([, f]) => f.name).filter(Boolean);
   if (fl.length) L.push(`※添付ファイル：${fl.join("、")}`);
   L.push("");
-  if (q.kibou) L.push("希望納期", kibouWord(q.kibou), "");
+  if (q.kibou) L.push("希望納期", kibouOrder(q.kibou), "");   // 材料屋に出す字は「11/30（月）までに」「最短希望」（11/27）
   L.push("担当者", who(q.tantou), "");
   L.push("見積金額と納期の回答をお願いいたします", "");
   const f = companyLines(info.company);
@@ -462,7 +463,7 @@ function orderFormHTML(q, ctx) {
   return `
     <div class="qorder stack">
       <div class="field"><span class="lab">届け先</span>
-        <div class="pick">${places.map(([id, p], i) => `<button type="button" data-qbasho="${esc(id)}" aria-pressed="${i === 0}">${esc(p.name)}</button>`).join("")}</div></div>
+        ${placePickHTML(places, places.length ? places[0][0] : "", { attr: "qbasho" })}</div>
       <div class="field"><span class="lab">納入希望日</span>
         <div class="pick"><button type="button" data-qok="最短" aria-pressed="${!k}">最短</button><button type="button" data-qok="__date" aria-pressed="${!!k}">日付をえらぶ</button></div>
         <input class="inp" type="date" data-qodate aria-label="納入希望日" value="${esc(k)}"${k ? "" : " hidden"}></div>
@@ -545,11 +546,11 @@ export async function orderFromQuote(q, sid, sups, opt, me) {
     const r = (a.rows || {})[lid] || {};
     lines[lid] = { spec: l.spec, qty: l.qty, unit: l.unit, ...(l.vals ? { vals: l.vals } : {}), ...(r.price != null ? { qprice: r.price } : {}) };
   }
-  const place = opt.place || {};
+  const place = opt.place || { basho: "", bashoText: "" };   // { basho, bashoText }（手で書いた所も。11/27）
   const order = {
     supplier: sid, supplierName: sup.name || x.name, to: sup.to || x.to || "御中",
     chuban: q.chuban, kenmei: q.kenmei, tantou: q.kojiTantou || "", chumonsha: opt.chumonsha,
-    kibou: opt.kibou, basho: place.name || "", bashoText: place.text || "",
+    kibou: opt.kibou, basho: place.basho || "", bashoText: place.bashoText || "",
     contacted: false, memo: a.nouki ? `見積の納期：${a.nouki}`.slice(0, 500) : "",
     status: "wait", kind: "mitsumori", unsent: true, quoteId: q.id, quoteTotal: a.total ?? 0, lines,
     ...(q.files ? { files: q.files } : {}),   // 図面など（置き場は見積のまま。見積書は入れない）
@@ -569,6 +570,7 @@ export async function orderFromQuote(q, sid, sups, opt, me) {
 export function wireQuote(w, ctx) {
   const ui = ctx.ui;
   w.addEventListener("input", e => {
+    if (onFreeInput(e)) return;   // 届け先を手で書く欄（11/27）
     const form = e.target.closest("[data-qans]");
     if (form) { w.dataset.dirty = "1"; calcAnswer(form, e.target); form.querySelector(".a-err").textContent = ""; }
   });
@@ -624,7 +626,8 @@ export function wireQuote(w, ctx) {
       if (f) downloadFiles([f]).then(() => toast("「ダウンロード」に入れました"), ctx.onErr);
     } else if (d.qgo) { ui.ordering = d.qgo; ui.editAns = ""; ctx.redraw(); }
     else if ("qgono" in d) { ui.ordering = ""; ctx.redraw(); }
-    else if (d.qbasho || d.qok) {
+    else if (d.qbasho) pickPlace(t.closest(".qorder"), "qbasho", d.qbasho);   // 届け先（「ほか（手で書く）」は書く欄を出す。11/27）
+    else if (d.qok) {
       const box = t.closest(".pick");
       box.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === t));
       if (d.qok) { const di = w.querySelector("[data-qodate]"); di.hidden = d.qok !== "__date"; if (!di.hidden) { di.min = ymd(0); di.focus(); } }
@@ -635,9 +638,11 @@ export function wireQuote(w, ctx) {
       const dv = box.querySelector("[data-qodate]").value;
       const er = box.querySelector("[data-qoerr]");
       if (dateOn && !dv) { er.textContent = "納入希望日の日付をえらんでください"; return; }
+      const place = bid ? placeOf(ctx.places, bid.qbasho, box, "qbasho") : null;
+      if (bid && !place) { er.textContent = "届け先を書いてください"; return; }
       t.disabled = true; t.textContent = "注文を作っています…";
       orderFromQuote(q, sid, ctx.sups, {
-        place: bid ? (ctx.places || {})[bid.qbasho] : null, kibou: dateOn ? dv : "最短",
+        place, kibou: dateOn ? dv : "最短",
         chumonsha: box.querySelector("[data-qochu]").value.trim().slice(0, 20),
       }, ctx.me).then(oid => {
         ui.ordering = "";

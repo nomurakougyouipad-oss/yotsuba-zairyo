@@ -477,7 +477,7 @@
           "tantou": { ".validate": "newData.isString() && newData.val().length <= 20" },
           "chumonsha": { ".validate": "newData.isString() && newData.val().length <= 20" },
           "kibou": { ".validate": "newData.isString() && (newData.val() == '最短' || newData.val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/))" },
-          "basho": { ".validate": "newData.isString() && newData.val().length <= 20" },
+          "basho": { ".validate": "newData.isString() && newData.val().length <= 60" },
           "bashoText": { ".validate": "newData.isString() && newData.val().length <= 200" },
           "contacted": { ".validate": "newData.isBoolean()" },
           "memo": { ".validate": "newData.isString() && newData.val().length <= 500" },

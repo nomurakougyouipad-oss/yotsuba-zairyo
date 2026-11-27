@@ -13,6 +13,24 @@ const linesArr = o => Object.values(o.lines || {});
  *  全部なら「（預かりより）」、一部なら「（うち5本は預かりより）」。注文の文・事務所の一覧・金額の欄に出す */
 export const azkText = l => (!l || !(l.azkQty > 0) ? "" : l.azkQty >= l.qty ? "（預かりより）" : `（うち${fmtQty(l.azkQty)}${l.unit}は預かりより）`);
 
+/** 材料屋に出す納入希望日（11/27 事務員さん）：最短は「最短希望」、日付は「11/30（月）までに」（今日なら「本日（11/27）までに」）。
+ *  注文の文（コピー・メール・LINE・FAX・PDF）・材料屋のアプリ・見積依頼で同じ。事務所・現場の画面の「希望日」は kibouText のまま */
+export const kibouOrder = k => (!k || k === "最短" ? "最短希望" : `${kibouText(k)}までに`);
+
+/* ---------- 届け先を手で書く（11/27 事務員さん：たまに他社など）。ボタンの「ほか（手で書く）」 ---------- */
+export const FREE_PLACE = "__free";
+export const PLACE_MAX = 60;   // 住所まで書けるように（ルールも 60字まで）
+/** 手で書いた届け先 → { basho（届け先の名前＝書いた字）, bashoText（注文の文の納入場所） }。
+ *  書いた字のうしろに「まで納入お願いいたします」。もう「…お願いいたします」「…伺います」などで終わっていれば、そのまま */
+export function freePlace(text) {
+  const name = String(text || "").replace(/\s+/g, " ").trim().slice(0, PLACE_MAX);
+  if (!name) return null;
+  if (/(お願いいたします|お願いします|お願い致します|伺います|うかがいます|納入|納品)[。．.]?$/.test(name)) return { basho: name, bashoText: name };
+  return { basho: name, bashoText: /まで$/.test(name) ? `${name}納入お願いいたします` : `${name}まで納入お願いいたします` };
+}
+/** 届け先の一覧の届け先 → { basho, bashoText } */
+export const listPlace = p => (p ? { basho: p.name || "", bashoText: p.text || "" } : { basho: "", bashoText: "" });
+
 /** 材料屋への注文の文（試作の orderText と同じ形。LINE・メール・FAX）。日報の件名の半角カナは全角にする
  *  info＝事務所の情報（⚙ 設定の「会社・注文書」と「注文する人」の電話番号。/zairyo/officeInfo）{ company, phrases, tels }
  *  - 「納入希望日／最短希望（日付なら 11/5（木）希望）」と「納入場所／届け先の文（⚙ 設定。例 松前工場まで納入お願いいたします・取りに伺います）」に分ける。
@@ -33,8 +51,8 @@ export function orderText(o, info = {}, { footer = false } = {}) {
   const fl = Object.values(o.files || {}).sort((a, b) => (a.at || 0) - (b.at || 0)).map(f => f.name).filter(Boolean);
   if (fl.length) L.push(`※添付ファイル：${fl.join("、")}`);   // 注文につけた注文書・図面（10/15）
   L.push("");
-  // 前は「松前工場へ最短希望」＋届け先の文で、届け先が2回出ていた（11/2 事務員さん）
-  L.push("納入希望日", `${kibouText(o.kibou)}希望`);
+  // 前は「松前工場へ最短希望」＋届け先の文で、届け先が2回出ていた（11/2 事務員さん）。日付は「までに」（11/27 事務員さん）
+  L.push("納入希望日", kibouOrder(o.kibou));
   const place = o.bashoText || o.basho || "";
   if (place) L.push("納入場所", place);
   if (o.contacted) L.push(`${o.supplierName}さんに連絡済みです`);
@@ -120,7 +138,9 @@ export function draftOrder(r, supId, sup, lineIds, bashoText, az = {}, ex = {}) 
   return {
     reqId: r.id, supplier: supId, supplierName: sup.name, to: sup.to || "御中",
     chuban: r.chuban, kenmei: r.kenmei, tantou: r.tantou || "", chumonsha: r.chumonsha || "",
-    kibou: ex.kibou || r.kibou || "最短", basho: r.basho || "", bashoText: bashoText || "",
+    kibou: ex.kibou || r.kibou || "最短",
+    // 届け先：事務所が注文のときに変えたら、その届け先（ex.place＝{basho, bashoText}。手で書いた所も。11/27）。なければ依頼の届け先
+    basho: ex.place ? ex.place.basho || "" : r.basho || "", bashoText: ex.place ? ex.place.bashoText || "" : bashoText || "",
     contacted: r.contacted === supId, memo: String(ex.memo != null ? ex.memo : r.memo || "").trim().slice(0, 500),
     status: "wait", lines,
   };

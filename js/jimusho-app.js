@@ -11,7 +11,7 @@ import { db } from "./firebase.js";
 import { $, esc, zenkana, toast, runChecks, openSheet, closeSheet, keepPlace } from "./common.js";
 import { errorText } from "./touroku.js";
 import { normCatalog, lineText, fmtQty, kibouText, ymd } from "./tanomu.js";
-import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billSlips, shimeOf, shimeText, billMonth, billPeriod, azkText, orderPdf, pdfLine, npSlipsOf, npDupOf, deliveredRows, notInOrder, checksOrd, sameThing, removeNpSlip, setRowOrd, lineDone, isLineOrder, LINE_NOTE, slipScans, isReturnSlip, hasReturn, isKakou, partOf, gotList, markGot, coveredBy, withOf, unWith, linesShort } from "./chumon.js";
+import { orderText, sendUrl, sendLabel, draftOrder, placeOrder, cancelOrder, ST, isLate, markArrived, markSent, isAppSup, appSentFields, sendToApp, supStateText, deliverPlan, backToWait, yen, toPrice, cost, slipsOf, addSlip, removeSlip, fixSupSlip, markBilled, backToArrived, billSlips, shimeOf, shimeText, billMonth, billPeriod, azkText, orderPdf, pdfLine, npSlipsOf, npDupOf, deliveredRows, notInOrder, checksOrd, sameThing, removeNpSlip, setRowOrd, lineDone, isLineOrder, LINE_NOTE, slipScans, isReturnSlip, hasReturn, isKakou, partOf, gotList, markGot, coveredBy, withOf, unWith, linesShort, FREE_PLACE, freePlace } from "./chumon.js";
 import { renderSettings } from "./settei.js";
 import { photosHTML, fillPhotos, attachHTML, linkLabel, shopOf, pageLink, SHOPS } from "./shashin.js";
 import { openLineOrder } from "./line-chumon.js";
@@ -27,6 +27,7 @@ import { quoteState, isOpenQuote, quoteCard, openQuoteForm, quoteHTML, wireQuote
 import { openAzukari, azItems, lineSpec } from "./azukari.js";
 import { readInvoiceFiles, invoiceSlips, checkInvoice, matchInvoice } from "./seikyu-ai.js";
 import { matchSupplier } from "./line-parse.js";
+import { placePickHTML, onFreeInput } from "./basho.js";
 
 /** 一覧・注文の画面の小さい印（加工品・見積から。10/15） */
 const KIND_TAG = { kakou: "加工品", mekki: "めっき", mitsumori: "見積から", nouhin: "納品書から" };   // nouhin＝納品書の取りこみで作った注文（アプリで注文していない。10/30）
@@ -201,7 +202,7 @@ export function startOfficeApp(main, me) {
     pick: {},        // 依頼ごとの、品物にえらんだ材料屋 {依頼id: {品物id: 材料屋id}}（「注文した」までは、この画面だけ）
     kib: {},         // 依頼ごとの、品物ごとに変えた希望日 {依頼id: {品物id: "最短" | "YYYY-MM-DD"}}（11/10。「注文した」までは、この画面だけ）
     gnote: {},       // 依頼ごとの、材料屋へのひとこと {依頼id: {まとまり: 文}}（11/10。はじめは現場のメモ）
-    kibAsk: "", skipAsk: "", skipWhy: "",   // 希望日を変えている品物・「注文しない」をたしかめている品物（"依頼id/品物id"）と理由（11/10）
+    kibAsk: "", skipAsk: "", skipWhy: "", gplace: {}, placeAsk: "",   // gplace＝まとまりごとに変えた届け先 {依頼: {まとまり: {id, free}}}・placeAsk＝届け先を変えているまとまり（11/27）   // 希望日を変えている品物・「注文しない」をたしかめている品物（"依頼id/品物id"）と理由（11/10）
     openId: "",      // いま中身を出している依頼
     cxAsk: "", cxReason: "",   // 「取り消し」をたしかめている依頼と、書いている理由（10/14）
     rsAsk: "",                 // 「取り消しをもどす」をたしかめている依頼
@@ -610,6 +611,23 @@ export function startOfficeApp(main, me) {
   /** 材料屋へのひとこと（まとまりごと。はじめは現場のメモ。11/10） */
   const noteOf = (r, key) => { const n = st.gnote[r.id] || (st.gnote[r.id] = {}); return key in n ? n[key] : r.memo || ""; };
   const bashoText = r => ((st.places || {})[r.bashoId] || {}).text || "";
+  /** まとまりの届け先（11/27）：変えていなければ依頼の届け先。変えたら届け先の一覧の所か、手で書いた所 → { id, free, changed, empty, basho, bashoText } */
+  const gPlaceOf = (r, key) => {
+    const g = ((st.gplace || {})[r.id] || {})[key];
+    if (!g) return { id: r.bashoId || "", free: "", changed: false, basho: r.basho || "", bashoText: bashoText(r) };
+    if (g.id === FREE_PLACE) { const fp = freePlace(g.free); return { id: FREE_PLACE, free: g.free || "", changed: true, empty: !fp, basho: fp ? fp.basho : "", bashoText: fp ? fp.bashoText : "" }; }
+    const p = (st.places || {})[g.id] || {};
+    return { id: g.id, free: g.free || "", changed: g.id !== r.bashoId, basho: p.name || "", bashoText: p.text || "" };
+  };
+  /** まとまりの届け先の札と、変える所（届け先のボタン＋「ほか（手で書く）」） */
+  const gPlaceHTML = (r, key) => {
+    const pl = gPlaceOf(r, key), K = esc(key), open = st.placeAsk === `${r.id}|${key}`;
+    const list = Object.entries(st.places || {}).filter(([, p]) => p && !p.hidden).sort(([, a], [, b]) => (a.order ?? 999) - (b.order ?? 999));
+    return {
+      tag: `<button type="button" class="g-tag g-ptag${pl.changed ? " kib-on" : ""}" data-gplace="${K}" aria-expanded="${open}">届け先 ${esc(pl.id === FREE_PLACE ? pl.basho || "（書いてください）" : pl.basho || "なし")}（変える）</button>`,
+      box: open ? `<div class="g-place" data-gkey="${K}"><span class="lab">この注文の届け先${pl.changed ? "（現場がえらんだ届け先から変えました）" : "（はじめは現場がえらんだ届け先）"}</span>${placePickHTML(list, pl.id, { attr: "gbasho", free: pl.free })}</div>` : "",
+    };
+  };
   /** 単位の一覧（品物一覧の units。まだ読めていなければ、よく使うもの） */
   const unitsList = () => (st.catalog && st.catalog.units && st.catalog.units.length ? st.catalog.units : ["個", "本", "組", "枚", "m", "kg", "式", "セット"]);
 
@@ -751,6 +769,7 @@ export function startOfficeApp(main, me) {
         const s = st.sups[sid], K = esc(key);
         // 希望日（11/10）：依頼とちがうか、同じ材料屋で分かれたときは目立たせる
         const kTag = `<span class="g-tag${kibou !== (r.kibou || "最短") || many(sid) ? " kib-on" : ""}">希望日 ${esc(kibouText(kibou))}</span>`;
+        const gp = gPlaceHTML(r, key);   // 届け先（11/27 事務員さん：たまに他社など。事務所が注文のときに変える）
         // 材料屋へのひとこと（11/10）：注文の文・メール・PDF・FAX・材料屋のアプリに入る。はじめは現場のメモ
         const note = `<label class="field g-note"><span class="lab">材料屋へのひとこと（注文の文に入ります。なければ空）</span>
             <textarea class="inp ta" rows="2" maxlength="500" data-gnote="${K}" placeholder="例：午前中に届けてください">${esc(noteOf(r, key))}</textarea></label>`;
@@ -765,7 +784,7 @@ export function startOfficeApp(main, me) {
         // 材料屋のアプリで受ける材料屋（2回目・2-2）：「アプリに送る」で注文がとどく（持ち主 B）
         if (isAppSup(s)) return `
           <div class="group">
-            <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">材料屋のアプリ</span>${kTag}<span class="hint g-n">${ids.length}点</span></div>
+            <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">材料屋のアプリ</span>${kTag}${gp.tag}<span class="hint g-n">${ids.length}点</span></div>${gp.box}
             <ul class="g-lines">${ids.map(id => { const l = r.lines[id], n = Object.keys(l.photos || {}).length;
               return `<li>${esc(lineText(l))}${n ? ` <span class="tag">写真${n}枚</span>` : ""}${l.link ? ` <span class="tag">リンクつき</span>` : ""}${azRowHTML(r, sid, id)}</li>`; }).join("")}</ul>
             ${note}
@@ -777,7 +796,7 @@ export function startOfficeApp(main, me) {
           </div>`;
         return `
           <div class="group">
-            <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">${esc(s.to || "御中")}</span>${kTag}<span class="hint g-n">${ids.length}点</span></div>
+            <div class="g-head"><span class="sup">${esc(s.name)}</span><span class="g-tag">${esc(s.to || "御中")}</span>${kTag}${gp.tag}<span class="hint g-n">${ids.length}点</span></div>${gp.box}
             <ul class="g-lines">${ids.map(id => { const l = r.lines[id], n = Object.keys(l.photos || {}).length;
               return `<li>${esc(lineText(l))}${n ? ` <span class="tag">写真${n}枚は別に送る</span>` : ""}${l.link ? ` <span class="tag">リンクつき</span>` : ""}${azRowHTML(r, sid, id)}</li>`; }).join("")}</ul>
             ${note}
@@ -838,6 +857,15 @@ export function startOfficeApp(main, me) {
         const n = e.target.closest("[data-gnote]");
         if (n) (st.gnote[r.id] || (st.gnote[r.id] = {}))[n.dataset.gnote] = n.value;
         if (e.target.closest("[data-skipwhy]")) st.skipWhy = e.target.value;
+        // まとまりの届け先を手で書く（11/27）：書いた字を覚えて、見本と札をかきなおす
+        const fp = e.target.closest('[data-freeplace="gbasho"]');
+        if (fp) {
+          const key = fp.closest("[data-gkey]").dataset.gkey, m = (st.gplace[r.id] = st.gplace[r.id] || {});
+          m[key] = { id: FREE_PLACE, free: fp.value };
+          onFreeInput(e);
+          const tag = w.querySelector(`[data-gplace="${CSS.escape(key)}"]`), v = freePlace(fp.value);
+          if (tag) tag.textContent = `届け先 ${v ? v.basho : "（書いてください）"}（変える）`;
+        }
       });
       w.addEventListener("click", e => onPanelClick(e, w).catch(ex => toast(errorText(ex))));
       // 預かりから出す数（11/2）：入れたら「のこり○本は新しく用意」を合わせる（かきなおさない）
@@ -855,12 +883,23 @@ export function startOfficeApp(main, me) {
   /** 中身の画面で押したとき */
   async function onPanelClick(e, w) {
     const t = e.target.closest("[data-redit],[data-gcopy],[data-gsend],[data-gorder],[data-gapp],[data-ocancel],[data-ocyes],[data-ocno],[data-chuban],[data-azw]," +
-      "[data-kibask],[data-kibset],[data-kibclose],[data-skipask],[data-skipyes],[data-skipno],[data-unskip]");
+      "[data-kibask],[data-kibset],[data-kibclose],[data-skipask],[data-skipyes],[data-skipno],[data-unskip],[data-gplace],[data-gbasho]");
     if (!t || t.disabled) return;
     const r = (st.reqs || []).find(x => x.id === st.openId);
     if (!r) return;
     const d = t.dataset;
     if (d.chuban) return copyChuban(d.chuban);   // ネットで買う（10/15）
+    // まとまりの届け先を変える（11/27）
+    if (d.gplace) { st.placeAsk = st.placeAsk === `${r.id}|${d.gplace}` ? "" : `${r.id}|${d.gplace}`; return openReq(r.id, true); }
+    if (d.gbasho) {
+      const key = t.closest("[data-gkey]").dataset.gkey, m = (st.gplace[r.id] = st.gplace[r.id] || {}), prev = m[key] || {};
+      m[key] = { id: d.gbasho, free: prev.free || "" };
+      if (d.gbasho === r.bashoId && !prev.free) delete m[key];   // 依頼の届け先にもどした
+      if (d.gbasho !== FREE_PLACE) st.placeAsk = "";
+      openReq(r.id, true);
+      if (d.gbasho === FREE_PLACE) { const inp = document.querySelector(`[data-gkey="${CSS.escape(key)}"] [data-freeplace]`); if (inp) inp.focus(); }
+      return;
+    }
     // 品物の希望日を変える（11/10）
     if (d.kibask) { st.kibAsk = st.kibAsk === `${r.id}/${d.kibask}` ? "" : `${r.id}/${d.kibask}`; st.skipAsk = ""; return openReq(r.id, true); }
     if ("kibclose" in d) { st.kibAsk = ""; return openReq(r.id, true); }
@@ -891,7 +930,9 @@ export function startOfficeApp(main, me) {
         const q = (st.azWant || {})[azKey(r, id)], m = q != null ? azMatch(sid, r.lines[id]) : null;
         if (m && q > 0) az[id] = { iid: m.iid, qty: Math.min(q, Number(r.lines[id].qty)) };
       }
-      return draftOrder(r, sid, st.sups[sid], g.ids, bashoText(r), az, { kibou: g.kibou, memo: st.sups[sid].send === "net" ? r.memo || "" : noteOf(r, key) });
+      const pl = gPlaceOf(r, key);   // 届け先（変えたときだけ。11/27）
+      if (pl.empty) { toast("届け先を書いてください（「届け先（変える）」の「ほか（手で書く）」）"); return null; }
+      return draftOrder(r, sid, st.sups[sid], g.ids, bashoText(r), az, { kibou: g.kibou, memo: st.sups[sid].send === "net" ? r.memo || "" : noteOf(r, key), ...(pl.changed ? { place: { basho: pl.basho, bashoText: pl.bashoText } } : {}) });
     };
     const azCheck = key => {   // 預かりから出す数が、注文の数・預かりの残りより多くないか（11/2）
       const g = groupsOf(r).groups.find(x => x.key === key), sid = g && g.sid;

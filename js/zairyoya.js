@@ -10,7 +10,7 @@ import { $, esc, zenkana, toast, initTheme, watchVersion, registerSW, openSheet,
 import { whoAmI, registerSup, errorText, isIPhoneBrowser } from "./touroku.js";
 import { lineText, kibouText, fmtQty } from "./tanomu.js";
 import { pushState, enablePush, disablePush, refreshPush, testPush } from "./tsuuchi.js";
-import { yen, slipsOf, supAddSlip, supSeePrice } from "./chumon.js";
+import { yen, slipsOf, supAddSlip, supSeePrice, kibouOrder } from "./chumon.js";
 import { slipFormHTML, wireSlipForm, readSlipForm } from "./kingaku.js";
 import { sizeText } from "./fairu.js";
 import { openAzukari } from "./azukari.js";
@@ -378,7 +378,7 @@ function cardHTML(o) {
       ${azOf(o) && !cx ? '<span class="bigaz">預かりから</span>' : ""}
       <div class="items">${esc(Object.values(o.lines || {}).map(lineText).join("\n"))}</div>
       <dl class="meta">
-        <div><dt>希望日</dt><dd>${esc(kibouText(o.kibou))}</dd></div>
+        <div><dt>希望日</dt><dd>${esc(kibouOrder(o.kibou))}</dd></div>
         ${o.deliverDate && !cx ? `<div><dt>届ける日</dt><dd>${esc(kibouText(o.deliverDate))}</dd></div>` : ""}
         <div><dt>届け先</dt><dd>${esc(o.basho || "—")}</dd></div>
         <div><dt>注文日</dt><dd>${o.supSentAt || o.orderedAt ? md(o.supSentAt || o.orderedAt) : ""}</dd></div>
@@ -460,7 +460,7 @@ function orderHTML(o, u) {
       <div class="block"><h3>品名・数量</h3><ul class="g-lines">${Object.entries(o.lines || {}).map(([lid, l]) => { const p = prevOf(o).lines[lid]; return `<li${p ? ' class="chg-line"' : ""}>${lineHTML(l, p)}${isCx(o) ? "" : azLineHTML(l)}${photosHTML(o, lid, l)}</li>`; }).join("")}</ul>
         ${photos && !isCx(o) ? '<p class="hint">写真を押すと、大きく見られます。</p>' : ""}</div>
       <div class="block"><dl class="dl">
-        <dt>希望日</dt><dd>${hv(o, "kibou", kibouText)}</dd>
+        <dt>希望日</dt><dd>${hv(o, "kibou", kibouOrder)}</dd>
         ${o.deliverDate && !isCx(o) ? `<dt>届ける日</dt><dd>${esc(kibouText(o.deliverDate))}</dd>` : ""}
         <dt>届け先</dt><dd>${hv(o, "basho", v => v || "—")}${o.bashoText ? `<br><span class="hint">${esc(o.bashoText)}</span>` : ""}</dd>
         <dt>注文者</dt><dd>${hv(o, "chumonsha", v => v || "—")}</dd>

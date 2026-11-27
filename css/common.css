@@ -447,6 +447,9 @@ ul.plain{margin:0;padding-left:1.2em}
 .skip-sup small{font-weight:500}
 .lrow.skipped .lspec{color:var(--muted)}
 .g-tag.kib-on{color:var(--amber);border-color:var(--amber)}
+/* 依頼から注文する：まとまりの届け先（11/27）。押せる札（高さ44px）・変える所 */
+.g-ptag{background:none;cursor:pointer;min-height:44px;white-space:normal;text-align:left;font-family:inherit}
+.g-place{border:1px dashed var(--line);border-radius:8px;padding:8px 10px;margin:6px 0;display:flex;flex-direction:column;gap:6px}
 .g-note{margin:6px 0 4px}
 .g-lines{margin:0;padding-left:1.2em;font-size:14px;display:flex;flex-direction:column;gap:2px;overflow-wrap:anywhere}
 /* ネットで買う：品物ごとに「ページを開く」「○○でさがす」（10/15） */
@@ -709,6 +712,9 @@ ul.plain{margin:0;padding-left:1.2em}
 .with-row input{width:22px;height:22px;margin-top:2px;flex:none;accent-color:var(--amber-btn)}
 .with-note{border-left:4px solid var(--blue);padding:4px 10px;margin:6px 0;font-size:13px}
 .with-note p{margin:0 0 4px}
+/* 届け先を手で書く（11/27） */
+.free-place{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+.free-place .inp{min-height:44px}
 /* 納品書の取りこみ：ちがう材料屋の注文をえらんだとき（11/25） */
 .sup-warn{border:2px solid var(--amber);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:14px;color:var(--amber)}
 .sup-warn p{margin:0 0 6px}

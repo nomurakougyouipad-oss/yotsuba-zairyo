@@ -36,7 +36,9 @@ function progress(r, os = []) {
   const arrived = act.filter(o => o.status === "arrived" || o.status === "billed");
   // 全部注文して、その注文が全部届いたら「届いた」
   if (r.status === "ordered" && arrived.length === act.length) {
-    return { step: 3, label: `届いた（${r.basho || "届け先"}）`, orderedAt, arrivedAt: Math.max(...arrived.map(o => o.arrivedAt || 0)) };
+    // 届け先：事務所が注文のときに変えた（手で書いた所も。11/27）ら、その届け先。注文ごとにちがえば依頼の届け先
+    const pls = [...new Set(arrived.map(o => o.basho || r.basho || ""))];
+    return { step: 3, label: `届いた（${(pls.length === 1 ? pls[0] : r.basho) || "届け先"}）`, orderedAt, arrivedAt: Math.max(...arrived.map(o => o.arrivedAt || 0)) };
   }
   const label = r.status !== "ordered" ? "一部を注文した" : arrived.length ? "一部が届いた" : "事務所が注文した";
   // 材料屋がアプリで受けた注文は「○日に届く予定」（2回目・2-3）。いくつもあるときは、いちばんおそい日
@@ -48,7 +50,7 @@ function lineStatus(l, os, r) {
   if (l.skip) return { cls: "s0", text: `事務所：注文しない${l.skip.why ? `（${l.skip.why}）` : ""}` };   // 11/10
   const o = l.orderId && os.find(x => x.id === l.orderId && x.status !== "cancelled");
   if (!o) return { cls: "s1", text: "事務所で確認中" };
-  if (o.status === "arrived" || o.status === "billed") return { cls: "s3", text: `届いた（${r.basho || o.basho || "届け先"}）` };
+  if (o.status === "arrived" || o.status === "billed") return { cls: "s3", text: `届いた（${o.basho || r.basho || "届け先"}）` };   // 注文の届け先（事務所が変えたら、その届け先。11/27）
   return { cls: "s2", text: `注文ずみ（${o.supplierName}）・${deliverPlan(o) ? `${deliverPlan(o)} に届く予定` : "まだ届いていない"}` };
 }
 
@@ -428,7 +430,7 @@ export function startGenbaApp(main, me) {
         ${moneyHTML(r, os)}
         <div class="block"><dl class="dl">
           <dt>いつほしい</dt><dd>${esc(kibouText(r.kibou))}</dd>
-          <dt>届け先</dt><dd>${esc(r.basho || "—")}</dd>
+          <dt>届け先</dt><dd>${esc(r.basho || "—")}${os.filter(o => o.status !== "cancelled" && o.basho && o.basho !== r.basho).map(o => `<br><span class="hint">${esc(o.supplierName)}：${esc(o.basho)}（事務所が変えました）</span>`).join("")}</dd>
           ${r.contactedName ? `<dt>連絡ずみ</dt><dd>${esc(r.contactedName)}</dd>` : ""}
           ${r.memo ? `<dt>メモ</dt><dd>${esc(r.memo)}</dd>` : ""}
         </dl></div>

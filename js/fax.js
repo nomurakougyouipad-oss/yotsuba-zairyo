@@ -7,7 +7,7 @@
 // - LINE・電話で入れた注文で「この一文を入れる」にチェックしたものは、日付の下の枠に「先ほどご連絡した分の注文書です。」（11/11 文を変えた・はじめはチェックなし）（材料屋さんが2回用意しないように。
 //   FAX でも PDF でも。11/2 持ち主）
 import { esc } from "./common.js";
-import { orderText, companyLines, lineOrderNote } from "./chumon.js";
+import { orderText, companyLines, lineOrderNote, kibouOrder } from "./chumon.js";
 
 const today = () => { const d = new Date(); return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`; };
 
@@ -50,7 +50,7 @@ export function mitsumoriFaxHTML(q, supId, sup, info = {}, { mail = false } = {}
   });
   const blank = Math.max(0, 6 - lines.length);   // 空の行（材料屋が書き足せるように。行が少ないときだけ）
   const files = Object.values(q.files || {}).map(f => f.name).filter(Boolean);
-  const k = !q.kibou ? "" : q.kibou === "最短" ? "最短" : (() => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(q.kibou); return m ? `${+m[2]}/${+m[3]}` : q.kibou; })();
+  const k = q.kibou ? kibouOrder(q.kibou) : "";   // 「11/30（月）までに」「最短希望」（11/27 事務員さん）
   const foot = companyLines(c);
   return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>見積依頼書 ${esc(q.chuban || "")} ${esc(s.name || "")}</title>
 <style>
