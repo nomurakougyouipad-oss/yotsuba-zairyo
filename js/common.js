@@ -36,6 +36,22 @@ export function toast(msg) {
            true＝書いたかどうかを画面が見る。関数＝その答えが true のときだけ聞く。guardText＝聞く文（なければ上の文）
            保存したあとの closeSheet() は、聞かずに閉じる */
 let lastFocus = null, onCloseNow = null, guardNow = null, dirtyNow = false;
+// 「← 戻る」（js/modoru.js。11/28）：開いた・閉じたのしらせと、戻るで「閉じますか？」を聞く
+const openHooks = [], closeHooks = [];
+let askYes = null;   // 「閉じますか？」の「閉じる」を押したとき（ふつうは closeSheet。戻るのときは、1つ前の画面にもどす）
+export const onSheetOpen = f => openHooks.push(f);
+export const onSheetClose = f => closeHooks.push(f);
+/** いまの右／下の画面が、書きかけ（閉じると書いたものが消える）か */
+export function sheetDirty() {
+  const sh = document.getElementById("sheet");
+  return !!(sh && !sh.hidden && guardNow && guardNow.test());
+}
+/** 「書いたものが消えます。閉じますか？」を出して、「閉じる」なら onYes()（戻るのとき） */
+export function askSheet(onYes) {
+  const sh = document.getElementById("sheet");
+  if (!sh || sh.hidden || sh.querySelector(".sheet-ask")) return;
+  askClose(sh, onYes);
+}
 function runOnClose() {
   const f = onCloseNow;
   onCloseNow = null;
@@ -45,11 +61,13 @@ function runOnClose() {
 function dropAsk(sh) {
   const a = sh && sh.querySelector(".sheet-ask");
   if (a) a.remove();
+  askYes = null;
 }
 /** ×・やめる・Esc・外側で閉じるとき：入力の画面で何か書いてあれば、先に聞く */
-function askClose(sh) {
-  if (!guardNow || !guardNow.test()) { closeSheet(); return; }
+function askClose(sh, onYes = null) {
+  if (!guardNow || (guardNow.backOnly && !onYes) || !guardNow.test()) { (onYes || closeSheet)(); return; }
   if (sh.querySelector(".sheet-ask")) return;
+  askYes = onYes;
   const a = document.createElement("div");
   a.className = "sheet-ask";
   a.innerHTML = `<div class="sheet-ask-box" role="alertdialog" aria-modal="true" aria-labelledby="askQ"><p class="confirm-q" id="askQ">${esc(guardNow.text)}</p>
@@ -61,7 +79,9 @@ export function openSheet(html, after, opts = {}) {
   runOnClose();
   onCloseNow = opts.onClose || null;
   dirtyNow = false;
-  guardNow = opts.guard ? { test: typeof opts.guard === "function" ? opts.guard : () => dirtyNow, text: opts.guardText || "書いたものが消えます。閉じますか？" } : null;
+  // backGuard（11/28）：戻るのときだけ聞く（×・外側・Esc は、いままでどおり聞かずに閉じる。現場の品物の画面）
+  const gd = opts.guard || opts.backGuard;
+  guardNow = gd ? { test: typeof gd === "function" ? gd : () => dirtyNow, text: opts.guardText || "書いたものが消えます。閉じますか？", backOnly: !opts.guard } : null;
   let sh = document.getElementById("sheet");
   if (!sh) {
     sh = document.createElement("div");
@@ -73,7 +93,7 @@ export function openSheet(html, after, opts = {}) {
     sh.addEventListener("click", e => {
       const a = sh.querySelector(".sheet-ask");
       if (a) {   // 「閉じますか？」が出ているあいだ
-        if (e.target.closest("[data-askyes]")) closeSheet();
+        if (e.target.closest("[data-askyes]")) { const f = askYes || closeSheet; askYes = null; dropAsk(sh); f(); }
         else if (e.target.closest("[data-askno]") || e.target === a) { dropAsk(sh); sh.querySelector("#panel").focus(); }
         return;
       }
@@ -102,6 +122,7 @@ export function openSheet(html, after, opts = {}) {
   if (after) after(p);
   const f = p.querySelector("[data-autofocus]") || p.querySelector(".x");
   if (f) f.focus({ preventScroll: true });
+  openHooks.forEach(h => { try { h(); } catch (err) { } });
 }
 export function closeSheet() {
   const sh = document.getElementById("sheet");
@@ -114,6 +135,7 @@ export function closeSheet() {
   sh.querySelector("#panel").innerHTML = "";
   document.body.style.overflow = "";
   if (lastFocus && document.contains(lastFocus)) lastFocus.focus({ preventScroll: true });
+  closeHooks.forEach(h => { try { h(); } catch (err) { } });
 }
 
 /* ---------- 一覧をかきなおしても、見ていた所をのこす（11/2 持ち主「画面が勝手に上に飛ぶ」） ----------

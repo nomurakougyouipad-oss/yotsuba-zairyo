@@ -346,6 +346,8 @@ export function openItem(catalog, key, src, onSave, draft = null, o = {}) {
     w.addEventListener("change", e => { if (e.target.id === "iUnit") preview(); });
     preview();
   }, {
+    // 「← 戻る」・スマホの戻るで閉じるときは、書いていたら「閉じますか？」と聞く（×は、いままでどおり）。書きかけからもどした画面は、はじめから聞く（11/28）
+    backGuard: draft ? () => true : true,
     // 入れずに閉じたら、この画面でつけた写真（はじめにはなかった写真）は、置き場から消す
     onClose: () => {
       if (!o.noDraft) clearDraft();

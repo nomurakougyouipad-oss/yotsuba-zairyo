@@ -28,6 +28,7 @@ import { openAzukari, azItems, lineSpec } from "./azukari.js";
 import { readInvoiceFiles, invoiceSlips, checkInvoice, matchInvoice } from "./seikyu-ai.js";
 import { matchSupplier } from "./line-parse.js";
 import { placePickHTML, onFreeInput } from "./basho.js";
+import { initNav, go as navGo, back as navBack, pushSnap, snapNow } from "./modoru.js";
 
 /** 一覧・注文の画面の小さい印（加工品・見積から。10/15） */
 const KIND_TAG = { kakou: "加工品", mekki: "めっき", mitsumori: "見積から", nouhin: "納品書から" };   // nouhin＝納品書の取りこみで作った注文（アプリで注文していない。10/30）
@@ -195,6 +196,7 @@ export function startOfficeApp(main, me) {
     view: "irai", filter: "all", q: "", reqs: null, orders: null, catalog: null, sups: null, places: null,
     src: "",   // "nouhin"＝納品書から作った注文だけ（「注文ごと」「工事ごと」。10/30）
     openOrderId: "",   // いま中身を出している注文
+    sheet: null,   // いま右に出している画面 { kind: "req"|"order"|"quote"|"bulk"|"form", id }（「← 戻る」でもどすため。11/28）
     gotAsk: "",   // 加工品の「届いた」で「全部か何個か」をえらんでいる注文（11/19）
     mOpen: new Set(),   // 開いている「▼ 明細を見る」（かきなおしても開いたまま。11/4）
     kojiOpen: {},   // 工事ごとの「届いた品物」を開いたか {注番: true/false}（11/4）
@@ -834,6 +836,7 @@ export function startOfficeApp(main, me) {
   function openReq(id, keepScroll = false) {
     const r = (st.reqs || []).find(x => x.id === id);
     if (!r) return;
+    st.sheet = { kind: "req", id };
     const panel = document.getElementById("panel");
     const y = keepScroll && panel ? panel.scrollTop : 0;
     st.openId = id;
@@ -919,7 +922,7 @@ export function startOfficeApp(main, me) {
       return;
     }
     if ("redit" in d) {   // 依頼を直す（10/14）
-      return openReqEdit({ r, orders: ordersOf(r.id), places: st.places, units: unitsList(), me, onDone: () => openReq(r.id) });
+      return navGo(() => { st.sheet = { kind: "form" }; openReqEdit({ r, orders: ordersOf(r.id), places: st.places, units: unitsList(), me, onDone: () => { if (!navBack({ force: true })) openReq(r.id); } }); });   // もどる・保存したあとは、1つ前（依頼の画面）にもどる（11/28）
     }
     // まとまり（材料屋＋希望日。11/10）の注文の形。希望日と、材料屋へのひとことも入れる
     const draftFor = key => {
@@ -1257,27 +1260,29 @@ export function startOfficeApp(main, me) {
   }
 
   /** 入れたばかりの注文を開く（データが届くまで、少し待つ。3秒たっても来なければやめる） */
-  function waitOpen(id, tries = 0) {
-    if ((st.orders || []).some(x => x.id === id)) openOrder(id);
-    else if (tries < 30) setTimeout(() => waitOpen(id, tries + 1), 100);
+  function waitOpen(id, tries = 0, nav = true) {   // nav＝開くのを「画面をうつした」に数える（「← 戻る」。11/28）
+    if ((st.orders || []).some(x => x.id === id)) { if (nav) navGo(() => openOrder(id)); else openOrder(id); }
+    else if (tries < 30) setTimeout(() => waitOpen(id, tries + 1, nav), 100);
   }
 
   /* ---------- 見積（10/15。js/mitsumori.js） ---------- */
   /** 見積依頼を作る（q＝null）・直す */
   function openMitsuForm(q) {
+    st.sheet = { kind: "form" };
     openQuoteForm({
       q, sups: st.sups, units: unitsList(), me,
       onSaved: id => { if (!q) { st.view = "mitsu"; st.filter = "all"; st.src = ""; draw(); } waitQuote(id); },
     });
   }
   function waitQuote(id, tries = 0) {
-    if ((st.quotes || []).some(x => x.id === id)) openQuote(id);
+    if ((st.quotes || []).some(x => x.id === id)) navGo(() => openQuote(id));
     else if (tries < 30) setTimeout(() => waitQuote(id, tries + 1), 100);
   }
   /** 見積の画面を開く（keepScroll＝かきなおすとき、いまの場所のまま） */
   function openQuote(id, keepScroll = false) {
     const q = (st.quotes || []).find(x => x.id === id);
     if (!q) return;
+    st.sheet = { kind: "quote", id };
     const panel = document.getElementById("panel");
     const y = keepScroll && panel ? panel.scrollTop : 0;
     if (st.openQuoteId !== id) st.qui[id] = {};
@@ -1298,8 +1303,8 @@ export function startOfficeApp(main, me) {
         redraw: () => openQuote(id, true),
         onErr: ex => toast(errorText(ex)),
         copyOrSend: (x, sup, fb, pack) => copyOrSend(x, sup, fb, st.info, pack),
-        openOrder: oid => { st.view = "orders"; st.filter = "all"; st.src = ""; draw(); waitOpen(oid); },
-        openForm: x => openMitsuForm(x),
+        openOrder: oid => navGo(() => { st.view = "orders"; st.filter = "all"; st.src = ""; draw(); waitOpen(oid, 0, false); }),   // この見積から作った注文（「← 戻る」で見積にもどれる）
+        openForm: x => navGo(() => openMitsuForm(x)),
       });
       wireFiles(w, getQuote, me, { base: "zairyo/quotes", onErr: ex => toast(errorText(ex)), redraw: () => openQuote(id, true) });
     }, { side: true });
@@ -1308,6 +1313,7 @@ export function startOfficeApp(main, me) {
   function openOrder(id, keepScroll = false, focusSel = "") {
     const o = (st.orders || []).find(x => x.id === id);
     if (!o) return;
+    st.sheet = { kind: "order", id };
     const panel = document.getElementById("panel");
     const y = keepScroll && panel ? panel.scrollTop : 0;
     if (!keepScroll) st.slipFix = "";   // 新しく開いたら、納品書を直す欄は閉じておく
@@ -1370,10 +1376,10 @@ export function startOfficeApp(main, me) {
       toast(r.done ? "全部そろいました。「届いた」にしました" : "届いた数を入れました（一部届いた）");
       return openOrder(o.id, true);
     }
-    if (d.oquote) return openQuote(d.oquote);    // 見積から（10/15）：もとの見積を開く
+    if (d.oquote) return navGo(() => openQuote(d.oquote));    // 見積から（10/15）：もとの見積を開く（「← 戻る」で、この注文にもどれる。11/28）
     if ("oedit" in d) {   // 注文を直す（10/14）
       const r = o.reqId ? (st.reqs || []).find(x => x.id === o.reqId) || null : null;
-      return openOrderEdit({ o, r, places: st.places, units: unitsList(), me, onDone: () => openOrder(o.id) });
+      return navGo(() => { st.sheet = { kind: "form" }; openOrderEdit({ o, r, places: st.places, units: unitsList(), me, onDone: () => { if (!navBack({ force: true })) openOrder(o.id); } }); });
     }
     const busy = async (label, fn) => {
       const old = t.textContent;
@@ -1740,6 +1746,7 @@ export function startOfficeApp(main, me) {
   }
 
   function openBulk(keepScroll = false) {
+    st.sheet = { kind: "bulk" };
     const panel = document.getElementById("panel");
     const y = keepScroll && panel ? panel.scrollTop : 0;
     st.openId = "";
@@ -1848,6 +1855,7 @@ export function startOfficeApp(main, me) {
     if (b) b.hidden = !azSups().length;
   }
   function openAz() {
+    st.sheet = { kind: "form" };
     const list = azSups(), go = ([id, s]) => openAzukari({ sup: id, supName: s.name, role: "office", by: me.name || "事務所", catalog: st.catalog });
     if (list.length === 1) return go(list[0]);
     openSheet(`<div class="pw" id="azPick"><div class="panel-head"><div><h2 id="panelTitle">預かり：材料屋をえらぶ</h2></div><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
@@ -1872,43 +1880,45 @@ export function startOfficeApp(main, me) {
     else if (d.rcxyes) cancelReq(d.rcxyes, t).catch(ex => { t.disabled = false; toast(errorText(ex)); });
     else if (d.rrsyes) restoreReq(d.rrsyes, t).catch(ex => { t.disabled = false; toast(errorText(ex)); });
     else if (d.rcxseen) seeCx(d.rcxseen, t).catch(ex => { t.disabled = false; toast(errorText(ex)); });
-    else if ("newbox" in d) { st.view = "irai"; st.filter = "all"; st.src = ""; draw(); }
-    else if ("mitsubox" in d) { st.view = "mitsu"; st.filter = "all"; st.src = ""; draw(); }
-    else if (d.src) { st.src = d.src; draw(); }   // 納品書から作った注文だけ（10/30）
+    else if ("newbox" in d) navGo(() => { st.view = "irai"; st.filter = "all"; st.src = ""; draw(); });   // 画面をうつしたら「← 戻る」でもどれる（11/28）
+    else if ("mitsubox" in d) navGo(() => { st.view = "mitsu"; st.filter = "all"; st.src = ""; draw(); });
+    else if (d.src) navGo(() => { st.src = d.src; draw(); });   // 納品書から作った注文だけ（10/30）
     else if (d.filter) {
       // ようすの箱：その注文だけの一覧。もう一度押すと、しぼりこみをやめる
       const ov = st.view === "orders" || st.view === "kouji";
-      st.filter = ov && st.filter === d.filter ? "all" : d.filter;
-      if (!ov) st.view = "orders";
-      draw();
+      navGo(() => {
+        st.filter = ov && st.filter === d.filter ? "all" : d.filter;
+        if (!ov) st.view = "orders";
+        draw();
+      });
     }
-    else if (d.view) { st.view = d.view; if (d.view !== "orders" && d.view !== "kouji") st.src = ""; draw(); }
+    else if (d.view) { if (d.view !== st.view) navGo(() => { st.view = d.view; if (d.view !== "orders" && d.view !== "kouji") st.src = ""; draw(); }); }
     else if (d.next) {
       const o = (st.orders || []).find(x => x.id === d.next);
       if (!o) return;
-      if (isKakou(o)) { st.gotAsk = o.id; openOrder(o.id); return; }   // 加工品は「全部か何個か」をえらぶ（11/19）
+      if (isKakou(o)) { st.gotAsk = o.id; navGo(() => openOrder(o.id)); return; }   // 加工品は「全部か何個か」をえらぶ（11/19）
       t.disabled = true;
       markArrived(o, me).then(() => toast("「届いた」にしました。納品書の金額は、あとで入れられます"), ex => { t.disabled = false; toast(errorText(ex)); });
     }
-    else if (d.bill) openOrder(d.bill, false, "#amtS");
-    else if (d.kouji) { st.view = "orders"; st.q = d.kouji; $("#q", main).value = d.kouji; draw(); window.scrollTo({ top: 0 }); }
-    else if (d.reqopen) openReq(d.reqopen);
-    else if (d.req) openReq(d.req);
-    else if (d.open) openOrder(d.open);
-    else if (d.quote) openQuote(d.quote);
-    else if (t.id === "mitsuBtn") openMitsuForm(null);   // 見積依頼を作る（10/15）
-    else if (t.id === "billBtn") { bulk.done = ""; openBulk(); }
-    else if (t.id === "impBtn") openImport({ sups: st.sups, getOrders: () => st.orders, me });
+    else if (d.bill) navGo(() => openOrder(d.bill, false, "#amtS"));
+    else if (d.kouji) navGo(() => { st.view = "orders"; st.q = d.kouji; $("#q", main).value = d.kouji; draw(); window.scrollTo({ top: 0 }); });   // 工事ごと → 注番でさがす（「← 戻る」で工事ごとの位置にもどる）
+    else if (d.reqopen) navGo(() => openReq(d.reqopen));
+    else if (d.req) navGo(() => openReq(d.req));
+    else if (d.open) navGo(() => openOrder(d.open));
+    else if (d.quote) navGo(() => openQuote(d.quote));
+    else if (t.id === "mitsuBtn") navGo(() => openMitsuForm(null));   // 見積依頼を作る（10/15）
+    else if (t.id === "billBtn") navGo(() => { bulk.done = ""; openBulk(); });
+    else if (t.id === "impBtn") navGo(() => { st.sheet = { kind: "form" }; openImport({ sups: st.sups, getOrders: () => st.orders, me }); });
     else if (t.id === "kakouBtn") {   // 加工品の注文（図面つき）（10/15）
-      openKakouOrder({ sups: st.sups, places: st.places, units: unitsList(), me, onPlaced: id => { st.view = "orders"; st.filter = "all"; st.src = ""; draw(); waitOpen(id); } });
+      navGo(() => { st.sheet = { kind: "form" }; openKakouOrder({ sups: st.sups, places: st.places, units: unitsList(), me, onPlaced: id => { st.view = "orders"; st.filter = "all"; st.src = ""; draw(); waitOpen(id); } }); });
     }
     else if (t.id === "lineBtn") {
-      openLineOrder({ sups: st.sups, places: st.places, catalog: st.catalog, me, onPlaced: id => { st.view = "orders"; st.filter = "all"; st.src = ""; draw(); openOrder(id); } });
+      navGo(() => { st.sheet = { kind: "form" }; openLineOrder({ sups: st.sups, places: st.places, catalog: st.catalog, me, onPlaced: id => { st.view = "orders"; st.filter = "all"; st.src = ""; draw(); navGo(() => openOrder(id)); } }); });
     }
-    else if (t.id === "azBtn") openAz();   // 預かりの台帳（11/2）
-    else if (t.id === "setBtn") showSettings(true);
-    else if (t.id === "setBack") showSettings(false);
-    else if (t.id === "clearQ") { st.q = ""; st.filter = "all"; st.src = ""; $("#q", main).value = ""; draw(); }
+    else if (t.id === "azBtn") navGo(() => openAz());   // 預かりの台帳（11/2）
+    else if (t.id === "setBtn") navGo(() => showSettings(true));
+    else if (t.id === "setBack") { if (!navBack()) showSettings(false); }   // 「‹ 依頼・注文の画面にもどる」＝ 1つ前にもどる（11/28）
+    else if (t.id === "clearQ") navGo(() => { st.q = ""; st.filter = "all"; st.src = ""; $("#q", main).value = ""; draw(); });
   });
   // 工事ごとの「届いた品物」を開いた・とじたを覚える（一覧をかきなおしても、そのまま。11/4）
   main.addEventListener("toggle", e => { const k = e.target.dataset && e.target.dataset.koji; if (k) st.kojiOpen[k] = e.target.open; }, true);
@@ -1916,12 +1926,41 @@ export function startOfficeApp(main, me) {
     const c = e.target.closest && e.target.closest("[data-req],[data-open],[data-quote]");
     if (c && e.target === c && (e.key === "Enter" || e.key === " ")) {
       e.preventDefault();
-      if (c.dataset.req) openReq(c.dataset.req); else if (c.dataset.quote) openQuote(c.dataset.quote); else openOrder(c.dataset.open);
+      navGo(() => { if (c.dataset.req) openReq(c.dataset.req); else if (c.dataset.quote) openQuote(c.dataset.quote); else openOrder(c.dataset.open); });
     }
   });
   main.addEventListener("input", e => {
     if (e.target.id === "q") { st.q = e.target.value; draw(); }
     if (e.target.id === "rcxReason") st.cxReason = e.target.value;
+  });
+  // さがす欄（11/28）：打ちはじめる前のようすをとっておき、打ちおわったら（欄から出た・Enter）「画面をうつした」に数える
+  let qSnap = null;
+  main.addEventListener("focusin", e => { if (e.target.id === "q") qSnap = snapNow(); });
+  main.addEventListener("change", e => { if (e.target.id === "q" && qSnap && qSnap.q !== st.q) { pushSnap(qSnap); qSnap = snapNow(); } });
+  // 「← 戻る」とブラウザの戻る（js/modoru.js。11/28）：画面のようす（タブ・しぼりこみ・さがした字・一覧の位置・右に出していた画面）
+  const sheetOn = () => { const sh = document.getElementById("sheet"); return !!(sh && !sh.hidden); };
+  const reopen = x => {
+    if (x.kind === "req" && (st.reqs || []).some(r => r.id === x.id)) openReq(x.id);
+    else if (x.kind === "order" && (st.orders || []).some(o => o.id === x.id)) openOrder(x.id);
+    else if (x.kind === "quote" && (st.quotes || []).some(q => q.id === x.id)) openQuote(x.id);
+    else if (x.kind === "bulk") openBulk();
+    else closeSheet();
+  };
+  initNav({
+    snapshot: () => ({
+      view: st.view, filter: st.filter, src: st.src, q: st.q, y: window.scrollY, set: !$("#setView", main).hidden,
+      sheet: sheetOn() && st.sheet && st.sheet.kind !== "form" ? { ...st.sheet, py: (document.getElementById("panel") || {}).scrollTop || 0 } : null,
+    }),
+    isForm: () => sheetOn() && !!st.sheet && st.sheet.kind === "form",
+    restore: x => {
+      if (x.set !== !$("#setView", main).hidden) showSettings(x.set);
+      st.view = x.view; st.filter = x.filter; st.src = x.src; st.q = x.q;
+      const q = $("#q", main); if (q) q.value = x.q;
+      draw();
+      if (x.sheet) reopen(x.sheet); else closeSheet();
+      const put = () => { window.scrollTo(0, x.y); const p = document.getElementById("panel"); if (x.sheet && p) p.scrollTop = x.sheet.py || 0; };
+      put(); requestAnimationFrame(put);
+    },
   });
 
   /** ⚙ 設定：はじめて開くときに作る（そのあとは見せる・かくすだけ） */

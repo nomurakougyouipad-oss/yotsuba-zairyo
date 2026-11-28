@@ -15,6 +15,7 @@ import { jobPicker } from "./kouji.js";
 import { normCatalog, openItem, buildSpec, dropHidden, lineText, loadCart, saveCart, newForm, fmtQty, ymd, kibouText } from "./tanomu.js";
 import { yen, linePrice, priceText, reqMoney, deliverPlan } from "./chumon.js";
 import { attachHTML, fillPhotos, deletePhoto, openWebSearch } from "./shashin.js";
+import { initNav, go as navGo, back as navBack, peek as navPeek } from "./modoru.js";
 
 const CAT_KEY = "yotsuba-zairyo-cat";   // さいごに見た種類（この端末だけ）
 const byOrder = ([, a], [, b]) => (a.order ?? 999) - (b.order ?? 999);
@@ -405,6 +406,7 @@ export function startGenbaApp(main, me) {
   function openSent(id) {
     const r = (st.reqs || []).find(x => x.id === id);
     if (!r) return;
+    st.sheet = { kind: "sent", id };   // 「← 戻る」でもどすため（11/28）
     const os = ordersFor(r.id), pg = progress(r, os), ls = linesOf(r);
     const canCancel = !isCancelled(r) && !r.ordered;
     const steps = [["送った", r.sentAt, pg.step >= 1], ["注文した", pg.orderedAt, pg.step >= 2], ["届いた", pg.arrivedAt, pg.step >= 3]];
@@ -527,33 +529,55 @@ export function startGenbaApp(main, me) {
     openItem(st.catalog, dr.key, null, addLine, dr);
   }
 
+  /* ---------- 「← 戻る」とブラウザの戻る（js/modoru.js。11/28） ----------
+     画面のようす：下のタブ・一覧の位置・開いていた「送ったもの」の中身。品物の画面・ネットでさがすは書きかけの画面（もどすときは閉じる） */
+  const FORM = { kind: "form" };
+  const sheetOn = () => { const sh = document.getElementById("sheet"); return !!(sh && !sh.hidden); };
+  initNav({
+    // 「事務所に送りました」の画面には、もどさない（もう一度送ったように見えないように）
+    snapshot: () => { if (st.tab === "done") return null; return { tab: st.tab, y: window.scrollY, sheet: sheetOn() && st.sheet && st.sheet.kind === "sent" ? { ...st.sheet, py: (document.getElementById("panel") || {}).scrollTop || 0 } : null }; },
+    isForm: () => sheetOn() && !!st.sheet && st.sheet.kind === "form",
+    restore: x => {
+      if (st.tab !== x.tab) { st.tab = x.tab; askDel = ""; draw(); }
+      if (x.sheet && (st.reqs || []).some(r => r.id === x.sheet.id)) openSent(x.sheet.id); else closeSheet();
+      const put = () => { window.scrollTo(0, x.y); const p = document.getElementById("panel"); if (x.sheet && p) p.scrollTop = x.sheet.py || 0; };
+      put(); requestAnimationFrame(put);
+    },
+  });
+
   /* ---------- 押したとき ---------- */
   main.addEventListener("click", e => {
     const t = e.target.closest("[data-gtab],[data-cat],[data-item],[data-fav],[data-sent],[data-cedit],[data-cdel],[data-kibou],[data-basho],[data-contact],[data-csup],#sendBtn,#webBtn");
     if (!t || t.disabled) return;
     const d = t.dataset, f = st.cart.form;
     if (d.gtab) {
-      st.tab = d.gtab;
-      askDel = "";
-      draw();
-      window.scrollTo(0, 0);
+      // 下のタブ・「‹ 品物をえらぶ にもどる」（11/28）：画面をうつしたら「← 戻る」でもどれる。1つ前がその画面なら、もどる
+      const top = navPeek();
+      if (t.classList.contains("back") && top && top.tab === d.gtab && !top.sheet && navBack()) return;
+      if (d.gtab === st.tab) return;
+      navGo(() => {
+        st.tab = d.gtab;
+        askDel = "";
+        draw();
+        window.scrollTo(0, 0);
+      });
     } else if (d.cat) {
       st.cat = d.cat;
       catChosen = true;
       try { localStorage.setItem(CAT_KEY, st.cat); } catch (err) { }
       draw();
     } else if (d.item) {
-      openItem(st.catalog, d.item, null, addLine);
+      navGo(() => { st.sheet = FORM; openItem(st.catalog, d.item, null, addLine); });   // 品物の画面（書きかけの画面）
     } else if (t.id === "webBtn") {
-      openWeb();
+      navGo(() => { st.sheet = FORM; openWeb(); });
     } else if (d.fav) {
       const f = favList()[Number(d.fav)];
-      if (f) openItem(st.catalog, f.key, { vals: f.vals, qty: f.qty, unit: f.unit, note: f.note }, addLine);
+      if (f) navGo(() => { st.sheet = FORM; openItem(st.catalog, f.key, { vals: f.vals, qty: f.qty, unit: f.unit, note: f.note }, addLine); });
     } else if (d.sent) {
-      openSent(d.sent);
+      navGo(() => openSent(d.sent));
     } else if (d.cedit) {
       const l = st.cart.lines.find(x => x.uid === d.cedit);
-      if (l) openItem(st.catalog, l.key, l, editLine(l));
+      if (l) navGo(() => { st.sheet = FORM; openItem(st.catalog, l.key, l, editLine(l)); });
     } else if (d.cdel) {
       if (askDel !== d.cdel) { askDel = d.cdel; draw(); return; }   // けすときは2回押す
       askDel = "";

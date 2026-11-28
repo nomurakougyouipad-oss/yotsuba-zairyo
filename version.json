@@ -1,5 +1,5 @@
 {
- "v": "bda5da924e",
+ "v": "ab038f70ce",
  "files": [
   "js/ai-kurabe.js",
   "js/azukari.js",
@@ -22,6 +22,7 @@
   "js/line-match.js",
   "js/line-parse.js",
   "js/mitsumori.js",
+  "js/modoru.js",
   "js/naosu.js",
   "js/nippo.js",
   "js/nouhin.js",

@@ -59,6 +59,23 @@ h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.2}
 .theme{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--surface);flex:none}
 .theme button{border:0;background:transparent;width:44px;height:44px;font-size:17px;color:var(--muted)}
 .theme button[aria-pressed="true"]{background:var(--surface2);color:var(--amber)}
+/* 「← 戻る」（js/modoru.js。11/28）：もどれるときだけ左上に出す。下にずらしたときは、左上にうかせて出す */
+.navback{flex:none;min-height:44px;padding:0 14px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--fg);font-size:15px;font-weight:800;white-space:nowrap;cursor:pointer}
+.navback:hover{border-color:var(--amber)}
+.navback[hidden]{display:none}
+.navback.float{position:fixed;top:calc(env(safe-area-inset-top,0px) + 8px);left:8px;z-index:15;box-shadow:0 4px 14px var(--shadow)}
+.navback-p{margin-right:2px}
+/* スマホの幅：「← 戻る」が出ているときは、ロゴの点をかくして、アプリの名前を1行におさめる */
+@media (max-width:440px){
+  .top:has(#navBack:not([hidden])) .mark{display:none}
+  .top:has(#navBack:not([hidden])) h1{white-space:nowrap}
+  .top:has(#navBack:not([hidden])){gap:10px}
+  #navBack:not(.float){padding:0 12px}
+}
+@media (max-width:360px){
+  .top:has(#navBack:not([hidden])) h1{font-size:16px}
+  .top:has(#navBack:not([hidden])) .brand{overflow:hidden}
+}
 
 /* 箱（上の縁に色。オレンジ＝待ち・工事中、青＝届いた、灰色＝終わり） */
 .card{background:var(--surface);border:1px solid var(--line);border-top:4px solid var(--amber-btn);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
